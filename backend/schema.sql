@@ -25,9 +25,7 @@ DROP TABLE IF EXISTS insight_log CASCADE;
 
 DROP TABLE IF EXISTS kpi_registry CASCADE;
 
-DROP TABLE IF EXISTS fact_outputs CASCADE;
-
-DROP TABLE IF EXISTS fact_videos CASCADE;
+DROP TABLE IF EXISTS fact_created_videos CASCADE;
 
 DROP TABLE IF EXISTS user_channel_map CASCADE;
 
@@ -147,69 +145,41 @@ CREATE TABLE dim_platform (
 );
 
 -- ============================================================
--- FACT TABLES
+-- FACT TABLE
+-- One row per CREATED VIDEO (output grain)
+-- 1 source video → ~3.2 created videos on average
 -- ============================================================
 
--- -------------------------------------------------------
--- fact_videos: one row per source video uploaded to Frammer
--- this is the upload grain
--- -------------------------------------------------------
-CREATE TABLE fact_videos (
-    video_id            BIGSERIAL PRIMARY KEY,
-    client_id           INT NOT NULL REFERENCES dim_client(client_id),
-    channel_id          INT NOT NULL REFERENCES dim_channel(channel_id),
-    user_id             INT NOT NULL REFERENCES dim_user(user_id),
-    team_id             INT REFERENCES dim_team(team_id),
-    input_type_id       INT REFERENCES dim_input_type(input_type_id),
-    language_id         INT REFERENCES dim_language(language_id),
+CREATE TABLE fact_created_videos (
+    id                    BIGSERIAL PRIMARY KEY,
+    video_id              VARCHAR(50) NOT NULL,          -- external video_id / job_id
+    client_id             INT NOT NULL REFERENCES dim_client(client_id),
+    channel_id            INT NOT NULL REFERENCES dim_channel(channel_id),
+    user_id               INT NOT NULL REFERENCES dim_user(user_id),
+    team_id               INT REFERENCES dim_team(team_id),
+    input_type_id         INT REFERENCES dim_input_type(input_type_id),
+    output_type_id        INT REFERENCES dim_output_type(output_type_id),
+    language_id           INT REFERENCES dim_language(language_id),
 
--- timestamps (now available via synthetic data)
-uploaded_at TIMESTAMPTZ NOT NULL,
-processed_at TIMESTAMPTZ, -- when Frammer finished processing
-processing_secs INT, -- processed_at - uploaded_at
-
--- content metadata
+-- content
 headline TEXT,
 source_url TEXT,
-duration_secs INT NOT NULL, -- source video duration
+uploaded_duration_secs INT, -- source video duration
+created_duration_secs INT, -- created output duration
+published_duration_secs INT, -- published clip duration
 
--- billing
-billable_flag BOOLEAN DEFAULT TRUE,
-
--- data quality flags (set by ingestion)
-is_enriched         BOOLEAN DEFAULT FALSE,  -- was input_type inferred?
-    enrichment_confidence NUMERIC(4,3),          -- confidence of inference
-    has_quality_issues  BOOLEAN DEFAULT FALSE,
-
-    created_at          TIMESTAMPTZ DEFAULT NOW()
-);
-
--- -------------------------------------------------------
--- fact_outputs: one row per generated output
--- 1 video → multiple outputs (avg 3.2x from real data)
--- this is where output_type, publish status live
--- -------------------------------------------------------
-CREATE TABLE fact_outputs (
-    output_id           BIGSERIAL PRIMARY KEY,
-    video_id            BIGINT NOT NULL REFERENCES fact_videos(video_id),
-    client_id           INT NOT NULL REFERENCES dim_client(client_id),
-    channel_id          INT NOT NULL REFERENCES dim_channel(channel_id),
-    output_type_id      INT NOT NULL REFERENCES dim_output_type(output_type_id),
-
--- generation timing
-created_at TIMESTAMPTZ NOT NULL,
-
--- output content
-duration_secs INT,
-
--- publish state
-published_flag BOOLEAN DEFAULT FALSE,
+-- timestamps
+uploaded_at TIMESTAMPTZ,
+processed_at TIMESTAMPTZ,
 published_at TIMESTAMPTZ,
-published_platform_id INT REFERENCES dim_platform (platform_id),
-published_url TEXT,
 
--- time to publish (published_at - created_at)
-time_to_publish_secs INT );
+-- publish info
+published_flag        BOOLEAN DEFAULT FALSE,
+    published_platform_id INT REFERENCES dim_platform(platform_id),
+    published_url         TEXT,
+
+    created_at            TIMESTAMPTZ DEFAULT NOW()
+);
 
 -- ============================================================
 -- OPERATIONAL TABLES (Layer 3 agents write here)
@@ -287,178 +257,129 @@ CREATE TABLE query_log (
     queried_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- pgvector: embeddings for NLQ (DISABLED - requires pgvector extension)
--- CREATE TABLE embeddings (
---     embedding_id    SERIAL PRIMARY KEY,
---     content_type    VARCHAR(50) NOT NULL,
---     -- metric_definition, schema_doc, example_query,
---     -- dimension_description, video_headline
---     content_id      INT,                   -- FK to relevant table
---     content_text    TEXT NOT NULL,
---     embedding       vector(1536),          -- OpenAI ada-002 dimensions
---     metadata        JSONB,
---     created_at      TIMESTAMPTZ DEFAULT NOW()
--- );
-
 -- ============================================================
 -- MATERIALIZED VIEWS (pre-computed KPIs)
--- refreshed hourly via pg_cron
 -- ============================================================
 
 CREATE MATERIALIZED VIEW mv_monthly_kpis AS
 SELECT
-    v.client_id,
-    v.channel_id,
-    v.input_type_id,
-    v.language_id,
-    date_trunc('month', v.uploaded_at) AS month,
-    COUNT(DISTINCT v.video_id) AS uploaded_count,
-    SUM(v.duration_secs) AS uploaded_duration_secs,
-    COUNT(DISTINCT o.output_id) AS created_count,
-    SUM(o.duration_secs) AS created_duration_secs,
-    COUNT(DISTINCT o.output_id) FILTER (
+    f.client_id,
+    f.channel_id,
+    f.input_type_id,
+    f.output_type_id,
+    f.language_id,
+    date_trunc('month', f.uploaded_at) AS month,
+    COUNT(*) AS created_count,
+    SUM(f.uploaded_duration_secs) AS total_uploaded_duration_secs,
+    SUM(f.created_duration_secs) AS total_created_duration_secs,
+    COUNT(*) FILTER (
         WHERE
-            o.published_flag = TRUE
+            f.published_flag
     ) AS published_count,
-    SUM(o.duration_secs) FILTER (
+    SUM(f.published_duration_secs) FILTER (
         WHERE
-            o.published_flag = TRUE
-    ) AS published_duration_secs,
+            f.published_flag
+    ) AS total_published_duration_secs,
     ROUND(
-        COUNT(DISTINCT o.output_id) FILTER (
+        COUNT(*) FILTER (
             WHERE
-                o.published_flag
-        )::NUMERIC / NULLIF(
-            COUNT(DISTINCT o.output_id),
-            0
-        ) * 100,
+                f.published_flag
+        )::NUMERIC / NULLIF(COUNT(*), 0) * 100,
         2
-    ) AS publish_rate_pct,
-    ROUND(
-        COUNT(DISTINCT o.output_id)::NUMERIC / NULLIF(COUNT(DISTINCT v.video_id), 0),
-        2
-    ) AS output_multiplier
-FROM fact_videos v
-    LEFT JOIN fact_outputs o ON o.video_id = v.video_id
+    ) AS publish_rate_pct
+FROM fact_created_videos f
 GROUP BY
     1,
     2,
     3,
     4,
-    5;
+    5,
+    6;
 
 CREATE MATERIALIZED VIEW mv_channel_health AS
 SELECT
-    v.client_id,
-    v.channel_id,
-    COUNT(DISTINCT v.video_id) AS total_uploads,
-    COUNT(DISTINCT o.output_id) AS total_created,
-    COUNT(DISTINCT o.output_id) FILTER (
+    f.client_id,
+    f.channel_id,
+    COUNT(*) AS total_created,
+    COUNT(*) FILTER (
         WHERE
-            o.published_flag
+            f.published_flag
     ) AS total_published,
     ROUND(
-        COUNT(DISTINCT o.output_id) FILTER (
+        COUNT(*) FILTER (
             WHERE
-                o.published_flag
-        )::NUMERIC / NULLIF(
-            COUNT(DISTINCT o.output_id),
-            0
-        ) * 100,
+                f.published_flag
+        )::NUMERIC / NULLIF(COUNT(*), 0) * 100,
         2
     ) AS publish_rate_pct,
-    ROUND(
-        COUNT(DISTINCT o.output_id)::NUMERIC / NULLIF(COUNT(DISTINCT v.video_id), 0),
-        2
-    ) AS output_multiplier,
-    COUNT(DISTINCT v.user_id) AS active_users,
-    MAX(v.uploaded_at) AS last_activity
-FROM fact_videos v
-    LEFT JOIN fact_outputs o ON o.video_id = v.video_id
+    COUNT(DISTINCT f.user_id) AS active_users,
+    MAX(f.uploaded_at) AS last_activity
+FROM fact_created_videos f
 GROUP BY
     1,
     2;
 
 CREATE MATERIALIZED VIEW mv_user_performance AS
 SELECT
-    v.client_id,
-    v.channel_id,
-    v.user_id,
-    COUNT(DISTINCT v.video_id) AS uploaded_count,
-    COUNT(DISTINCT o.output_id) AS created_count,
-    COUNT(DISTINCT o.output_id) FILTER (
+    f.client_id,
+    f.channel_id,
+    f.user_id,
+    COUNT(*) AS created_count,
+    COUNT(*) FILTER (
         WHERE
-            o.published_flag
+            f.published_flag
     ) AS published_count,
-    SUM(v.duration_secs) AS uploaded_duration_secs,
+    SUM(f.uploaded_duration_secs) AS total_uploaded_duration_secs,
+    SUM(f.created_duration_secs) AS total_created_duration_secs,
     ROUND(
-        COUNT(DISTINCT o.output_id) FILTER (
+        COUNT(*) FILTER (
             WHERE
-                o.published_flag
-        )::NUMERIC / NULLIF(
-            COUNT(DISTINCT o.output_id),
-            0
-        ) * 100,
+                f.published_flag
+        )::NUMERIC / NULLIF(COUNT(*), 0) * 100,
         2
     ) AS publish_rate_pct
-FROM fact_videos v
-    LEFT JOIN fact_outputs o ON o.video_id = v.video_id
+FROM fact_created_videos f
 GROUP BY
     1,
     2,
     3;
 
 -- ============================================================
--- INDEXES (performance for dashboard query patterns)
+-- INDEXES
 -- ============================================================
 
--- fact_videos: primary access patterns
-CREATE INDEX idx_fv_client_channel_uploaded ON fact_videos (
+CREATE INDEX idx_fcv_client_channel_uploaded ON fact_created_videos (
     client_id,
     channel_id,
     uploaded_at DESC
 );
 
-CREATE INDEX idx_fv_client_uploaded ON fact_videos (client_id, uploaded_at DESC);
+CREATE INDEX idx_fcv_client_uploaded ON fact_created_videos (client_id, uploaded_at DESC);
 
-CREATE INDEX idx_fv_input_type ON fact_videos (client_id, input_type_id);
+CREATE INDEX idx_fcv_input_type ON fact_created_videos (client_id, input_type_id);
 
-CREATE INDEX idx_fv_language ON fact_videos (client_id, language_id);
+CREATE INDEX idx_fcv_output_type ON fact_created_videos (client_id, output_type_id);
 
-CREATE INDEX idx_fv_user ON fact_videos (
+CREATE INDEX idx_fcv_language ON fact_created_videos (client_id, language_id);
+
+CREATE INDEX idx_fcv_user ON fact_created_videos (
     client_id,
     user_id,
     uploaded_at DESC
 );
 
-CREATE INDEX idx_fv_team ON fact_videos (team_id);
+CREATE INDEX idx_fcv_team ON fact_created_videos (team_id);
 
--- fact_outputs: primary access patterns
-CREATE INDEX idx_fo_video_id ON fact_outputs (video_id);
+CREATE INDEX idx_fcv_video_id ON fact_created_videos (video_id);
 
-CREATE INDEX idx_fo_client_channel ON fact_outputs (client_id, channel_id);
-
-CREATE INDEX idx_fo_output_type ON fact_outputs (output_type_id);
-
-CREATE INDEX idx_fo_published ON fact_outputs (
+CREATE INDEX idx_fcv_published ON fact_created_videos (
     client_id,
     published_flag,
     published_at
-);
-
-CREATE INDEX idx_fo_platform ON fact_outputs (published_platform_id)
+)
 WHERE
     published_flag = TRUE;
 
--- embeddings: vector similarity search (DISABLED - requires pgvector extension)
--- CREATE INDEX idx_embeddings_vector
---     ON embeddings USING ivfflat (embedding vector_cosine_ops)
---     WITH (lists = 100);
--- CREATE INDEX idx_embeddings_type
---     ON embeddings (content_type);
-
--- materialized views: refresh schedule via pg_cron
--- SELECT cron.schedule('refresh-mv', '0 * * * *',
---   'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_monthly_kpis;
---    REFRESH MATERIALIZED VIEW CONCURRENTLY mv_channel_health;
---    REFRESH MATERIALIZED VIEW CONCURRENTLY mv_user_performance;');
+CREATE INDEX idx_fcv_platform ON fact_created_videos (published_platform_id)
+WHERE
+    published_flag = TRUE;
