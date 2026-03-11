@@ -1,0 +1,912 @@
+{
+  "database": "frammer_analytics",
+  "description": "FRAMMER AI ANALYTICS PLATFORM - PostgreSQL Schema",
+  "tables": {
+    "dim_client": {
+      "type": "dimension",
+      "description": "Client master data",
+      "grain": "one row per client",
+      "columns": {
+        "client_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false,
+          "description": "Unique client identifier"
+        },
+        "client_name": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Client company name"
+        },
+        "plan_type": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["basic", "pro", "enterprise"],
+          "description": "Subscription plan level"
+        },
+        "industry": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "values": ["news", "sports", "entertainment"],
+          "description": "Industry vertical"
+        },
+        "region": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["india", "us", "europe"],
+          "description": "Geographic region"
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "default": "NOW()",
+          "description": "Record creation timestamp"
+        },
+        "is_active": {
+          "type": "boolean",
+          "default": true,
+          "description": "Active status flag"
+        }
+      }
+    },
+    "dim_channel": {
+      "type": "dimension",
+      "description": "Channel/workspace master data",
+      "grain": "one row per workspace/channel, belongs to one client",
+      "columns": {
+        "channel_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false,
+          "description": "Unique channel identifier"
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false,
+          "description": "Reference to parent client"
+        },
+        "channel_name": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Channel display name"
+        },
+        "channel_code": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "values": ["A", "B", "C"],
+          "description": "Channel code identifier"
+        },
+        "primary_language": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Dominant language of channel content"
+        },
+        "content_focus": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Primary content category (news, sports, politics, etc)"
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "default": "NOW()",
+          "description": "Record creation timestamp"
+        },
+        "is_active": {
+          "type": "boolean",
+          "default": true,
+          "description": "Active status flag"
+        }
+      }
+    },
+    "dim_user": {
+      "type": "dimension",
+      "description": "User master data",
+      "grain": "one row per user, independent of channel",
+      "columns": {
+        "user_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false,
+          "description": "Unique user identifier"
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false,
+          "description": "Reference to parent client"
+        },
+        "user_name": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "User display name"
+        },
+        "email": {
+          "type": "varchar(200)",
+          "nullable": true,
+          "description": "User email address"
+        },
+        "role": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["editor", "producer", "qa", "auto"],
+          "description": "User role in system"
+        },
+        "is_bot": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether user is automated (Auto Upload)"
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "default": "NOW()",
+          "description": "Record creation timestamp"
+        },
+        "is_active": {
+          "type": "boolean",
+          "default": true,
+          "description": "Active status flag"
+        }
+      }
+    },
+    "user_channel_map": {
+      "type": "bridge",
+      "description": "Maps users to channels they work across",
+      "grain": "one row per user-channel relationship",
+      "note": "40 of 45 users in real data work across multiple channels",
+      "columns": {
+        "user_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_user(user_id), PRIMARY KEY",
+          "nullable": false,
+          "description": "Reference to user"
+        },
+        "channel_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_channel(channel_id), PRIMARY KEY",
+          "nullable": false,
+          "description": "Reference to channel"
+        },
+        "joined_at": {
+          "type": "timestamptz",
+          "default": "NOW()",
+          "description": "When user joined channel"
+        },
+        "is_primary": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is user's primary channel"
+        }
+      }
+    },
+    "dim_team": {
+      "type": "dimension",
+      "description": "Team master data",
+      "columns": {
+        "team_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false
+        },
+        "channel_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_channel(channel_id)",
+          "nullable": true
+        },
+        "team_name": {
+          "type": "varchar(100)",
+          "nullable": false
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        }
+      }
+    },
+    "dim_input_type": {
+      "type": "dimension",
+      "description": "Input content type lookup",
+      "grain": "one row per input type",
+      "columns": {
+        "input_type_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "type_name": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "unique": true,
+          "values": [
+            "interview",
+            "news bulletin",
+            "speech",
+            "special reports",
+            "debate",
+            "press conference",
+            "discussion-show",
+            "sports show",
+            "podcast",
+            "drama",
+            "in-brief"
+          ]
+        },
+        "category": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["live", "recorded", "scripted"],
+          "description": "Content production category"
+        },
+        "avg_duration_mins": {
+          "type": "numeric(6, 2)",
+          "nullable": true,
+          "description": "Average content duration in minutes"
+        }
+      }
+    },
+    "dim_output_type": {
+      "type": "dimension",
+      "description": "Output content type lookup",
+      "grain": "one row per output type",
+      "columns": {
+        "output_type_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "type_name": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "unique": true,
+          "values": [
+            "Full package",
+            "Key moments",
+            "My Key moments",
+            "Chapters",
+            "Summary"
+          ]
+        },
+        "typical_length_secs": {
+          "type": "integer",
+          "nullable": true,
+          "description": "Typical output length in seconds"
+        },
+        "is_short_form": {
+          "type": "boolean",
+          "nullable": true,
+          "description": "Whether eligible for reels/shorts format"
+        }
+      }
+    },
+    "dim_language": {
+      "type": "dimension",
+      "description": "Language lookup",
+      "grain": "one row per language",
+      "columns": {
+        "language_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "language_code": {
+          "type": "varchar(10)",
+          "nullable": false,
+          "unique": true,
+          "values": ["en", "hi", "mix", "es", "ar", "mr"]
+        },
+        "language_name": {
+          "type": "varchar(50)",
+          "nullable": false
+        }
+      }
+    },
+    "dim_platform": {
+      "type": "dimension",
+      "description": "Social platform lookup",
+      "grain": "one row per platform",
+      "columns": {
+        "platform_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "platform_name": {
+          "type": "varchar(50)",
+          "nullable": false,
+          "unique": true,
+          "values": [
+            "YouTube",
+            "Reels",
+            "Shorts",
+            "Instagram",
+            "Facebook",
+            "LinkedIn",
+            "X",
+            "Threads"
+          ]
+        },
+        "platform_type": {
+          "type": "varchar(50)",
+          "nullable": true
+        }
+      }
+    },
+    "fact_videos": {
+      "type": "fact",
+      "description": "Source videos uploaded to Frammer",
+      "grain": "one row per source video uploaded - the upload grain",
+      "columns": {
+        "video_id": {
+          "type": "bigint",
+          "constraint": "PRIMARY KEY BIGSERIAL",
+          "nullable": false,
+          "description": "Unique video identifier"
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false
+        },
+        "channel_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_channel(channel_id)",
+          "nullable": false
+        },
+        "user_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_user(user_id)",
+          "nullable": false
+        },
+        "team_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_team(team_id)",
+          "nullable": true
+        },
+        "input_type_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_input_type(input_type_id)",
+          "nullable": true
+        },
+        "language_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_language(language_id)",
+          "nullable": true
+        },
+        "uploaded_at": {
+          "type": "timestamptz",
+          "nullable": false,
+          "description": "When video was uploaded"
+        },
+        "processed_at": {
+          "type": "timestamptz",
+          "nullable": true,
+          "description": "When Frammer finished processing"
+        },
+        "processing_secs": {
+          "type": "integer",
+          "nullable": true,
+          "description": "Processing duration (processed_at - uploaded_at)"
+        },
+        "headline": {
+          "type": "text",
+          "nullable": true,
+          "description": "Video headline/title"
+        },
+        "source_url": {
+          "type": "text",
+          "nullable": true,
+          "description": "Source content URL"
+        },
+        "duration_secs": {
+          "type": "integer",
+          "nullable": false,
+          "description": "Source video duration in seconds"
+        },
+        "billable_flag": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether video is billable"
+        },
+        "is_enriched": {
+          "type": "boolean",
+          "default": false,
+          "description": "Was input_type inferred?"
+        },
+        "enrichment_confidence": {
+          "type": "numeric(4, 3)",
+          "nullable": true,
+          "description": "Confidence of input_type inference"
+        },
+        "has_quality_issues": {
+          "type": "boolean",
+          "default": false,
+          "description": "Data quality issues flag"
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        }
+      }
+    },
+    "fact_outputs": {
+      "type": "fact",
+      "description": "Generated outputs from videos",
+      "grain": "one row per generated output - 1 video → multiple outputs (avg 3.2x)",
+      "columns": {
+        "output_id": {
+          "type": "bigint",
+          "constraint": "PRIMARY KEY BIGSERIAL",
+          "nullable": false,
+          "description": "Unique output identifier"
+        },
+        "video_id": {
+          "type": "bigint",
+          "constraint": "FOREIGN KEY REFERENCES fact_videos(video_id)",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false
+        },
+        "channel_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_channel(channel_id)",
+          "nullable": false
+        },
+        "output_type_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_output_type(output_type_id)",
+          "nullable": false
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "nullable": false,
+          "description": "When output was generated"
+        },
+        "duration_secs": {
+          "type": "integer",
+          "nullable": true,
+          "description": "Output content duration"
+        },
+        "published_flag": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether output was published"
+        },
+        "published_at": {
+          "type": "timestamptz",
+          "nullable": true,
+          "description": "When output was published"
+        },
+        "published_platform_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_platform(platform_id)",
+          "nullable": true
+        },
+        "published_url": {
+          "type": "text",
+          "nullable": true,
+          "description": "Published content URL"
+        },
+        "time_to_publish_secs": {
+          "type": "integer",
+          "nullable": true,
+          "description": "Time from creation to publishing"
+        }
+      }
+    },
+    "kpi_registry": {
+      "type": "operational",
+      "description": "All defined metrics and KPIs",
+      "columns": {
+        "kpi_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": true,
+          "description": "null = global KPI"
+        },
+        "kpi_name": {
+          "type": "varchar(200)",
+          "nullable": false
+        },
+        "kpi_description": {
+          "type": "text",
+          "nullable": true
+        },
+        "sql_definition": {
+          "type": "text",
+          "nullable": false,
+          "description": "The actual SQL formula"
+        },
+        "dimensions": {
+          "type": "text[]",
+          "nullable": true,
+          "description": "Which dimensions this KPI supports"
+        },
+        "created_by": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["user", "agent"]
+        },
+        "is_active": {
+          "type": "boolean",
+          "default": true
+        },
+        "created_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        },
+        "last_computed": {
+          "type": "timestamptz",
+          "nullable": true
+        }
+      }
+    },
+    "insight_log": {
+      "type": "operational",
+      "description": "Insights from Narrator and Recommendation agents",
+      "columns": {
+        "insight_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false
+        },
+        "insight_type": {
+          "type": "varchar(50)",
+          "nullable": false,
+          "values": ["anomaly", "trend", "recommendation", "digest"]
+        },
+        "severity": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "values": ["info", "warning", "critical"]
+        },
+        "title": {
+          "type": "text",
+          "nullable": false
+        },
+        "body": {
+          "type": "text",
+          "nullable": false
+        },
+        "dimensions": {
+          "type": "jsonb",
+          "nullable": true,
+          "description": "e.g., {channel: 'A', metric: 'publish_rate'}"
+        },
+        "metric_value": {
+          "type": "numeric",
+          "nullable": true
+        },
+        "baseline_value": {
+          "type": "numeric",
+          "nullable": true
+        },
+        "delta_pct": {
+          "type": "numeric",
+          "nullable": true
+        },
+        "generated_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        },
+        "is_read": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "forecast_log": {
+      "type": "operational",
+      "description": "Predictions from Forecasting agent",
+      "columns": {
+        "forecast_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": false
+        },
+        "channel_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_channel(channel_id)",
+          "nullable": true
+        },
+        "metric_name": {
+          "type": "varchar(100)",
+          "nullable": false
+        },
+        "forecast_month": {
+          "type": "date",
+          "nullable": false
+        },
+        "predicted_value": {
+          "type": "numeric",
+          "nullable": false
+        },
+        "lower_bound": {
+          "type": "numeric",
+          "nullable": true
+        },
+        "upper_bound": {
+          "type": "numeric",
+          "nullable": true
+        },
+        "model_used": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["prophet", "arima", "linear"]
+        },
+        "generated_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        }
+      }
+    },
+    "quality_log": {
+      "type": "operational",
+      "description": "Data quality issues from ingestion",
+      "columns": {
+        "log_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": true
+        },
+        "source_file": {
+          "type": "varchar(200)",
+          "nullable": true
+        },
+        "issue_type": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "values": ["null_field", "duplicate", "type_mismatch"]
+        },
+        "field_name": {
+          "type": "varchar(100)",
+          "nullable": true
+        },
+        "issue_count": {
+          "type": "integer",
+          "default": 1
+        },
+        "sample_value": {
+          "type": "text",
+          "nullable": true
+        },
+        "resolution": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "values": ["skipped", "enriched", "defaulted"]
+        },
+        "logged_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        }
+      }
+    },
+    "query_log": {
+      "type": "operational",
+      "description": "SQL RAG query log for learning and improvement",
+      "columns": {
+        "query_id": {
+          "type": "integer",
+          "constraint": "PRIMARY KEY SERIAL",
+          "nullable": false
+        },
+        "client_id": {
+          "type": "integer",
+          "constraint": "FOREIGN KEY REFERENCES dim_client(client_id)",
+          "nullable": true
+        },
+        "natural_language": {
+          "type": "text",
+          "nullable": false
+        },
+        "generated_sql": {
+          "type": "text",
+          "nullable": true
+        },
+        "query_type": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "values": ["analytical", "semantic_search"]
+        },
+        "executed": {
+          "type": "boolean",
+          "default": false
+        },
+        "success": {
+          "type": "boolean",
+          "nullable": true
+        },
+        "row_count": {
+          "type": "integer",
+          "nullable": true
+        },
+        "execution_ms": {
+          "type": "integer",
+          "nullable": true
+        },
+        "user_feedback": {
+          "type": "integer",
+          "nullable": true,
+          "values": [1, -1],
+          "description": "1 = helpful, -1 = not helpful"
+        },
+        "queried_at": {
+          "type": "timestamptz",
+          "default": "NOW()"
+        }
+      }
+    }
+  },
+  "materialized_views": {
+    "mv_monthly_kpis": {
+      "description": "Monthly KPIs aggregated across dimensions",
+      "refresh_schedule": "hourly via pg_cron",
+      "dimensions": [
+        "client_id",
+        "channel_id",
+        "input_type_id",
+        "language_id",
+        "month"
+      ],
+      "metrics": [
+        "uploaded_count",
+        "uploaded_duration_secs",
+        "created_count",
+        "created_duration_secs",
+        "published_count",
+        "published_duration_secs",
+        "publish_rate_pct",
+        "output_multiplier"
+      ]
+    },
+    "mv_channel_health": {
+      "description": "Channel health metrics",
+      "refresh_schedule": "hourly via pg_cron",
+      "dimensions": ["client_id", "channel_id"],
+      "metrics": [
+        "total_uploads",
+        "total_created",
+        "total_published",
+        "publish_rate_pct",
+        "output_multiplier",
+        "active_users",
+        "last_activity"
+      ]
+    },
+    "mv_user_performance": {
+      "description": "Per-user performance metrics",
+      "refresh_schedule": "hourly via pg_cron",
+      "dimensions": ["client_id", "channel_id", "user_id"],
+      "metrics": [
+        "uploaded_count",
+        "created_count",
+        "published_count",
+        "uploaded_duration_secs",
+        "publish_rate_pct"
+      ]
+    }
+  },
+  "relationships": {
+    "foreign_keys": {
+      "dim_channel.client_id": "dim_client.client_id",
+      "dim_user.client_id": "dim_client.client_id",
+      "user_channel_map.user_id": "dim_user.user_id",
+      "user_channel_map.channel_id": "dim_channel.channel_id",
+      "dim_team.client_id": "dim_client.client_id",
+      "dim_team.channel_id": "dim_channel.channel_id",
+      "fact_videos.client_id": "dim_client.client_id",
+      "fact_videos.channel_id": "dim_channel.channel_id",
+      "fact_videos.user_id": "dim_user.user_id",
+      "fact_videos.team_id": "dim_team.team_id",
+      "fact_videos.input_type_id": "dim_input_type.input_type_id",
+      "fact_videos.language_id": "dim_language.language_id",
+      "fact_outputs.video_id": "fact_videos.video_id",
+      "fact_outputs.client_id": "dim_client.client_id",
+      "fact_outputs.channel_id": "dim_channel.channel_id",
+      "fact_outputs.output_type_id": "dim_output_type.output_type_id",
+      "fact_outputs.published_platform_id": "dim_platform.platform_id",
+      "kpi_registry.client_id": "dim_client.client_id",
+      "insight_log.client_id": "dim_client.client_id",
+      "forecast_log.client_id": "dim_client.client_id",
+      "forecast_log.channel_id": "dim_channel.channel_id",
+      "quality_log.client_id": "dim_client.client_id",
+      "query_log.client_id": "dim_client.client_id"
+    }
+  },
+  "indexes": {
+    "fact_videos": [
+      "idx_fv_client_channel_uploaded(client_id, channel_id, uploaded_at DESC)",
+      "idx_fv_client_uploaded(client_id, uploaded_at DESC)",
+      "idx_fv_input_type(client_id, input_type_id)",
+      "idx_fv_language(client_id, language_id)",
+      "idx_fv_user(client_id, user_id, uploaded_at DESC)",
+      "idx_fv_team(team_id)"
+    ],
+    "fact_outputs": [
+      "idx_fo_video_id(video_id)",
+      "idx_fo_client_channel(client_id, channel_id)",
+      "idx_fo_output_type(output_type_id)",
+      "idx_fo_published(client_id, published_flag, published_at)",
+      "idx_fo_platform(published_platform_id) WHERE published_flag = TRUE"
+    ]
+  },
+  "enumerations": {
+    "plan_type": ["basic", "pro", "enterprise"],
+    "industry": ["news", "sports", "entertainment"],
+    "region": ["india", "us", "europe"],
+    "user_role": ["editor", "producer", "qa", "auto"],
+    "input_type": [
+      "interview",
+      "news bulletin",
+      "speech",
+      "special reports",
+      "debate",
+      "press conference",
+      "discussion-show",
+      "sports show",
+      "podcast",
+      "drama",
+      "in-brief"
+    ],
+    "input_category": ["live", "recorded", "scripted"],
+    "output_type": [
+      "Full package",
+      "Key moments",
+      "My Key moments",
+      "Chapters",
+      "Summary"
+    ],
+    "language_code": ["en", "hi", "mix", "es", "ar", "mr"],
+    "platform": [
+      "YouTube",
+      "Reels",
+      "Shorts",
+      "Instagram",
+      "Facebook",
+      "LinkedIn",
+      "X",
+      "Threads"
+    ],
+    "insight_type": ["anomaly", "trend", "recommendation", "digest"],
+    "severity": ["info", "warning", "critical"],
+    "issue_type": ["null_field", "duplicate", "type_mismatch"],
+    "resolution_type": ["skipped", "enriched", "defaulted"],
+    "forecast_model": ["prophet", "arima", "linear"],
+    "query_type": ["analytical", "semantic_search"]
+  },
+  "key_statistics": {
+    "total_tables": 15,
+    "dimension_tables": 8,
+    "fact_tables": 2,
+    "bridge_tables": 1,
+    "operational_tables": 4,
+    "materialized_views": 3,
+    "note": "40 of 45 users work across multiple channels"
+  }
+}
