@@ -105,6 +105,14 @@ export function NLQTab({ clientId }: Props) {
             </div>
           )}
 
+          {/* Direct answer */}
+          {!result.error && result.answer && (
+            <div className="bg-gray-900 border border-gray-700 rounded-xl px-5 py-4">
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Answer</p>
+              <p className="text-gray-100 text-sm leading-relaxed">{result.answer}</p>
+            </div>
+          )}
+
           {/* Chart / table */}
           {!result.error && result.data.length > 0 && (
             <ChartRenderer spec={{

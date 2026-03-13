@@ -115,6 +115,7 @@ export interface Insight {
 
 export interface NLQResult {
   question: string
+  answer?: string
   sql: string | null
   chart_type: 'bar' | 'line' | 'pie' | 'table' | 'stacked_bar'
   title: string

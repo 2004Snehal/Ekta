@@ -6,7 +6,7 @@ Flow: question → LLM (generates SQL + chart spec) → validate → execute →
 import re
 from datetime import datetime
 from intelligence.nlq.context import build_system_prompt
-from intelligence.nlq.llm import call_llm
+from intelligence.nlq.llm import call_llm, generate_answer
 
 REQUIRED_KEYS = {"sql", "chart_type", "title", "x", "y"}
 
@@ -63,8 +63,12 @@ def run_nlq_query(question: str, client_id: int, conn) -> dict:
     if not success:
         return _error(f"SQL execution failed: {error_msg}", question)
 
+    # 7. Generate answer from real data (second lightweight LLM call)
+    answer = generate_answer(question, data)
+
     return {
         "question": question,
+        "answer": answer,
         "sql": sql,
         "chart_type": llm_response.get("chart_type", "table"),
         "title": llm_response.get("title", ""),
