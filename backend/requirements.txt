@@ -16,3 +16,4 @@ openai==1.58.1
 
 # Data
 python-multipart==0.0.20
+pandas

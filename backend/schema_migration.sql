@@ -1,4 +1,19 @@
 -- ============================================================
+-- MIGRATION: Unique constraints + dashboard_state table
+-- Run once against your Supabase / PostgreSQL database
+-- ============================================================
+
+-- Unique constraints required by the upsert ingestion script
+ALTER TABLE dim_channel
+    ADD CONSTRAINT uq_dim_channel_code UNIQUE (channel_code);
+
+ALTER TABLE dim_user
+    ADD CONSTRAINT uq_dim_user_client_name UNIQUE (client_id, user_name);
+
+ALTER TABLE dim_team
+    ADD CONSTRAINT uq_dim_team_client_name UNIQUE (client_id, team_name);
+
+-- ============================================================
 -- MIGRATION: Add dashboard_state table for shareable links
 -- Run once against your Supabase / PostgreSQL database
 -- ============================================================
