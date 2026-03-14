@@ -1,6 +1,6 @@
 import pandas as pd
 import psycopg2
-from config import DATABASE_URL
+from backend_config import DATABASE_URL
 from datetime import datetime, timedelta
 import random
 

@@ -10,7 +10,9 @@ if not DATABASE_URL:
 # ── LLM settings ─────────────────────────────────────────────────────────────
 # To switch providers: set LLM_PROVIDER=openai in .env
 # To switch models:    set LLM_MODEL=gemini-1.5-pro  (or gpt-4o, etc.) in .env
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")   # "gemini" | "openai"
+_raw_provider = os.getenv("LLM_PROVIDER", "gemini")
+# NLQ layer only supports gemini/openai — fall back to gemini if kpi_agent's groq is set
+LLM_PROVIDER = _raw_provider if _raw_provider in ("gemini", "openai") else "gemini"
 LLM_MODEL    = os.getenv("LLM_MODEL",    "gemini-2.5-flash")
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")

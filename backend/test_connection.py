@@ -1,7 +1,7 @@
 import psycopg2
 import socket
 from urllib.parse import urlparse, parse_qs
-from config import DATABASE_URL
+from backend_config import DATABASE_URL
 
 def test_connection():
     """Test PostgreSQL connection with basic network diagnostics."""

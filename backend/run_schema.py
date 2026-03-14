@@ -1,5 +1,5 @@
 import psycopg2
-from config import DATABASE_URL
+from backend_config import DATABASE_URL
 
 def run_schema():
     """Execute the schema.sql file to create all tables."""

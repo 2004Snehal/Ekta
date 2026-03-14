@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes import dashboard, intelligence, ingest, nlq
 from api.routes import state as state_route
 from api.routes import dashboard_data
+from api.routes import nlq_session
+from api.routes import kpi_lab
 
 app = FastAPI(
     title="Frammer AI Analytics API",
@@ -28,6 +30,8 @@ app.include_router(dashboard.router,      tags=["Dashboard"])   # legacy KPI / f
 app.include_router(intelligence.router,   tags=["Intelligence"])
 app.include_router(ingest.router,         tags=["Ingest"])
 app.include_router(nlq.router,            tags=["NLQ"])
+app.include_router(nlq_session.router,    tags=["NLQ"])
+app.include_router(kpi_lab.router,        tags=["KPI Lab"])  # Auto-KPI Discovery Engine
 
 
 @app.get("/health")

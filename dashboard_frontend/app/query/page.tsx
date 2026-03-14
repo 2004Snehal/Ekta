@@ -1,27 +1,32 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ChartRenderer } from '@/components/ChartRenderer';
-import { Send, Code2, Clock, AlertCircle, Loader2, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
+import {
+  Send, Code2, Clock, AlertCircle, Loader2,
+  ChevronDown, ChevronRight, Sparkles, Plus, Share2, Trash2, Check,
+} from 'lucide-react';
 import type { UniversalChartSpec } from '@/types/chart';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
+const API_URL   = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 const CLIENT_ID = 1;
+const USER_ID   = 'default-user';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface NLQResult {
-  question:   string;
-  sql:        string | null;
-  chart_type: string;
-  title:      string;
-  x:          string;
-  y:          string;
+  question:    string;
+  sql:         string | null;
+  chart_type:  string;
+  title:       string;
+  x:           string;
+  y:           string;
   description: string;
-  data:       Record<string, unknown>[];
-  columns:    string[];
-  row_count:  number;
-  error?:     string;
+  data:        Record<string, unknown>[];
+  columns:     string[];
+  row_count:   number;
+  error?:      string;
 }
 
 interface Message {
@@ -30,28 +35,64 @@ interface Message {
   question?: string;
   result?:   NLQResult;
   loading?:  boolean;
-  ts:        Date;
+  ts:        string; // ISO string for serialisation
+}
+
+interface SessionSummary {
+  session_id:   string;
+  title:        string;
+  messageCount: number;
+  updatedAt:    string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function nlqToChartSpec(r: NLQResult): UniversalChartSpec {
-  return {
-    chart_type:  r.chart_type as UniversalChartSpec['chart_type'],
-    title:       r.title,
-    description: r.description,
-    x:           r.x,
-    y:           r.y,
-    data:        r.data,
-  };
+  return { chart_type: r.chart_type as UniversalChartSpec['chart_type'], title: r.title, description: r.description, x: r.x, y: r.y, data: r.data };
 }
 
-function formatTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function uid() {
-  return Math.random().toString(36).slice(2);
+function formatDate(iso: string | null) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function uid() { return Math.random().toString(36).slice(2); }
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+
+async function apiSaveSession(sessionId: string | null, messages: Message[], title?: string) {
+  const res = await fetch(`${API_URL}/nlq/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, userId: USER_ID, title, messages }),
+  });
+  if (!res.ok) throw new Error('Failed to save session');
+  return (await res.json()) as { session_id: string };
+}
+
+async function apiLoadSession(sessionId: string) {
+  const res = await fetch(`${API_URL}/nlq/sessions/${sessionId}`);
+  if (!res.ok) throw new Error('Session not found');
+  return res.json() as Promise<{ session_id: string; title: string; messages: Message[] }>;
+}
+
+async function apiListSessions() {
+  const res = await fetch(`${API_URL}/nlq/sessions?user_id=${USER_ID}`);
+  if (!res.ok) return [];
+  return res.json() as Promise<SessionSummary[]>;
+}
+
+async function apiDeleteSession(sessionId: string) {
+  await fetch(`${API_URL}/nlq/sessions/${sessionId}`, { method: 'DELETE' });
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -64,29 +105,36 @@ function SqlBlock({ sql }: { sql: string }) {
   );
 }
 
-function HistoryItem({
-  msg,
-  active,
-  onClick,
+function SessionItem({
+  session, active, onClick, onDelete,
 }: {
-  msg: Message;
+  session: SessionSummary;
   active: boolean;
   onClick: () => void;
+  onDelete: (e: React.MouseEvent) => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors group ${
+      className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors group relative ${
         active ? 'bg-primary/20 border border-primary/40' : 'hover:bg-sidebar-accent border border-transparent'
       }`}
     >
-      <div className="flex items-start gap-2">
-        <div className={`mt-0.5 shrink-0 w-2 h-2 rounded-full ${active ? 'bg-primary' : 'bg-muted-foreground/40 group-hover:bg-muted-foreground'}`} />
+      <div className="flex items-start gap-2 pr-6">
+        <div className={`mt-1 shrink-0 w-1.5 h-1.5 rounded-full ${active ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-foreground truncate leading-snug">{msg.question}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{formatTime(msg.ts)}</p>
+          <p className="text-sm text-foreground truncate leading-snug">{session.title}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {formatDate(session.updatedAt)} · {session.messageCount} msgs
+          </p>
         </div>
       </div>
+      <button
+        onClick={onDelete}
+        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 rounded hover:text-destructive transition-all"
+      >
+        <Trash2 className="w-3 h-3" />
+      </button>
     </button>
   );
 }
@@ -135,23 +183,18 @@ function AssistantBubble({ msg }: { msg: Message }) {
         <Sparkles className="w-3.5 h-3.5 text-primary" />
       </div>
       <div className="flex-1 space-y-3">
-        {/* Header */}
         <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
           <p className="text-sm font-medium text-foreground">{r.title || 'Result'}</p>
-          {r.description && (
-            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{r.description}</p>
-          )}
+          {r.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{r.description}</p>}
           <p className="text-xs text-muted-foreground mt-1">{r.row_count.toLocaleString()} rows</p>
         </div>
 
-        {/* Chart */}
         {r.data.length > 0 && (
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <ChartRenderer chart={nlqToChartSpec(r)} />
           </div>
         )}
 
-        {/* SQL toggle */}
         {r.sql && (
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <button
@@ -162,11 +205,7 @@ function AssistantBubble({ msg }: { msg: Message }) {
               <span>SQL</span>
               {sqlOpen ? <ChevronDown className="w-3 h-3 ml-auto" /> : <ChevronRight className="w-3 h-3 ml-auto" />}
             </button>
-            {sqlOpen && (
-              <div className="px-4 pb-4">
-                <SqlBlock sql={r.sql} />
-              </div>
-            )}
+            {sqlOpen && <div className="px-4 pb-4"><SqlBlock sql={r.sql} /></div>}
           </div>
         )}
       </div>
@@ -177,73 +216,185 @@ function AssistantBubble({ msg }: { msg: Message }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function QueryPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const router       = useRouter();
+  const searchParams = useSearchParams();
+
+  const [messages,        setMessages]        = useState<Message[]>([]);
+  const [sessionId,       setSessionId]       = useState<string | null>(null);
+  const [sessions,        setSessions]        = useState<SessionSummary[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [input,           setInput]           = useState('');
+  const [isLoading,       setIsLoading]       = useState(false);
+  const [copied,          setCopied]          = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
 
-  // history = only assistant messages that have a result
-  const history = messages.filter((m) => m.role === 'assistant' && m.result && !m.result.error);
-  const activeMsg = activeHistoryId ? messages.find((m) => m.id === activeHistoryId) : null;
+  const bottomRef   = useRef<HTMLDivElement>(null);
+  const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // SQL shown in left panel = active history item, or last successful assistant message
-  const sqlMsg = activeMsg ?? [...messages].reverse().find((m) => m.role === 'assistant' && m.result?.sql);
+  // ── Load sessions list ───────────────────────────────────────────────────
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const list = await apiListSessions();
+      setSessions(list);
+    } catch { /* ignore */ } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  // ── Hydrate from URL ?session= param ────────────────────────────────────
+
+  useEffect(() => {
+    const urlSession = searchParams.get('session');
+    if (urlSession) {
+      apiLoadSession(urlSession)
+        .then((data) => {
+          setSessionId(data.session_id);
+          setMessages(data.messages.filter((m) => !m.loading));
+        })
+        .catch(() => { /* session not found, start fresh */ });
+    }
+    void refreshSessions();
+  }, [searchParams, refreshSessions]);
+
+  // ── Scroll to bottom on new messages ────────────────────────────────────
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // ── Auto-save session after each message ────────────────────────────────
+
+  const persistSession = useCallback((msgs: Message[], sid: string | null) => {
+    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+    saveTimeout.current = setTimeout(async () => {
+      try {
+        const persistable = msgs.filter((m) => !m.loading);
+        if (persistable.length === 0) return;
+        const { session_id } = await apiSaveSession(sid, persistable);
+        if (!sid) {
+          // New session created — update URL without full navigation
+          setSessionId(session_id);
+          window.history.replaceState({}, '', `/query?session=${session_id}`);
+          void refreshSessions();
+        } else {
+          // Update title in sidebar
+          void refreshSessions();
+        }
+      } catch { /* non-critical */ }
+    }, 600);
+  }, [refreshSessions]);
+
+  // ── Send question ────────────────────────────────────────────────────────
+
   async function sendQuestion(question: string) {
     if (!question.trim() || isLoading) return;
 
-    const userMsg: Message = { id: uid(), role: 'user', question: question.trim(), ts: new Date() };
-    const pendingId = uid();
-    const pendingMsg: Message = { id: pendingId, role: 'assistant', loading: true, ts: new Date() };
+    const userMsg: Message    = { id: uid(), role: 'user', question: question.trim(), ts: new Date().toISOString() };
+    const pendingId           = uid();
+    const pendingMsg: Message = { id: pendingId, role: 'assistant', loading: true, ts: new Date().toISOString() };
 
     setMessages((prev) => [...prev, userMsg, pendingMsg]);
     setInput('');
     setIsLoading(true);
 
+    let nextMessages: Message[] = [];
+
     try {
-      const res = await fetch(`${API_URL}/nlq/query`, {
-        method: 'POST',
+      const res    = await fetch(`${API_URL}/nlq/query`, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question.trim(), client_id: CLIENT_ID }),
+        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID }),
+      });
+      const result: NLQResult = await res.json();
+      const doneMsg: Message  = { id: pendingId, role: 'assistant', question: question.trim(), result, ts: new Date().toISOString() };
+
+      setMessages((prev) => {
+        nextMessages = prev.map((m) => (m.id === pendingId ? doneMsg : m));
+        return nextMessages;
       });
 
-      const result: NLQResult = await res.json();
-      const doneMsg: Message = { id: pendingId, role: 'assistant', question: question.trim(), result, ts: new Date() };
-
-      setMessages((prev) => prev.map((m) => (m.id === pendingId ? doneMsg : m)));
-      if (!result.error) {
-        setActiveHistoryId(pendingId);
-      }
+      if (!result.error) setActiveHistoryId(pendingId);
     } catch (err) {
       const errMsg: Message = {
-        id: pendingId,
-        role: 'assistant',
-        question: question.trim(),
+        id: pendingId, role: 'assistant', question: question.trim(),
         result: {
           question: question.trim(), sql: null, chart_type: 'table', title: 'Error',
           x: '', y: '', description: '', data: [], columns: [], row_count: 0,
           error: err instanceof Error ? err.message : 'Network error — is the backend running?',
         },
-        ts: new Date(),
+        ts: new Date().toISOString(),
       };
-      setMessages((prev) => prev.map((m) => (m.id === pendingId ? errMsg : m)));
+      setMessages((prev) => {
+        nextMessages = prev.map((m) => (m.id === pendingId ? errMsg : m));
+        return nextMessages;
+      });
     } finally {
       setIsLoading(false);
+      if (nextMessages.length > 0) persistSession(nextMessages, sessionId);
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void sendQuestion(input);
-    }
+  // ── New chat ─────────────────────────────────────────────────────────────
+
+  function startNewChat() {
+    setMessages([]);
+    setSessionId(null);
+    setActiveHistoryId(null);
+    window.history.replaceState({}, '', '/query');
   }
+
+  // ── Load a session from the sidebar ─────────────────────────────────────
+
+  async function openSession(sid: string) {
+    if (sid === sessionId) return;
+    try {
+      const data = await apiLoadSession(sid);
+      setSessionId(data.session_id);
+      setMessages(data.messages.filter((m) => !m.loading));
+      setActiveHistoryId(null);
+      window.history.replaceState({}, '', `/query?session=${sid}`);
+    } catch { /* ignore */ }
+  }
+
+  // ── Delete session ───────────────────────────────────────────────────────
+
+  async function deleteSession(e: React.MouseEvent, sid: string) {
+    e.stopPropagation();
+    await apiDeleteSession(sid);
+    setSessions((prev) => prev.filter((s) => s.session_id !== sid));
+    if (sid === sessionId) startNewChat();
+  }
+
+  // ── Share ────────────────────────────────────────────────────────────────
+
+  async function shareSession() {
+    let sid = sessionId;
+    if (!sid) {
+      // Save first if unsaved
+      const persistable = messages.filter((m) => !m.loading);
+      if (persistable.length === 0) return;
+      const { session_id } = await apiSaveSession(null, persistable);
+      sid = session_id;
+      setSessionId(sid);
+    }
+    const url = `${window.location.origin}/query?session=${sid}`;
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendQuestion(input); }
+  }
+
+  // ── Derived state ────────────────────────────────────────────────────────
+
+  const history  = messages.filter((m) => m.role === 'assistant' && m.result && !m.result.error);
+  const activeMsg = activeHistoryId ? messages.find((m) => m.id === activeHistoryId) : null;
+  const sqlMsg    = activeMsg ?? [...messages].reverse().find((m) => m.role === 'assistant' && m.result?.sql);
 
   const suggestions = [
     'Which channel had the highest publish rate last month?',
@@ -254,30 +405,46 @@ export default function QueryPage() {
 
   return (
     <div className="flex h-screen overflow-hidden">
+
       {/* ── LEFT PANEL ──────────────────────────────────────────────────── */}
       <aside className="w-80 shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
+
         {/* Header */}
-        <div className="px-5 py-4 border-b border-sidebar-border">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-sidebar-foreground">Query History</h2>
+        <div className="px-4 py-3 border-b border-sidebar-border">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-sidebar-foreground">Sessions</h2>
+            </div>
+            <button
+              onClick={startNewChat}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border hover:border-primary/50 rounded-lg px-2.5 py-1.5 transition-colors"
+            >
+              <Plus className="w-3 h-3" />
+              New Chat
+            </button>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">Click a query to preview its SQL</p>
+          <p className="text-xs text-muted-foreground">Click a session to restore it</p>
         </div>
 
-        {/* History list */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          {history.length === 0 ? (
+        {/* Session list */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {sessionsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            </div>
+          ) : sessions.length === 0 ? (
             <div className="text-center text-muted-foreground text-xs py-8 px-4 leading-relaxed">
-              Your queries will appear here. Ask something to get started.
+              Your chat sessions will appear here.
             </div>
           ) : (
-            [...history].reverse().map((msg) => (
-              <HistoryItem
-                key={msg.id}
-                msg={msg}
-                active={activeHistoryId === msg.id}
-                onClick={() => setActiveHistoryId(msg.id === activeHistoryId ? null : msg.id)}
+            sessions.map((s) => (
+              <SessionItem
+                key={s.session_id}
+                session={s}
+                active={s.session_id === sessionId}
+                onClick={() => void openSession(s.session_id)}
+                onDelete={(e) => void deleteSession(e, s.session_id)}
               />
             ))
           )}
@@ -289,13 +456,11 @@ export default function QueryPage() {
             <Code2 className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">SQL Preview</span>
           </div>
-          <div className="px-3 pb-4 max-h-64 overflow-y-auto">
+          <div className="px-3 pb-4 max-h-52 overflow-y-auto">
             {sqlMsg?.result?.sql ? (
               <SqlBlock sql={sqlMsg.result.sql} />
             ) : (
-              <p className="text-xs text-muted-foreground italic px-1 py-2">
-                No query selected yet.
-              </p>
+              <p className="text-xs text-muted-foreground italic px-1 py-2">No query selected yet.</p>
             )}
           </div>
         </div>
@@ -303,20 +468,32 @@ export default function QueryPage() {
 
       {/* ── RIGHT PANEL ─────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col overflow-hidden bg-background">
+
         {/* Top bar */}
-        <div className="px-6 py-4 border-b border-border shrink-0">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary" />
-            <h1 className="text-lg font-semibold text-foreground">Natural Language Query</h1>
+        <div className="px-6 py-4 border-b border-border shrink-0 flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              <h1 className="text-lg font-semibold text-foreground">Natural Language Query</h1>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Ask any question about your video operations data — the AI generates SQL and visualises the result.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Ask any question about your video operations data — the AI generates SQL and visualises the result.
-          </p>
+
+          {messages.length > 0 && (
+            <button
+              onClick={() => void shareSession()}
+              className="flex items-center gap-2 text-xs border border-border hover:border-primary/50 rounded-lg px-3 py-2 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Share2 className="w-3.5 h-3.5" />}
+              {copied ? 'Copied!' : 'Share'}
+            </button>
+          )}
         </div>
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
-          {/* Empty state */}
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full gap-8 text-center">
               <div>
@@ -325,7 +502,7 @@ export default function QueryPage() {
                 </div>
                 <h2 className="text-xl font-semibold text-foreground">Ask your data anything</h2>
                 <p className="text-sm text-muted-foreground mt-2 max-w-md">
-                  Type a plain-English question. The AI will generate SQL, run it against your Frammer database, and render the result as a chart.
+                  Type a plain-English question. The AI generates SQL, runs it, and renders the result as a chart.
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
@@ -342,7 +519,6 @@ export default function QueryPage() {
             </div>
           )}
 
-          {/* Conversation */}
           {messages.map((msg) =>
             msg.role === 'user' ? (
               <UserBubble key={msg.id} text={msg.question!} />
@@ -357,7 +533,6 @@ export default function QueryPage() {
         <div className="px-6 pb-6 shrink-0">
           <div className="relative flex items-end gap-3 bg-card border border-border rounded-2xl px-4 py-3 focus-within:border-primary/60 transition-colors">
             <textarea
-              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -372,11 +547,9 @@ export default function QueryPage() {
               disabled={!input.trim() || isLoading}
               className="shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
             >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 text-primary-foreground animate-spin" />
-              ) : (
-                <Send className="w-4 h-4 text-primary-foreground" />
-              )}
+              {isLoading
+                ? <Loader2 className="w-4 h-4 text-primary-foreground animate-spin" />
+                : <Send className="w-4 h-4 text-primary-foreground" />}
             </button>
           </div>
           <p className="text-xs text-muted-foreground text-center mt-2">

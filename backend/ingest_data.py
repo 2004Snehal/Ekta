@@ -19,7 +19,13 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
-from config import DATABASE_URL
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
+from backend_config import DATABASE_URL
 
 
 # ── Column alias map ──────────────────────────────────────────────────────────
@@ -275,6 +281,18 @@ CREATE INDEX IF NOT EXISTS idx_fcv_video_id
     ON fact_created_videos(video_id);
 CREATE INDEX IF NOT EXISTS idx_dashboard_state_user
     ON dashboard_state(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS nlq_session (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    VARCHAR(200),
+    title      TEXT,
+    messages   JSONB NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_nlq_session_user
+    ON nlq_session(user_id, updated_at DESC);
 """
 
 MATERIALIZED_VIEWS_SQL = """
@@ -315,14 +333,32 @@ GROUP BY 1,2,3;
 """
 
 
+def _split_sql(sql: str) -> list[str]:
+    """Split a SQL string into individual statements, skipping blanks."""
+    return [s.strip() for s in sql.strip().split(";") if s.strip()]
+
+
 def ensure_schema(conn):
-    """Create all tables, indexes, and materialized views if they don't exist."""
+    """Create all tables and indexes one statement at a time (avoids Supabase timeouts)."""
     print("Ensuring schema exists...")
+    stmts = _split_sql(SCHEMA_SQL)
+    total = len(stmts)
     with conn.cursor() as cur:
-        cur.execute(SCHEMA_SQL)
-        conn.commit()
-        # Materialized views: CREATE IF NOT EXISTS only works on PG 9.3+
-        # but won't error if view already exists with this guard
+        for i, stmt in enumerate(stmts, 1):
+            try:
+                cur.execute(stmt)
+                conn.commit()
+            except psycopg2.errors.DuplicateTable:
+                conn.rollback()
+            except psycopg2.errors.DuplicateObject:
+                conn.rollback()
+            except Exception as e:
+                conn.rollback()
+                print(f"  [WARN] stmt {i}/{total} skipped: {e}")
+            if i % 5 == 0 or i == total:
+                print(f"  {i}/{total} statements done…")
+
+        # Materialized views — each is one statement, catch if already exists
         for stmt in MATERIALIZED_VIEWS_SQL.strip().split("\n\n"):
             stmt = stmt.strip()
             if not stmt:
@@ -330,8 +366,12 @@ def ensure_schema(conn):
             try:
                 cur.execute(stmt)
                 conn.commit()
-            except psycopg2.errors.DuplicateTable:
-                conn.rollback()  # view already exists, skip
+            except (psycopg2.errors.DuplicateTable, psycopg2.errors.DuplicateObject):
+                conn.rollback()
+            except Exception as e:
+                conn.rollback()
+                print(f"  [WARN] view skipped: {e}")
+
     print("  Schema ready.\n")
 
 
@@ -340,19 +380,24 @@ def ensure_schema(conn):
 def connect_db():
     """
     Connect to Supabase/PostgreSQL, safely handling special chars in the password.
-    psycopg2 DSN parsing fails if the password contains un-encoded '%' chars,
-    so we parse the URL ourselves and pass keyword arguments instead.
+    Disables statement_timeout for the session so bulk inserts are not cancelled.
     """
     parsed = urlparse(DATABASE_URL)
-    return psycopg2.connect(
+    conn = psycopg2.connect(
         host=parsed.hostname,
         port=parsed.port or 5432,
         dbname=parsed.path.lstrip("/"),
         user=parsed.username,
         password=unquote(parsed.password) if parsed.password else None,
-        sslmode="require",   # Supabase requires SSL
+        sslmode="require",
         connect_timeout=15,
     )
+    # Disable statement timeout for this session (Supabase default is ~30s)
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0")
+        cur.execute("SET lock_timeout = 0")
+    conn.commit()
+    return conn
 
 
 # ── Column resolution ─────────────────────────────────────────────────────────
@@ -585,90 +630,165 @@ def populate_dimensions(conn, df: pd.DataFrame, resolved: dict, client_id: int) 
 
 # ── Fact table ────────────────────────────────────────────────────────────────
 
+def _parse_duration_vec(series: pd.Series) -> pd.Series:
+    """Vectorized HH:MM:SS → seconds. Returns int or None per row."""
+    def _one(v):
+        if pd.isna(v):
+            return None
+        parts = str(v).strip().split(":")
+        try:
+            if len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            if len(parts) == 2:
+                return int(parts[0]) * 60 + int(parts[1])
+            return int(float(str(v)))
+        except (ValueError, IndexError):
+            return None
+    return series.apply(_one)
+
+
+def _parse_timestamp_vec(series: pd.Series) -> pd.Series:
+    """Try common formats; return NaT (→ None) on failure."""
+    for fmt in KNOWN_TIMESTAMP_FORMATS:
+        try:
+            parsed = pd.to_datetime(series, format=fmt, errors="coerce")
+            if parsed.notna().mean() > 0.5:   # more than half parsed → good format
+                return parsed
+        except Exception:
+            continue
+    return pd.to_datetime(series, errors="coerce")   # last-resort generic parse
+
+
+def _to_int(v):
+    """Convert to Python int, or None if null/NaN."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return int(v)
+
+
+def _to_str(v):
+    """Convert to Python str, or None if null/NaN."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    return s if s else None
+
+
 def load_facts(conn, df: pd.DataFrame, resolved: dict, client_id: int,
                maps: dict, dry_run: bool = False) -> tuple[int, int]:
-    inserted = skipped = 0
-    batch = []
-    BATCH_SIZE = 500
+    """
+    Vectorized bulk insert — all FK lookups done with pandas .map(),
+    timestamps and durations parsed as whole Series, then inserted in
+    large batches of 5000. Safe to re-run: ON CONFLICT (video_id) DO NOTHING.
+    """
+    BATCH_SIZE = 5000
 
-    def flush(cur):
-        nonlocal inserted
-        if not batch:
-            return
-        execute_values(cur, """
-            INSERT INTO fact_created_videos (
-                video_id, client_id, channel_id, user_id, team_id,
-                input_type_id, output_type_id, language_id,
-                headline, source_url,
-                uploaded_duration_secs, created_duration_secs, published_duration_secs,
-                uploaded_at,
-                published_flag, published_platform_id, published_url
-            ) VALUES %s
-            ON CONFLICT (video_id) DO NOTHING
-        """, batch)
-        inserted += len(batch)
-        batch.clear()
+    print("  Vectorizing columns…")
 
-    cur = conn.cursor() if not dry_run else None
+    def gcol(name) -> pd.Series:
+        return col(df, resolved, name)
 
-    try:
-        for idx in df.index:
-            user_name    = str(col(df, resolved, "uploaded_by")[idx] or "").strip()
-            channel_code = str(col(df, resolved, "channel")[idx] or "").strip()
+    def sstrip(s: pd.Series) -> pd.Series:
+        return s.astype(str).str.strip().where(s.notna(), None)
 
-            user_id    = maps["user"].get(user_name)
-            channel_id = maps["channel"].get(channel_code)
+    # ── FK lookups (vectorized) ────────────────────────────────────────────
+    user_ids    = sstrip(gcol("uploaded_by")).map(maps["user"])
+    channel_ids = sstrip(gcol("channel")).map(maps["channel"])
 
-            if not user_id or not channel_id:
-                skipped += 1
-                continue
+    valid_mask  = user_ids.notna() & channel_ids.notna()
+    skipped     = int((~valid_mask).sum())
+    print(f"  Valid rows: {valid_mask.sum():,}  |  Skipped (no user/channel): {skipped:,}")
 
-            def get(c, _idx=idx):
-                v = col(df, resolved, c)[_idx]
-                return str(v).strip() if pd.notna(v) and str(v).strip() else None
+    if valid_mask.sum() == 0:
+        return 0, skipped
 
-            team_id         = maps["team"].get(get("team_name") or "")
-            input_type_id   = maps["input_type"].get(get("type") or "")
-            output_type_id  = maps["output_type"].get(get("output_type") or "")
-            language_id     = maps["language"].get(get("language") or "")
-            pub_platform    = get("published_platform")
-            pub_platform_id = maps["platform"].get(pub_platform) if pub_platform else None
+    team_ids        = sstrip(gcol("team_name")).map(maps["team"])
+    input_type_ids  = sstrip(gcol("type")).map(maps["input_type"])
+    output_type_ids = sstrip(gcol("output_type")).map(maps["output_type"])
+    language_ids    = sstrip(gcol("language")).map(maps["language"])
+    platform_ids    = sstrip(gcol("published_platform")).map(maps["platform"])
 
-            published_val  = get("published")
-            published_flag = published_val.lower() in ("yes", "true", "1") if published_val else False
+    # ── Scalars ────────────────────────────────────────────────────────────
+    pub_raw    = sstrip(gcol("published")).str.lower()
+    pub_flags  = pub_raw.isin(["yes", "true", "1"])
 
-            video_id_ext = get("video_id") or f"row_{idx}"
+    vid_raw    = gcol("video_id")
+    video_ids  = vid_raw.astype(str).str.strip().where(vid_raw.notna(),
+                     pd.Series([f"row_{i}" for i in df.index], index=df.index))
 
-            batch.append((
-                video_id_ext, client_id, channel_id, user_id, team_id,
-                input_type_id, output_type_id, language_id,
-                get("headline"), get("source"),
-                duration_to_secs(col(df, resolved, "uploaded_duration")[idx]),
-                duration_to_secs(col(df, resolved, "created_duration")[idx]),
-                duration_to_secs(col(df, resolved, "published_duration")[idx]),
-                parse_timestamp(col(df, resolved, "uploaded_at")[idx]),
-                published_flag, pub_platform_id, get("published_url"),
-            ))
+    headlines  = gcol("headline").where(gcol("headline").notna(), None)
+    sources    = gcol("source").where(gcol("source").notna(), None)
+    pub_urls   = gcol("published_url").where(gcol("published_url").notna(), None)
 
-            if len(batch) >= BATCH_SIZE:
-                if not dry_run:
-                    flush(cur)
-                else:
-                    inserted += len(batch)
-                    batch.clear()
-                print(f"  {inserted + skipped}/{len(df)} rows processed…")
+    # ── Timestamps & durations ─────────────────────────────────────────────
+    print("  Parsing timestamps…")
+    uploaded_at = _parse_timestamp_vec(gcol("uploaded_at"))
 
-        if not dry_run:
-            flush(cur)
-        else:
+    print("  Parsing durations…")
+    up_dur = _parse_duration_vec(gcol("uploaded_duration"))
+    cr_dur = _parse_duration_vec(gcol("created_duration"))
+    pu_dur = _parse_duration_vec(gcol("published_duration"))
+
+    # ── Build rows list (only valid rows) ──────────────────────────────────
+    print("  Building row tuples…")
+    valid_idx = df.index[valid_mask]
+
+    rows = [
+        (
+            _to_str(video_ids[i]),
+            client_id,
+            _to_int(channel_ids[i]),
+            _to_int(user_ids[i]),
+            _to_int(team_ids[i]),
+            _to_int(input_type_ids[i]),
+            _to_int(output_type_ids[i]),
+            _to_int(language_ids[i]),
+            _to_str(headlines[i]),
+            _to_str(sources[i]),
+            _to_int(up_dur[i]),
+            _to_int(cr_dur[i]),
+            _to_int(pu_dur[i]),
+            None if pd.isna(uploaded_at[i]) else uploaded_at[i].to_pydatetime(),
+            bool(pub_flags[i]),
+            _to_int(platform_ids[i]),
+            _to_str(pub_urls[i]),
+        )
+        for i in valid_idx
+    ]
+
+    total   = len(rows)
+    inserted = 0
+
+    if dry_run:
+        print(f"  DRY RUN — would insert {total:,} rows")
+        return total, skipped
+
+    INSERT_SQL = """
+        INSERT INTO fact_created_videos (
+            video_id, client_id, channel_id, user_id, team_id,
+            input_type_id, output_type_id, language_id,
+            headline, source_url,
+            uploaded_duration_secs, created_duration_secs, published_duration_secs,
+            uploaded_at,
+            published_flag, published_platform_id, published_url
+        ) VALUES %s
+        ON CONFLICT (video_id) DO NOTHING
+    """
+
+    print(f"  Inserting {total:,} rows in batches of {BATCH_SIZE}…")
+    with conn.cursor() as cur:
+        for start in range(0, total, BATCH_SIZE):
+            batch = rows[start : start + BATCH_SIZE]
+            execute_values(cur, INSERT_SQL, batch, page_size=BATCH_SIZE)
+            conn.commit()
             inserted += len(batch)
-
-    finally:
-        if cur:
-            cur.close()
-
-    if not dry_run:
-        conn.commit()
+            print(f"  {inserted:,}/{total:,} rows inserted…")
 
     return inserted, skipped
 
@@ -725,6 +845,142 @@ def print_counts(conn):
             print(f"  {t}: {cur.fetchone()[0]}")
 
 
+# ── Raw mode ──────────────────────────────────────────────────────────────────
+
+import hashlib
+import re
+
+
+def _pg_type(dtype) -> str:
+    """Map a pandas dtype to a PostgreSQL column type."""
+    s = str(dtype)
+    if s.startswith("int"):
+        return "BIGINT"
+    if s.startswith("float"):
+        return "DOUBLE PRECISION"
+    if s == "bool":
+        return "BOOLEAN"
+    if s.startswith("datetime"):
+        return "TIMESTAMPTZ"
+    return "TEXT"
+
+
+def _safe_col(name: str) -> str:
+    """Convert any column name to a safe SQL identifier."""
+    return re.sub(r"[^a-z0-9_]", "_", name.strip().lower())
+
+
+def _row_hash(row) -> str:
+    raw = "|".join("" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)
+                   for v in row)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def ingest_raw(csv_path: str, table_name: str):
+    """
+    Upload a CSV directly as its own table (no star-schema ETL).
+
+    - Table is created if it does not exist.
+    - A _row_hash column (MD5 of all values) is used as the unique key so
+      re-running the same file never inserts duplicates.
+    - New rows in a re-run are appended; existing rows are skipped silently.
+    """
+    print("=" * 60)
+    print("FRAMMER AI ANALYTICS — RAW CSV UPLOAD")
+    print(f"  CSV   : {csv_path}")
+    print(f"  Table : {table_name}")
+    print("=" * 60)
+
+    # Load CSV
+    try:
+        df = pd.read_csv(csv_path, low_memory=False)
+    except FileNotFoundError:
+        print(f"\nERROR: File not found: {csv_path}")
+        sys.exit(1)
+
+    print(f"\nLoaded {len(df):,} rows, {len(df.columns)} columns")
+
+    # Safe column names
+    safe_cols = [_safe_col(c) for c in df.columns]
+    df.columns = safe_cols
+
+    # Build CREATE TABLE DDL
+    col_defs = ",\n    ".join(f'"{c}" {_pg_type(df[c].dtype)}' for c in safe_cols)
+    create_sql = f"""
+CREATE TABLE IF NOT EXISTS "{table_name}" (
+    _row_hash TEXT PRIMARY KEY,
+    {col_defs}
+)
+""".strip()
+
+    # Connect and create table
+    conn = connect_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(create_sql)
+        conn.commit()
+        print(f"  Table '{table_name}' ready.\n")
+
+        # Build insert SQL
+        quoted_cols = ", ".join(f'"{c}"' for c in safe_cols)
+        insert_sql = f"""
+INSERT INTO "{table_name}" (_row_hash, {quoted_cols})
+VALUES %s
+ON CONFLICT (_row_hash) DO NOTHING
+""".strip()
+
+        # Batch insert
+        BATCH = 5_000
+        total_inserted = total_skipped = 0
+
+        for start in range(0, len(df), BATCH):
+            batch = df.iloc[start : start + BATCH]
+            rows = []
+            for _, row in batch.iterrows():
+                vals = [None if pd.isna(v) else v for v in row]
+                h = _row_hash(vals)
+                # Convert numpy types to Python natives
+                native = []
+                for v in vals:
+                    if v is None:
+                        native.append(None)
+                    else:
+                        if _HAS_NUMPY:
+                            if isinstance(v, np.integer):
+                                v = int(v)
+                            elif isinstance(v, np.floating):
+                                v = float(v)
+                            elif isinstance(v, np.bool_):
+                                v = bool(v)
+                        native.append(v)
+                rows.append((h, *native))
+
+            with conn.cursor() as cur:
+                execute_values(cur, insert_sql, rows, page_size=BATCH)
+                inserted_count = cur.rowcount
+            conn.commit()
+
+            batch_skipped = len(rows) - inserted_count
+            total_inserted += inserted_count
+            total_skipped  += batch_skipped
+            end = min(start + BATCH, len(df))
+            print(f"  Rows {start+1:>7,}–{end:>7,}  |  inserted {inserted_count:,}  skipped {batch_skipped:,}")
+
+        print(f"\n  Total inserted : {total_inserted:,}")
+        print(f"  Total skipped  : {total_skipped:,}  (already in DB)")
+
+    except Exception as e:
+        print(f"\nERROR: {e}")
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    print("\n" + "=" * 60)
+    print("RAW UPLOAD COMPLETE")
+    print("=" * 60)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -733,7 +989,19 @@ def main():
     parser.add_argument("--client",   default="CLIENT_1", help="Client name (default: CLIENT_1)")
     parser.add_argument("--truncate", action="store_true", help="Truncate all tables before ingestion")
     parser.add_argument("--dry-run",  action="store_true", help="Parse and validate without writing to DB")
+    parser.add_argument("--raw",      action="store_true",
+                        help="Upload CSV as its own table (no star-schema ETL)")
+    parser.add_argument("--table",    default=None,
+                        help="Table name for --raw mode (default: derived from filename)")
     args = parser.parse_args()
+
+    # ── Raw mode ──────────────────────────────────────────────────────────────
+    if args.raw:
+        table = args.table or _safe_col(
+            args.csv.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].rsplit(".", 1)[0]
+        )
+        ingest_raw(args.csv, table)
+        return
 
     print("=" * 60)
     print("FRAMMER AI ANALYTICS — DATA INGESTION")
