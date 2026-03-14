@@ -13,6 +13,21 @@ python-dotenv==1.0.1
 # LLM providers (install only what you use)
 google-genai==0.3.0
 openai==1.58.1
+google-generativeai>=0.7.0
 
 # Data
 python-multipart==0.0.20
+pandas>=2.2.0
+
+# Settings / validation
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Vanna AI (RAG Text-to-SQL) — includes ChromaDB vector store
+vanna[chromadb]>=0.7.0
+
+# LIDA (optional insight engine)
+lida>=0.0.12
+
+# Utilities
+httpx>=0.27.0

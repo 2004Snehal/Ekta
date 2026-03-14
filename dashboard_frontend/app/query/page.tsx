@@ -21,6 +21,7 @@ interface NLQResult {
   data:       Record<string, unknown>[];
   columns:    string[];
   row_count:  number;
+  processing_time_ms?: number;
   error?:     string;
 }
 
@@ -101,6 +102,17 @@ function UserBubble({ text }: { text: string }) {
   );
 }
 
+function ElapsedTimer() {
+  const [ms, setMs] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setMs(Date.now() - start), 100);
+    return () => clearInterval(id);
+  }, []);
+  const label = ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+  return <span className="text-xs text-muted-foreground tabular-nums">{label}</span>;
+}
+
 function AssistantBubble({ msg }: { msg: Message }) {
   const [sqlOpen, setSqlOpen] = useState(false);
 
@@ -109,6 +121,7 @@ function AssistantBubble({ msg }: { msg: Message }) {
       <div className="flex items-center gap-3 text-muted-foreground py-2">
         <Loader2 className="w-4 h-4 animate-spin text-primary" />
         <span className="text-sm">Thinking…</span>
+        <ElapsedTimer />
       </div>
     );
   }
@@ -141,7 +154,17 @@ function AssistantBubble({ msg }: { msg: Message }) {
           {r.description && (
             <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{r.description}</p>
           )}
-          <p className="text-xs text-muted-foreground mt-1">{r.row_count.toLocaleString()} rows</p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-xs text-muted-foreground">{r.row_count.toLocaleString()} rows</p>
+            {r.processing_time_ms != null && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {r.processing_time_ms >= 1000
+                  ? `${(r.processing_time_ms / 1000).toFixed(1)}s`
+                  : `${Math.round(r.processing_time_ms)}ms`}
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Chart */}
@@ -212,6 +235,12 @@ export default function QueryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: question.trim(), client_id: CLIENT_ID }),
       });
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).detail ?? detail; } catch {}
+        throw new Error(detail);
+      }
 
       const result: NLQResult = await res.json();
       const doneMsg: Message = { id: pendingId, role: 'assistant', question: question.trim(), result, ts: new Date() };
