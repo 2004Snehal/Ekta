@@ -1,0 +1,72 @@
+version: 2
+
+metrics:
+  # ── Simple counts ──────────────────────────────────────────────────────────
+
+  - name: created_count
+    type: simple
+    description: "Total number of video outputs created"
+    label: "Created Outputs"
+    type_params:
+      measure: created_count
+
+  - name: published_count
+    type: simple
+    description: "Total number of video outputs that were published"
+    label: "Published Outputs"
+    type_params:
+      measure: published_count
+
+  - name: upload_count
+    type: simple
+    description: "Number of distinct source videos uploaded (one source → multiple outputs)"
+    label: "Source Uploads"
+    type_params:
+      measure: upload_count
+
+  # ── Ratio metrics ──────────────────────────────────────────────────────────
+
+  - name: publish_rate
+    type: ratio
+    description: >
+      Percentage of created outputs that were published.
+      Formula: published_count / created_count * 100.
+      Higher is better — indicates strong QC pass rate.
+    label: "Publish Rate %"
+    type_params:
+      numerator: published_count
+      denominator: created_count
+
+  - name: output_multiplier
+    type: ratio
+    description: >
+      Average number of outputs created per source video upload.
+      Formula: created_count / upload_count.
+      Typical value ~3.2 for this platform.
+    label: "Output Multiplier"
+    type_params:
+      numerator: created_count
+      denominator: upload_count
+
+  # ── Duration metrics ───────────────────────────────────────────────────────
+
+  - name: total_uploaded_duration_secs
+    type: simple
+    description: "Total duration of all source videos in seconds"
+    label: "Total Upload Duration (secs)"
+    type_params:
+      measure: total_uploaded_duration_secs
+
+  - name: total_created_duration_secs
+    type: simple
+    description: "Total duration of all created outputs in seconds"
+    label: "Total Created Duration (secs)"
+    type_params:
+      measure: total_created_duration_secs
+
+  - name: total_published_duration_secs
+    type: simple
+    description: "Total duration of all published content in seconds"
+    label: "Total Published Duration (secs)"
+    type_params:
+      measure: total_published_duration_secs

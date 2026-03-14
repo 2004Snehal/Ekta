@@ -2,8 +2,21 @@
 Frammer AI Analytics — FastAPI application entry point.
 """
 
+import logging
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Configure before importing routes so every module's logger inherits this.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+    force=True,
+)
 
 from api.routes import dashboard, intelligence, ingest, nlq
 from api.routes import state as state_route

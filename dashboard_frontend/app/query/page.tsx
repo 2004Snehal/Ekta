@@ -11,17 +11,20 @@ const CLIENT_ID = 1;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface NLQResult {
-  question:   string;
-  sql:        string | null;
-  chart_type: string;
-  title:      string;
-  x:          string;
-  y:          string;
-  description: string;
-  data:       Record<string, unknown>[];
-  columns:    string[];
-  row_count:  number;
-  error?:     string;
+  question:      string;
+  sql:           string | null;
+  chart_type:    string;
+  title:         string;
+  x:             string;
+  y:             string;
+  description:   string;
+  data:          Record<string, unknown>[];
+  columns:       string[];
+  row_count:     number;
+  answer?:       string;
+  path?:         'metricflow' | 'sql' | 'error';
+  query_time_ms?: number;
+  error?:        string;
 }
 
 interface Message {
@@ -129,6 +132,11 @@ function AssistantBubble({ msg }: { msg: Message }) {
     );
   }
 
+  const pathLabel = r.path === 'metricflow' ? 'MetricFlow' : r.path === 'sql' ? 'SQL' : null;
+  const pathColor = r.path === 'metricflow'
+    ? 'bg-violet-500/15 text-violet-400 border-violet-500/30'
+    : 'bg-sky-500/15 text-sky-400 border-sky-500/30';
+
   return (
     <div className="flex gap-3 max-w-[90%]">
       <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
@@ -137,11 +145,26 @@ function AssistantBubble({ msg }: { msg: Message }) {
       <div className="flex-1 space-y-3">
         {/* Header */}
         <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
-          <p className="text-sm font-medium text-foreground">{r.title || 'Result'}</p>
-          {r.description && (
-            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{r.description}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-medium text-foreground">{r.title || 'Result'}</p>
+            {pathLabel && (
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${pathColor}`}>
+                {pathLabel}
+              </span>
+            )}
+          </div>
+          {r.answer && (
+            <p className="text-sm text-foreground/90 mt-2 leading-relaxed">{r.answer}</p>
           )}
-          <p className="text-xs text-muted-foreground mt-1">{r.row_count.toLocaleString()} rows</p>
+          {r.description && (
+            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{r.description}</p>
+          )}
+          <div className="flex items-center gap-3 mt-1.5">
+            <p className="text-xs text-muted-foreground">{r.row_count.toLocaleString()} rows</p>
+            {r.query_time_ms != null && (
+              <p className="text-xs text-muted-foreground">{(r.query_time_ms / 1000).toFixed(2)}s</p>
+            )}
+          </div>
         </div>
 
         {/* Chart */}
