@@ -1,0 +1,156 @@
+version: 2
+
+semantic_models:
+  - name: created_videos
+    description: >
+      One row per created video output. Denormalized with all dimension
+      attributes for MetricFlow. Primary grain is the individual output (id).
+    model: ref('stg_fact_created_videos')
+
+    defaults:
+      agg_time_dimension: created_at
+
+    entities:
+      - name: video_output
+        type: primary
+        expr: id
+
+      - name: client
+        type: foreign
+        expr: client_id
+
+      - name: channel
+        type: foreign
+        expr: channel_id
+
+      - name: user
+        type: foreign
+        expr: user_id
+
+      - name: team
+        type: foreign
+        expr: team_id
+
+    dimensions:
+      # ── Time ──────────────────────────────────────────────────────────────
+      - name: created_at
+        type: time
+        expr: uploaded_at
+        type_params:
+          time_granularity: day
+
+      # ── Client ────────────────────────────────────────────────────────────
+      - name: client_id
+        type: categorical
+        expr: client_id
+        description: "Client identifier — use this in where filters"
+
+      # ── Channel ───────────────────────────────────────────────────────────
+      - name: channel_name
+        type: categorical
+        expr: channel_name
+
+      - name: channel_code
+        type: categorical
+        expr: channel_code
+
+      - name: channel_content_focus
+        type: categorical
+        expr: channel_content_focus
+
+      # ── User ──────────────────────────────────────────────────────────────
+      - name: user_name
+        type: categorical
+        expr: user_name
+
+      - name: user_role
+        type: categorical
+        expr: user_role
+        description: "editor or auto"
+
+      - name: is_bot
+        type: categorical
+        expr: is_bot
+        description: "TRUE for Auto Upload users"
+
+      # ── Team ──────────────────────────────────────────────────────────────
+      - name: team_name
+        type: categorical
+        expr: team_name
+
+      # ── Content type ──────────────────────────────────────────────────────
+      - name: input_type_name
+        type: categorical
+        expr: input_type_name
+        description: "interview, news bulletin, speech, debate, press conference, etc."
+
+      - name: input_type_category
+        type: categorical
+        expr: input_type_category
+        description: "live, recorded, or scripted"
+
+      - name: output_type_name
+        type: categorical
+        expr: output_type_name
+        description: "Full package, Key moments, My Key moments, Chapters, Summary"
+
+      - name: is_short_form
+        type: categorical
+        expr: is_short_form
+        description: "TRUE if output is eligible for Reels/Shorts"
+
+      # ── Language ──────────────────────────────────────────────────────────
+      - name: language_name
+        type: categorical
+        expr: language_name
+
+      - name: language_code
+        type: categorical
+        expr: language_code
+        description: "en, hi, mix, es, ar, mr"
+
+      # ── Platform ──────────────────────────────────────────────────────────
+      - name: platform_name
+        type: categorical
+        expr: platform_name
+        description: "YouTube, Reels, Shorts, Instagram, Facebook, LinkedIn, X, Threads"
+
+      - name: platform_type
+        type: categorical
+        expr: platform_type
+
+      # ── Publish flag ──────────────────────────────────────────────────────
+      - name: published_flag
+        type: categorical
+        expr: published_flag
+
+    measures:
+      - name: created_count
+        description: "Total number of created video outputs (fact rows)"
+        agg: count
+        expr: id
+
+      - name: published_count
+        description: "Total number of published outputs (published_flag = TRUE)"
+        agg: sum_boolean
+        expr: published_flag
+
+      - name: upload_count
+        description: "Count of distinct source videos uploaded"
+        agg: count_distinct
+        expr: video_id
+
+      - name: total_uploaded_duration_secs
+        description: "Sum of source video duration in seconds"
+        agg: sum
+        expr: uploaded_duration_secs
+
+      - name: total_created_duration_secs
+        description: "Sum of created output duration in seconds"
+        agg: sum
+        expr: created_duration_secs
+
+      - name: total_published_duration_secs
+        description: "Sum of published content duration in seconds"
+        agg: sum
+        expr: published_duration_secs

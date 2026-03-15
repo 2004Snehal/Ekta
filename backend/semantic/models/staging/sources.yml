@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: frammer
+    description: "Frammer AI raw PostgreSQL tables"
+    schema: public
+    tables:
+      - name: fact_created_videos
+        description: "One row per created video output"
+      - name: dim_client
+        description: "Client dimension"
+      - name: dim_channel
+        description: "Channel dimension — one workspace per client"
+      - name: dim_user
+        description: "User dimension — editors and auto-upload bots"
+      - name: dim_team
+        description: "Team dimension"
+      - name: dim_input_type
+        description: "Input content type (interview, news bulletin, etc.)"
+      - name: dim_output_type
+        description: "Output content type (Full package, Key moments, etc.)"
+      - name: dim_language
+        description: "Language dimension"
+      - name: dim_platform
+        description: "Published platform (YouTube, Reels, etc.)"

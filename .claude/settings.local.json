@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.getdbt.com)",
+      "Bash(/c/Users/Hp/Desktop/Ekta/.venv/Scripts/python.exe -m pip list 2>&1 | head -60)"
+    ]
+  }
+}

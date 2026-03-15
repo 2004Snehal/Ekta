@@ -132,21 +132,4 @@ RULES:
 6. If the question asks about a client or user, filter only if there is a matching column;
    default client_id = {client_id} when a client_id column exists.
 7. Format date/timestamp columns with TO_CHAR(..., 'Mon YYYY') for human-readable x-axis labels.
-
-OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation outside JSON:
-{{
-  "sql": "<valid PostgreSQL SELECT statement>",
-  "chart_type": "bar | line | pie | table | stacked_bar",
-  "title": "<concise descriptive chart title>",
-  "x": "<exact column alias from SQL SELECT list to use as x-axis>",
-  "y": "<exact column alias from SQL SELECT list to use as y-axis>",
-  "description": "<one sentence describing what the chart shows>"
-}}
-
-CHART TYPE GUIDELINES:
-- "line"        → time series, trends over months
-- "bar"         → comparisons across categories (channels, users, types)
-- "pie"         → distributions / proportions (use only when ≤ 10 categories)
-- "stacked_bar" → multi-series category comparisons
-- "table"       → detailed row-level data or queries with many columns
 """

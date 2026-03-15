@@ -1,10 +1,6 @@
 # Frammer AI Analytics — backend dependencies
-<<<<<<< Updated upstream
 
 # ------------------------------------------------------------------ #
-=======
-psycopg2
->>>>>>> Stashed changes
 # Web framework
 # ------------------------------------------------------------------ #
 fastapi==0.115.6
@@ -23,30 +19,25 @@ python-dotenv==1.0.1
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
 
-<<<<<<< Updated upstream
 # ------------------------------------------------------------------ #
 # LLM providers
 # ------------------------------------------------------------------ #
-google-genai==0.3.0
-=======
-# LLM providers (install only what you use)
 google-genai>=1.0.0
->>>>>>> Stashed changes
 openai==1.58.1
 groq>=0.9.0
 
-<<<<<<< Updated upstream
 # ------------------------------------------------------------------ #
-# Agentic framework (Auto-KPI Discovery Engine)
-# ------------------------------------------------------------------ #
-langgraph>=0.1.0
-langchain-core>=0.2.0
-
-# ------------------------------------------------------------------ #
-# Data
+# Data / stats (Insight Narrator)
 # ------------------------------------------------------------------ #
 python-multipart==0.0.20
 pandas>=2.0.0
+numpy
+scipy
+
+# ------------------------------------------------------------------ #
+# Scheduler (Insight Narrator nightly job)
+# ------------------------------------------------------------------ #
+apscheduler==3.10.4
 
 # ------------------------------------------------------------------ #
 # HTTP client
@@ -58,19 +49,3 @@ httpx>=0.27.0
 # ------------------------------------------------------------------ #
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
-=======
-# Data / stats (Insight Narrator)
-python-multipart==0.0.20
-pandas
-numpy
-scipy
-
-# Scheduler (Insight Narrator nightly job)
-apscheduler==3.10.4
-
-# Pydantic (schema validation)
-pydantic>=2.0
-
-python-dotenv
->>>>>>> Stashed changes
-apscheduler 
