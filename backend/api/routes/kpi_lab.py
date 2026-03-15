@@ -73,10 +73,10 @@ def get_csv_adapter() -> DuckDBAdapter:
 
 def get_pg_adapter() -> PostgreSQLAdapter:
     """
-    Returns a PostgreSQLAdapter that borrows connections from the shared
-    backend pool (api.deps.get_conn).  No new psycopg2 connection is opened.
+    Returns a PostgreSQLAdapter scoped to the 'data' schema, borrowing
+    connections from the shared backend pool (api.deps.get_conn).
     """
-    return PostgreSQLAdapter(conn_factory=get_conn)
+    return PostgreSQLAdapter(conn_factory=get_conn, schema="data")
 
 
 def get_adapter(source: str) -> DBAdapter:
