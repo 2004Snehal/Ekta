@@ -105,10 +105,10 @@ def _log_query(conn, client_id: int, question: str, sql: str, success: bool, row
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO query_log (client_id, natural_language, generated_sql, query_type, executed, success, row_count)
-            VALUES (%s, %s, %s, 'analytical', TRUE, %s, %s)
+            INSERT INTO internal.query_log (natural_lang, generated_sql, success, row_count)
+            VALUES (%s, %s, %s, %s)
             """,
-            (client_id, question, sql, success, row_count),
+            (question, sql, success, row_count),
         )
         conn.commit()
     except Exception:

@@ -147,15 +147,17 @@ def get_table_rows(
         cur = conn.cursor()
         _assert_table_exists(cur, table_name)
 
+        # Use plain cursor for COUNT to avoid RealDictCursor key issues
+        cur = conn.cursor()
+        cur.execute(f'SELECT COUNT(*) FROM {_DATA_SCHEMA}."{table_name}"')
+        total = cur.fetchone()[0]
+
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             f'SELECT * FROM {_DATA_SCHEMA}."{table_name}" LIMIT %s OFFSET %s',
             (limit, offset),
         )
         rows = [dict(r) for r in cur.fetchall()]
-
-        cur.execute(f'SELECT COUNT(*) FROM {_DATA_SCHEMA}."{table_name}"')
-        total = cur.fetchone()[0]
 
     # Stringify non-JSON-serialisable types (datetime, Decimal, UUID, etc.)
     safe_rows = []
