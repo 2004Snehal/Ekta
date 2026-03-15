@@ -1,92 +1,137 @@
 """
-Schema context string injected into the NLQ system prompt.
-Update this when the schema changes.
+Dynamic schema context for the NLQ system prompt.
+Introspects the live database so SQL generation always matches the real schema.
+Schema is cached for 5 minutes to avoid redundant round-trips.
 """
 
-SCHEMA_CONTEXT = """
-DATABASE: PostgreSQL — Frammer AI media operations analytics platform.
+import time
+from typing import Optional
 
-=== FACT TABLE ===
-fact_created_videos  (one row per created video output)
-  id                     BIGSERIAL PK
-  video_id               VARCHAR   -- source video ID; multiple output rows share one video_id
-  client_id              INT       FK → dim_client
-  channel_id             INT       FK → dim_channel
-  user_id                INT       FK → dim_user
-  team_id                INT       FK → dim_team  (nullable)
-  input_type_id          INT       FK → dim_input_type  (nullable)
-  output_type_id         INT       FK → dim_output_type (nullable)
-  language_id            INT       FK → dim_language    (nullable)
-  headline               TEXT      (nullable)
-  source_url             TEXT      (nullable)
-  uploaded_duration_secs INT       -- source video length
-  created_duration_secs  INT       -- output clip length
-  published_duration_secs INT      -- published clip length
-  uploaded_at            TIMESTAMPTZ
-  processed_at           TIMESTAMPTZ  (always NULL — not populated)
-  published_at           TIMESTAMPTZ  (always NULL — not populated)
-  published_flag         BOOLEAN
-  published_platform_id  INT       FK → dim_platform (nullable)
-  published_url          TEXT      (nullable)
-
-=== DIMENSION TABLES ===
-dim_client:     client_id, client_name, plan_type, industry, region, is_active
-dim_channel:    channel_id, client_id, channel_name, channel_code ('A'/'B'/'C'/…), primary_language, is_active
-dim_user:       user_id, client_id, user_name, role ('editor'/'auto'), is_bot (TRUE for Auto Upload)
-dim_team:       team_id, client_id, team_name
-dim_input_type: input_type_id, type_name, category
-                -- type_name values: interview, news bulletin, speech, special reports,
-                --   debate, press conference, discussion-show, sports show, podcast, drama, in-brief
-                -- category values: recorded, live, scripted
-dim_output_type: output_type_id, type_name, is_short_form
-                -- type_name values: Full package, Key moments, My Key moments, Chapters, Summary
-dim_language:   language_id, language_code, language_name
-                -- codes: en (English), hi (Hindi), mix (Mixed), es (Spanish), ar (Arabic), mr (Marathi)
-dim_platform:   platform_id, platform_name, platform_type
-                -- names: YouTube, Reels, Shorts, Instagram, Facebook, Facebook-Reels, LinkedIn, X, Threads
-user_channel_map: user_id, channel_id  (bridge — users work across channels)
-
-=== MATERIALIZED VIEWS (prefer for all aggregate queries) ===
-mv_monthly_kpis:
-  client_id, channel_id, input_type_id, output_type_id, language_id,
-  month (DATE — first of month),
-  created_count, total_uploaded_duration_secs, total_created_duration_secs,
-  published_count, total_published_duration_secs, publish_rate_pct
-
-mv_channel_health:
-  client_id, channel_id,
-  total_created, total_published, publish_rate_pct, active_users, last_activity
-
-mv_user_performance:
-  client_id, channel_id, user_id,
-  created_count, published_count,
-  total_uploaded_duration_secs, total_created_duration_secs, publish_rate_pct
-
-=== KEY METRIC DEFINITIONS ===
-- "uploads" / "source videos"      = COUNT(DISTINCT video_id) FROM fact_created_videos
-- "created outputs" / "outputs"    = COUNT(*) FROM fact_created_videos  OR  SUM(created_count) from mv_monthly_kpis
-- "published"                      = published_flag = TRUE
-- "publish rate"                   = published_count / created_count * 100
-- "output multiplier"              = COUNT(*) / COUNT(DISTINCT video_id)
-"""
+# ── Simple in-process cache ────────────────────────────────────────────────────
+_cache: Optional[str] = None
+_cache_ts: float = 0.0
+_CACHE_TTL = 300  # seconds
 
 
-def build_system_prompt(client_id: int) -> str:
-    return f"""You are a PostgreSQL analytics expert for Frammer AI, a media video processing platform.
+def fetch_live_schema(conn) -> str:
+    """
+    Query the live DB and return a schema description string.
+    Result is cached for _CACHE_TTL seconds.
+    """
+    global _cache, _cache_ts
+    if _cache and (time.time() - _cache_ts) < _CACHE_TTL:
+        return _cache
+
+    cur = conn.cursor()
+
+    # ── 1. All tables, views, and materialized views ───────────────────────────
+    cur.execute("""
+        SELECT table_name, 'TABLE' AS kind
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_type = 'BASE TABLE'
+        UNION ALL
+        SELECT table_name, 'VIEW'
+        FROM information_schema.views
+        WHERE table_schema = 'public'
+        UNION ALL
+        SELECT matviewname, 'MATERIALIZED VIEW'
+        FROM pg_matviews
+        WHERE schemaname = 'public'
+        ORDER BY 1
+    """)
+    objects = cur.fetchall()  # [(name, kind), ...]
+
+    if not objects:
+        return "No tables found in the public schema."
+
+    # ── 2. Columns for every object ────────────────────────────────────────────
+    all_names = tuple(r[0] for r in objects)
+    cur.execute("""
+        SELECT table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ANY(%s)
+        ORDER BY table_name, ordinal_position
+    """, (list(all_names),))
+    col_rows = cur.fetchall()
+
+    # Group columns by table
+    from collections import defaultdict
+    cols_by_table: dict = defaultdict(list)
+    for tname, cname, dtype in col_rows:
+        cols_by_table[tname].append((cname, dtype))
+
+    # ── 3. Sample distinct values for low-cardinality text columns ─────────────
+    # Only sample text/varchar columns; skip if table has no rows
+    sample_values: dict = {}  # (table, col) → [val, ...]
+    TEXT_TYPES = {"text", "character varying", "varchar", "char", "character"}
+    MAX_SAMPLE_COLS = 5  # limit per table to keep startup fast
+
+    for tname, kind in objects:
+        sampled = 0
+        for cname, dtype in cols_by_table.get(tname, []):
+            if dtype.lower() not in TEXT_TYPES:
+                continue
+            if sampled >= MAX_SAMPLE_COLS:
+                break
+            try:
+                cur.execute(
+                    f'SELECT DISTINCT "{cname}" FROM "{tname}" '
+                    f'WHERE "{cname}" IS NOT NULL LIMIT 12'
+                )
+                vals = [str(r[0]) for r in cur.fetchall() if r[0] is not None]
+                if 1 < len(vals) <= 12:          # skip unique-ish columns
+                    sample_values[(tname, cname)] = vals
+                    sampled += 1
+            except Exception:
+                conn.rollback()
+
+    # ── 4. Build human-readable schema string ─────────────────────────────────
+    lines = ["DATABASE: PostgreSQL — live schema\n"]
+
+    kind_order = {"TABLE": 0, "MATERIALIZED VIEW": 1, "VIEW": 2}
+    sorted_objects = sorted(objects, key=lambda r: (kind_order.get(r[1], 3), r[0]))
+
+    for tname, kind in sorted_objects:
+        lines.append(f"=== {kind}: {tname} ===")
+        for cname, dtype in cols_by_table.get(tname, []):
+            sample = sample_values.get((tname, cname))
+            sample_str = f"  -- values: {', '.join(sample)}" if sample else ""
+            lines.append(f"  {cname}  ({dtype}){sample_str}")
+        lines.append("")
+
+    schema_str = "\n".join(lines)
+    _cache = schema_str
+    _cache_ts = time.time()
+    return schema_str
+
+
+def build_system_prompt(client_id: int, conn=None) -> str:
+    """
+    Build the NLQ system prompt. If conn is provided the schema is live-introspected;
+    otherwise a generic fallback is used (should not happen in normal operation).
+    """
+    if conn is not None:
+        schema_str = fetch_live_schema(conn)
+    else:
+        schema_str = "Schema unavailable — write generic SQL using information_schema if needed."
+
+    return f"""You are a PostgreSQL analytics expert.
 Convert the user's natural language question into a SQL query and specify how to visualize the result.
 
-{SCHEMA_CONTEXT}
+{schema_str}
 
 RULES:
 1. ONLY write SELECT statements. Never use INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
-2. ALWAYS filter by client_id = {client_id} unless the question explicitly asks to compare clients.
-3. Prefer materialized views (mv_monthly_kpis, mv_channel_health, mv_user_performance) for aggregate queries.
-4. For time-series / trend questions, use mv_monthly_kpis grouped by month.
-5. For channel comparisons, use mv_channel_health.
-6. For user analysis, use mv_user_performance.
-7. When joining dimension tables, always join on the correct _id column.
-8. Add LIMIT 500 to the query unless aggregating to fewer rows.
-9. Format month as TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels.
+2. Use ONLY the tables and columns listed above — do not reference any table not shown.
+3. When a column stores text that looks like a boolean (e.g. 'Yes'/'No', 'true'/'false'),
+   use the exact string values shown in the sample values above.
+4. Add LIMIT 500 to any row-level query; aggregations can omit it.
+5. Use double-quotes around table and column names if they contain uppercase or special chars.
+6. If the question asks about a client or user, filter only if there is a matching column;
+   default client_id = {client_id} when a client_id column exists.
+7. Format date/timestamp columns with TO_CHAR(..., 'Mon YYYY') for human-readable x-axis labels.
 
 OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation outside JSON:
 {{

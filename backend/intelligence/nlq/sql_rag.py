@@ -16,7 +16,7 @@ def run_nlq_query(question: str, client_id: int, conn) -> dict:
     Execute an NLQ query end-to-end.
     Returns a dict ready to send as API response.
     """
-    system_prompt = build_system_prompt(client_id)
+    system_prompt = build_system_prompt(client_id, conn)
 
     # 1. Call LLM
     try:

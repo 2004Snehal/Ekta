@@ -13,7 +13,7 @@ Column aliases are resolved automatically (case-insensitive).
 import argparse
 import sys
 from datetime import datetime
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, quote
 
 import pandas as pd
 import psycopg2
@@ -382,7 +382,16 @@ def connect_db():
     Connect to Supabase/PostgreSQL, safely handling special chars in the password.
     Disables statement_timeout for the session so bulk inserts are not cancelled.
     """
-    parsed = urlparse(DATABASE_URL)
+    # Pre-encode special chars in the password so urlparse doesn't misread them
+    _url = DATABASE_URL
+    _at = _url.rfind("@")
+    _scheme_end = _url.index("://") + 3
+    if _at != -1:
+        userinfo = _url[_scheme_end:_at]
+        if ":" in userinfo:
+            _user, _raw_pass = userinfo.split(":", 1)
+            _url = _url[:_scheme_end] + _user + ":" + quote(_raw_pass, safe="") + _url[_at:]
+    parsed = urlparse(_url)
     conn = psycopg2.connect(
         host=parsed.hostname,
         port=parsed.port or 5432,
