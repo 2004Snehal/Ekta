@@ -1,6 +1,6 @@
 """
 Context expander — runs 4 targeted SQL queries for each view type.
-All queries hit materialized views (no fact table scans on the hot path).
+All queries hit materialized views in the data schema (no fact table scans on the hot path).
 """
 
 import logging
@@ -13,7 +13,12 @@ log = logging.getLogger("recommendation.expander")
 
 def _fetch(conn, sql: str, params: tuple) -> list[dict]:
     cur = conn.cursor()
-    cur.execute(sql, params)
+    try:
+        cur.execute(sql, params)
+    except Exception as e:
+        conn.rollback()
+        log.warning(f"[REC] Query failed: {e}")
+        return []
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -39,12 +44,12 @@ def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
     cid, eid = ctx.client_id, ctx.entity_id
 
     entity_profile = _fetch(conn, """
-        SELECT ch.channel_name, ch.content_focus, ch.primary_language,
+        SELECT ch.channel_name, ch.channel_code,
                h.total_created, h.total_published,
                h.publish_rate_pct, h.active_users,
                h.last_activity::date AS last_activity
-        FROM   mv_channel_health h
-        JOIN   dim_channel ch ON ch.channel_id = h.channel_id
+        FROM   data.mv_channel_health h
+        JOIN   data.dim_channel ch ON ch.channel_id = h.channel_id
         WHERE  h.client_id = %s AND h.channel_id = %s
     """, (cid, eid))
 
@@ -56,21 +61,21 @@ def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
                      SUM(m.published_count)::numeric
                      / NULLIF(SUM(m.created_count), 0) * 100, 1
                  ) AS publish_rate_pct
-        FROM     mv_monthly_kpis m
+        FROM     data.mv_monthly_kpis m
         WHERE    m.client_id = %s AND m.channel_id = %s
         GROUP BY m.month
         ORDER BY m.month DESC
         LIMIT    6
     """, (cid, eid))
-    # Merge trend into entity_profile as a nested list
+
     if entity_profile:
         entity_profile[0]["monthly_trend"] = trend
 
     peer_comparison = _fetch(conn, """
         SELECT ch.channel_name, h.total_created, h.total_published,
                h.publish_rate_pct, h.active_users
-        FROM   mv_channel_health h
-        JOIN   dim_channel ch ON ch.channel_id = h.channel_id
+        FROM   data.mv_channel_health h
+        JOIN   data.dim_channel ch ON ch.channel_id = h.channel_id
         WHERE  h.client_id = %s AND h.channel_id != %s
         ORDER  BY h.publish_rate_pct DESC
         LIMIT  5
@@ -79,14 +84,13 @@ def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
     related_actors = _fetch(conn, """
         SELECT u.user_name, u.role,
                up.created_count, up.published_count, up.publish_rate_pct
-        FROM   mv_user_performance up
-        JOIN   dim_user u ON u.user_id = up.user_id
+        FROM   data.mv_user_performance up
+        JOIN   data.dim_user u ON u.user_id = up.user_id
         WHERE  up.client_id = %s AND up.channel_id = %s
         ORDER  BY up.created_count DESC
         LIMIT  10
     """, (cid, eid))
 
-    # benchmark = input type breakdown for this channel vs network
     channel_mix = _fetch(conn, """
         SELECT it.type_name,
                SUM(m.created_count)   AS created,
@@ -95,8 +99,8 @@ def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
-        JOIN   dim_input_type it ON it.input_type_id = m.input_type_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_input_type it ON it.input_type_id = m.input_type_id
         WHERE  m.client_id = %s AND m.channel_id = %s AND m.input_type_id IS NOT NULL
         GROUP  BY it.type_name
         ORDER  BY created DESC
@@ -110,8 +114,8 @@ def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
-        JOIN   dim_input_type it ON it.input_type_id = m.input_type_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_input_type it ON it.input_type_id = m.input_type_id
         WHERE  m.client_id = %s AND m.input_type_id IS NOT NULL
         GROUP  BY it.type_name
         ORDER  BY created DESC
@@ -138,53 +142,48 @@ def _expand_user_detail(ctx: DashboardContext, conn) -> ExpandedContext:
     entity_profile = _fetch(conn, """
         SELECT ch.channel_name, up.created_count, up.published_count,
                up.publish_rate_pct
-        FROM   mv_user_performance up
-        JOIN   dim_channel ch ON ch.channel_id = up.channel_id
+        FROM   data.mv_user_performance up
+        JOIN   data.dim_channel ch ON ch.channel_id = up.channel_id
         WHERE  up.client_id = %s AND up.user_id = %s
         ORDER  BY up.created_count DESC
     """, (cid, eid))
 
-    # Peers = other users on the same primary channel
     peer_comparison = _fetch(conn, """
         WITH user_primary AS (
-            SELECT channel_id FROM mv_user_performance
+            SELECT channel_id FROM data.mv_user_performance
             WHERE  client_id = %s AND user_id = %s
             ORDER  BY created_count DESC LIMIT 1
         )
         SELECT u.user_name, up.created_count, up.published_count,
                up.publish_rate_pct
-        FROM   mv_user_performance up
-        JOIN   dim_user u  ON u.user_id  = up.user_id
+        FROM   data.mv_user_performance up
+        JOIN   data.dim_user u  ON u.user_id  = up.user_id
         JOIN   user_primary p ON p.channel_id = up.channel_id
         WHERE  up.client_id = %s AND up.user_id != %s
         ORDER  BY up.publish_rate_pct DESC
         LIMIT  5
     """, (cid, eid, cid, eid))
 
-    # Channels this user is mapped to
+    # Channels this user appears on (from performance view)
     related_actors = _fetch(conn, """
-        SELECT ch.channel_name, ucm.is_primary,
+        SELECT ch.channel_name,
                up.created_count, up.publish_rate_pct
-        FROM   user_channel_map ucm
-        JOIN   dim_channel ch ON ch.channel_id = ucm.channel_id
-        LEFT JOIN mv_user_performance up
-               ON up.user_id = ucm.user_id AND up.channel_id = ucm.channel_id
-               AND up.client_id = %s
-        WHERE  ucm.user_id = %s
-        ORDER  BY ucm.is_primary DESC, up.created_count DESC NULLS LAST
+        FROM   data.mv_user_performance up
+        JOIN   data.dim_channel ch ON ch.channel_id = up.channel_id
+        WHERE  up.client_id = %s AND up.user_id = %s
+        ORDER  BY up.created_count DESC
     """, (cid, eid))
 
-    # Top user in the same channel (benchmark)
     benchmark = _fetch(conn, """
         WITH user_primary AS (
-            SELECT channel_id FROM mv_user_performance
+            SELECT channel_id FROM data.mv_user_performance
             WHERE  client_id = %s AND user_id = %s
             ORDER  BY created_count DESC LIMIT 1
         )
         SELECT u.user_name, up.created_count, up.published_count,
                up.publish_rate_pct
-        FROM   mv_user_performance up
-        JOIN   dim_user u ON u.user_id = up.user_id
+        FROM   data.mv_user_performance up
+        JOIN   data.dim_user u ON u.user_id = up.user_id
         JOIN   user_primary p ON p.channel_id = up.channel_id
         WHERE  up.client_id = %s
         ORDER  BY up.publish_rate_pct DESC
@@ -202,7 +201,7 @@ def _expand_user_detail(ctx: DashboardContext, conn) -> ExpandedContext:
 # ── content_mix ────────────────────────────────────────────────────────────────
 
 def _expand_content_mix(ctx: DashboardContext, conn) -> ExpandedContext:
-    cid, eid = ctx.client_id, ctx.entity_id  # entity_id = input_type_id
+    cid, eid = ctx.client_id, ctx.entity_id
 
     entity_profile = _fetch(conn, """
         SELECT TO_CHAR(m.month, 'YYYY-MM') AS month,
@@ -212,7 +211,7 @@ def _expand_content_mix(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
+        FROM   data.mv_monthly_kpis m
         WHERE  m.client_id = %s AND m.input_type_id = %s
         GROUP  BY m.month
         ORDER  BY m.month DESC
@@ -227,14 +226,13 @@ def _expand_content_mix(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
-        JOIN   dim_input_type it ON it.input_type_id = m.input_type_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_input_type it ON it.input_type_id = m.input_type_id
         WHERE  m.client_id = %s AND m.input_type_id IS NOT NULL
         GROUP  BY it.type_name, m.input_type_id
         ORDER  BY publish_rate_pct DESC
     """, (cid,))
 
-    # Which channels use this content type most/least
     related_actors = _fetch(conn, """
         SELECT ch.channel_name,
                SUM(m.created_count)   AS created,
@@ -243,15 +241,14 @@ def _expand_content_mix(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
-        JOIN   dim_channel ch ON ch.channel_id = m.channel_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_channel ch ON ch.channel_id = m.channel_id
         WHERE  m.client_id = %s AND m.input_type_id = %s
         GROUP  BY ch.channel_name
         ORDER  BY created DESC
         LIMIT  10
     """, (cid, eid))
 
-    # Best channel for this content type
     benchmark = _fetch(conn, """
         SELECT ch.channel_name,
                SUM(m.created_count)   AS created,
@@ -259,8 +256,8 @@ def _expand_content_mix(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
-        JOIN   dim_channel ch ON ch.channel_id = m.channel_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_channel ch ON ch.channel_id = m.channel_id
         WHERE  m.client_id = %s AND m.input_type_id = %s
         GROUP  BY ch.channel_name
         ORDER  BY publish_rate_pct DESC
@@ -284,13 +281,12 @@ def _expand_executive_summary(ctx: DashboardContext, conn) -> ExpandedContext:
         SELECT ch.channel_name, h.total_created, h.total_published,
                h.publish_rate_pct, h.active_users,
                h.last_activity::date AS last_activity
-        FROM   mv_channel_health h
-        JOIN   dim_channel ch ON ch.channel_id = h.channel_id
+        FROM   data.mv_channel_health h
+        JOIN   data.dim_channel ch ON ch.channel_id = h.channel_id
         WHERE  h.client_id = %s
         ORDER  BY h.publish_rate_pct DESC
     """, (cid,))
 
-    # Current month vs previous month network-wide
     peer_comparison = _fetch(conn, """
         WITH monthly AS (
             SELECT TO_CHAR(month, 'YYYY-MM')   AS month,
@@ -300,7 +296,7 @@ def _expand_executive_summary(ctx: DashboardContext, conn) -> ExpandedContext:
                        SUM(published_count)::numeric
                        / NULLIF(SUM(created_count), 0) * 100, 1
                    ) AS publish_rate_pct
-            FROM   mv_monthly_kpis
+            FROM   data.mv_monthly_kpis
             WHERE  client_id = %s
             GROUP  BY month
             ORDER  BY month DESC
@@ -309,19 +305,17 @@ def _expand_executive_summary(ctx: DashboardContext, conn) -> ExpandedContext:
         SELECT * FROM monthly ORDER BY month ASC
     """, (cid,))
 
-    # Bottom 5 users by publish rate (need attention)
     related_actors = _fetch(conn, """
         SELECT u.user_name, ch.channel_name,
                up.created_count, up.publish_rate_pct
-        FROM   mv_user_performance up
-        JOIN   dim_user u    ON u.user_id    = up.user_id
-        JOIN   dim_channel ch ON ch.channel_id = up.channel_id
+        FROM   data.mv_user_performance up
+        JOIN   data.dim_user u     ON u.user_id     = up.user_id
+        JOIN   data.dim_channel ch ON ch.channel_id = up.channel_id
         WHERE  up.client_id = %s AND up.created_count >= 5 AND NOT u.is_bot
         ORDER  BY up.publish_rate_pct ASC
         LIMIT  5
     """, (cid,))
 
-    # Best and worst performing content types
     benchmark = _fetch(conn, """
         SELECT it.type_name,
                SUM(m.created_count)   AS created,
@@ -330,8 +324,8 @@ def _expand_executive_summary(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
-        JOIN   dim_input_type it ON it.input_type_id = m.input_type_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_input_type it ON it.input_type_id = m.input_type_id
         WHERE  m.client_id = %s AND m.input_type_id IS NOT NULL
         GROUP  BY it.type_name
         ORDER  BY publish_rate_pct DESC
@@ -350,7 +344,6 @@ def _expand_executive_summary(ctx: DashboardContext, conn) -> ExpandedContext:
 def _expand_trend_view(ctx: DashboardContext, conn) -> ExpandedContext:
     cid, eid = ctx.client_id, ctx.entity_id
 
-    # Full monthly series for this channel
     entity_profile = _fetch(conn, """
         SELECT TO_CHAR(m.month, 'YYYY-MM') AS month,
                SUM(m.created_count)   AS created,
@@ -359,13 +352,12 @@ def _expand_trend_view(ctx: DashboardContext, conn) -> ExpandedContext:
                    SUM(m.published_count)::numeric
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct
-        FROM   mv_monthly_kpis m
+        FROM   data.mv_monthly_kpis m
         WHERE  m.client_id = %s AND m.channel_id = %s
         GROUP  BY m.month
         ORDER  BY m.month ASC
     """, (cid, eid))
 
-    # Top 3 peer channels — same metric trend
     peer_comparison = _fetch(conn, """
         SELECT ch.channel_name,
                TO_CHAR(m.month, 'YYYY-MM') AS month,
@@ -374,14 +366,13 @@ def _expand_trend_view(ctx: DashboardContext, conn) -> ExpandedContext:
                    / NULLIF(SUM(m.created_count), 0) * 100, 1
                ) AS publish_rate_pct,
                SUM(m.created_count) AS created
-        FROM   mv_monthly_kpis m
-        JOIN   dim_channel ch ON ch.channel_id = m.channel_id
+        FROM   data.mv_monthly_kpis m
+        JOIN   data.dim_channel ch ON ch.channel_id = m.channel_id
         WHERE  m.client_id = %s AND m.channel_id != %s
         GROUP  BY ch.channel_name, m.month
         ORDER  BY m.month ASC, ch.channel_name
     """, (cid, eid))
 
-    # Month-over-month deltas — flag anomalies
     related_actors = _fetch(conn, """
         WITH series AS (
             SELECT TO_CHAR(month, 'YYYY-MM') AS month,
@@ -389,7 +380,7 @@ def _expand_trend_view(ctx: DashboardContext, conn) -> ExpandedContext:
                        SUM(published_count)::numeric
                        / NULLIF(SUM(created_count), 0) * 100, 1
                    ) AS publish_rate_pct
-            FROM   mv_monthly_kpis
+            FROM   data.mv_monthly_kpis
             WHERE  client_id = %s AND channel_id = %s
             GROUP  BY month ORDER BY month
         ),
@@ -405,11 +396,10 @@ def _expand_trend_view(ctx: DashboardContext, conn) -> ExpandedContext:
         LIMIT  3
     """, (cid, eid))
 
-    # Current network leader for this metric
     benchmark = _fetch(conn, """
         SELECT ch.channel_name, h.publish_rate_pct, h.total_created, h.active_users
-        FROM   mv_channel_health h
-        JOIN   dim_channel ch ON ch.channel_id = h.channel_id
+        FROM   data.mv_channel_health h
+        JOIN   data.dim_channel ch ON ch.channel_id = h.channel_id
         WHERE  h.client_id = %s
         ORDER  BY h.publish_rate_pct DESC
         LIMIT  3

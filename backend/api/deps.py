@@ -6,27 +6,17 @@ Uses a psycopg2 connection pool shared across requests.
 import psycopg2
 from psycopg2 import pool
 from contextlib import contextmanager
-from urllib.parse import urlparse, unquote, quote
+from urllib.parse import urlparse, unquote
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from backend_config import DATABASE_URL
 
-def _safe_parse(url: str):
-    _at = url.rfind("@")
-    _scheme_end = url.index("://") + 3
-    if _at != -1:
-        userinfo = url[_scheme_end:_at]
-        if ":" in userinfo:
-            _user, _raw_pass = userinfo.split(":", 1)
-            url = url[:_scheme_end] + _user + ":" + quote(_raw_pass, safe="") + url[_at:]
-    return urlparse(url)
-
-_p = _safe_parse(DATABASE_URL)
+_p = urlparse(DATABASE_URL)
 _pool = pool.ThreadedConnectionPool(
-    minconn=1,
-    maxconn=3,
+    minconn=2,
+    maxconn=10,
     host=_p.hostname,
     port=_p.port or 5432,
     dbname=_p.path.lstrip("/"),

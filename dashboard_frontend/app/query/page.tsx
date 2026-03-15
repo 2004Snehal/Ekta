@@ -177,11 +177,6 @@ function AssistantBubble({ msg }: { msg: Message }) {
     );
   }
 
-  const pathLabel = r.path === 'metricflow' ? 'MetricFlow' : r.path === 'sql' ? 'SQL' : null;
-  const pathColor = r.path === 'metricflow'
-    ? 'bg-violet-500/15 text-violet-400 border-violet-500/30'
-    : 'bg-sky-500/15 text-sky-400 border-sky-500/30';
-
   return (
     <div className="flex gap-3 max-w-[90%]">
       <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, MessageSquare, Newspaper, Zap, Database, Lightbulb } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, Newspaper, Zap, Database } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function Sidebar() {
@@ -14,7 +14,6 @@ export function Sidebar() {
     { href: '/query', label: 'Natural Language Query', icon: MessageSquare },
     { href: '/kpi-lab', label: 'KPI Lab', icon: Zap },
     { href: '/data', label: 'Data Manager', icon: Database },
-    { href: '/recommendations', label: 'Recommendations', icon: Lightbulb },
   ];
 
   return (

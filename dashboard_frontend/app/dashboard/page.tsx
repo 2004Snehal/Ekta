@@ -6,6 +6,7 @@ import { KPIDetailModal } from '@/components/KPIDetailModal';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { Filters } from '@/components/Filters';
 import { InsightPanel } from '@/components/InsightPanel';
+import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { BarChart3, Video, Zap, TrendingUp, Share2, Check, Loader2 } from 'lucide-react';
 import {
   buildDashboardCharts,
@@ -330,10 +331,18 @@ export default function Dashboard() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <InsightPanel insights={insights.slice(0, 2)} />
             <InsightPanel insights={insights.slice(2, 4)} />
           </div>
+
+          <RecommendationsPanel
+            apiBaseUrl={apiBaseUrl}
+            filters={filters}
+            kpis={kpis}
+            selectedKpiId={selectedKpiId}
+            dataReady={!isLoading && filteredRecords.length > 0}
+          />
         </>
       ) : (
         <div className="bg-card border border-border rounded-lg p-8 text-muted-foreground">
