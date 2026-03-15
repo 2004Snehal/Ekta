@@ -15,6 +15,8 @@ router = APIRouter()
 def get_insights(
     client_id: int = Query(1),
     insight_type: Optional[str] = Query(None, description="anomaly | recommendation | trend | digest"),
+    entity_type: Optional[str] = Query(None, description="channel | user | language | input_type"),
+    entity_id: Optional[str] = Query(None, description="entity identifier e.g. channel_code or user_name"),
     is_read: Optional[bool] = Query(None),
     limit: int = Query(50),
 ):
@@ -25,6 +27,12 @@ def get_insights(
     if insight_type:
         filters.append("insight_type = %s")
         params.append(insight_type)
+    if entity_type:
+        filters.append("entity_type = %s")
+        params.append(entity_type)
+    if entity_id:
+        filters.append("entity_id = %s")
+        params.append(entity_id)
     if is_read is not None:
         filters.append("is_read = %s")
         params.append(is_read)
@@ -37,9 +45,10 @@ def get_insights(
         cur.execute(
             f"""
             SELECT insight_id, insight_type, severity, title, body,
-                   dimensions, metric_value, baseline_value, delta_pct,
+                   entity_type, entity_id, metric_name,
+                   metric_value, baseline_value, delta_pct,
                    generated_at, is_read
-            FROM insight_log
+            FROM internal.insight_log
             WHERE {where}
             ORDER BY generated_at DESC
             LIMIT %s
@@ -89,8 +98,8 @@ def get_forecasts(
                 f.upper_bound,
                 f.model_used,
                 f.generated_at
-            FROM forecast_log f
-            JOIN dim_channel dc ON dc.channel_id = f.channel_id
+            FROM internal.forecast_log f
+            JOIN data.dim_channel dc ON dc.channel_id = f.channel_id
             WHERE {where}
             ORDER BY f.channel_id, f.metric_name, f.forecast_month
             """,
@@ -177,7 +186,7 @@ def record_insight_feedback(
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE insight_log SET user_feedback = %s WHERE insight_id = %s",
+            "UPDATE internal.insight_log SET user_feedback = %s WHERE insight_id = %s",
             (feedback, insight_id),
         )
         if cur.rowcount == 0:
@@ -199,10 +208,12 @@ def get_kpi_registry(
         cur = conn.cursor()
         cur.execute(
             f"""
-            SELECT kpi_id, client_id, kpi_name, kpi_description,
-                   sql_definition, dimensions, created_by, is_active,
+            SELECT kpi_id, client_id, kpi_name,
+                   description AS kpi_description,
+                   sql_def     AS sql_definition,
+                   dimensions, created_by, is_active,
                    created_at, last_computed
-            FROM kpi_registry
+            FROM internal.kpi_registry
             WHERE (client_id = %s OR client_id IS NULL) {active_clause}
             ORDER BY created_at DESC
             """,

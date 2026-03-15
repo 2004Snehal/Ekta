@@ -100,3 +100,7 @@ logs/
 *.temp
 
 data
+# Claude Code
+.claude/
+SCHEMA_AUDIT_REPORT.md
+SCHEMA_ISSUES_DETAILED.md

@@ -65,14 +65,14 @@ _SQL = """
         0                                                                 AS engagement,
         COALESCE(ROUND(AVG(f.created_duration_secs)::numeric, 0), 0)    AS avg_duration_seconds
 
-    FROM  fact_created_videos f
-    JOIN  dim_client    dc_cl ON dc_cl.client_id   = f.client_id
-    JOIN  dim_channel   dc    ON dc.channel_id     = f.channel_id
-    JOIN  dim_user      du    ON du.user_id        = f.user_id
-    LEFT JOIN dim_language   dl  ON dl.language_id    = f.language_id
-    LEFT JOIN dim_input_type dit ON dit.input_type_id = f.input_type_id
-    LEFT JOIN dim_output_type dot ON dot.output_type_id = f.output_type_id
-    LEFT JOIN dim_platform   dp  ON dp.platform_id    = f.published_platform_id
+    FROM  data.fact_created_videos f
+    JOIN  data.dim_client    dc_cl ON dc_cl.client_id   = f.client_id
+    JOIN  data.dim_channel   dc    ON dc.channel_id     = f.channel_id
+    JOIN  data.dim_user      du    ON du.user_id        = f.user_id
+    LEFT JOIN data.dim_language   dl  ON dl.language_id    = f.language_id
+    LEFT JOIN data.dim_input_type dit ON dit.input_type_id = f.input_type_id
+    LEFT JOIN data.dim_output_type dot ON dot.output_type_id = f.output_type_id
+    LEFT JOIN data.dim_platform   dp  ON dp.platform_id    = f.platform_id
 
     WHERE f.client_id = %s
       AND f.uploaded_at::date >= %s
@@ -102,7 +102,7 @@ def get_dashboard_data(
 
         # Data window metadata
         cur.execute(
-            "SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM fact_created_videos WHERE client_id = %s",
+            "SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM data.fact_created_videos WHERE client_id = %s",
             (client_id,),
         )
         bounds = cur.fetchone()
