@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python run_narrator.py)"
+      "Bash(python run_narrator.py)",
+      "mcp__plugin_supabase_supabase__list_tables",
+      "Bash(tree:*)"
     ]
   }
 }
