@@ -28,29 +28,29 @@ def fetch_live_schema(conn) -> str:
     cur.execute("""
         SELECT table_name, 'TABLE' AS kind
         FROM information_schema.tables
-        WHERE table_schema = 'public'
+        WHERE table_schema = 'data'
           AND table_type = 'BASE TABLE'
         UNION ALL
         SELECT table_name, 'VIEW'
         FROM information_schema.views
-        WHERE table_schema = 'public'
+        WHERE table_schema = 'data'
         UNION ALL
         SELECT matviewname, 'MATERIALIZED VIEW'
         FROM pg_matviews
-        WHERE schemaname = 'public'
+        WHERE schemaname = 'data'
         ORDER BY 1
     """)
     objects = cur.fetchall()  # [(name, kind), ...]
 
     if not objects:
-        return "No tables found in the public schema."
+        return "No tables found in the data schema."
 
     # ── 2. Columns for every object ────────────────────────────────────────────
     all_names = tuple(r[0] for r in objects)
     cur.execute("""
         SELECT table_name, column_name, data_type
         FROM information_schema.columns
-        WHERE table_schema = 'public'
+        WHERE table_schema = 'data'
           AND table_name = ANY(%s)
         ORDER BY table_name, ordinal_position
     """, (list(all_names),))
@@ -77,7 +77,7 @@ def fetch_live_schema(conn) -> str:
                 break
             try:
                 cur.execute(
-                    f'SELECT DISTINCT "{cname}" FROM "{tname}" '
+                    f'SELECT DISTINCT "{cname}" FROM data."{tname}" '
                     f'WHERE "{cname}" IS NOT NULL LIMIT 12'
                 )
                 vals = [str(r[0]) for r in cur.fetchall() if r[0] is not None]

@@ -73,3 +73,4 @@ pydantic>=2.0
 
 python-dotenv
 >>>>>>> Stashed changes
+apscheduler 

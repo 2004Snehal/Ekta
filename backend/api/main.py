@@ -15,6 +15,7 @@ from api.routes import state as state_route
 from api.routes import dashboard_data
 from api.routes import nlq_session
 from api.routes import kpi_lab
+from api.routes import data_manager
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,64 @@ def _schedule_narrator():
         logger.exception("scheduler: narrator pipeline failed")
 
 
+def run_migrations() -> None:
+    """
+    Idempotent startup migrations — create tables that may not exist yet.
+    All statements use IF NOT EXISTS so re-running is safe.
+    """
+    from api.deps import get_conn
+
+    ddl_statements = [
+        # Dashboard state — one live row per user, updated in place on auto-save.
+        # Shareable snapshots are extra rows identified by their UUID.
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_state (
+            id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id          TEXT,
+            version          INTEGER NOT NULL DEFAULT 1,
+            filters_json     JSONB   NOT NULL DEFAULT '{}',
+            filters_expanded BOOLEAN NOT NULL DEFAULT TRUE,
+            loaded_range     TEXT,
+            selected_kpi_id  TEXT,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ
+        )
+        """,
+        # Index so "most recent state for user_id" queries are fast
+        """
+        CREATE INDEX IF NOT EXISTS idx_dashboard_state_user_id
+            ON dashboard_state (user_id)
+        """,
+        # NLQ sessions table (if not yet created by another migration)
+        """
+        CREATE TABLE IF NOT EXISTS nlq_session (
+            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id     TEXT,
+            title       TEXT,
+            messages    JSONB NOT NULL DEFAULT '[]',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ
+        )
+        """,
+    ]
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            for stmt in ddl_statements:
+                cur.execute(stmt)
+            conn.commit()
+            cur.close()
+        logger.info("run_migrations: all tables ready")
+    except Exception:
+        logger.exception("run_migrations: failed — some tables may be missing")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure required tables exist before serving requests
+    run_migrations()
+
     # Start nightly job at 02:00 server time (after materialized view refresh)
     _scheduler.add_job(
         _schedule_narrator,
@@ -76,7 +133,8 @@ app.include_router(intelligence.router,   tags=["Intelligence"])
 app.include_router(ingest.router,         tags=["Ingest"])
 app.include_router(nlq.router,            tags=["NLQ"])
 app.include_router(nlq_session.router,    tags=["NLQ"])
-app.include_router(kpi_lab.router,        tags=["KPI Lab"])  # Auto-KPI Discovery Engine
+app.include_router(kpi_lab.router,        tags=["KPI Lab"])     # Auto-KPI Discovery Engine
+app.include_router(data_manager.router,   tags=["Data Manager"]) # CSV append + row deletion
 
 
 @app.get("/health")

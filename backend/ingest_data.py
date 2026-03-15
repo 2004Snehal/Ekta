@@ -887,17 +887,19 @@ def _row_hash(row) -> str:
 
 def ingest_raw(csv_path: str, table_name: str):
     """
-    Upload a CSV directly as its own table (no star-schema ETL).
+    Upload a CSV directly as its own table in the 'data' schema (no star-schema ETL).
 
-    - Table is created if it does not exist.
+    - Table is created in the 'data' schema if it does not exist.
     - A _row_hash column (MD5 of all values) is used as the unique key so
       re-running the same file never inserts duplicates.
     - New rows in a re-run are appended; existing rows are skipped silently.
     """
+    qualified = f"data.\"{table_name}\""
+
     print("=" * 60)
     print("FRAMMER AI ANALYTICS — RAW CSV UPLOAD")
     print(f"  CSV   : {csv_path}")
-    print(f"  Table : {table_name}")
+    print(f"  Table : {qualified}")
     print("=" * 60)
 
     # Load CSV
@@ -913,10 +915,10 @@ def ingest_raw(csv_path: str, table_name: str):
     safe_cols = [_safe_col(c) for c in df.columns]
     df.columns = safe_cols
 
-    # Build CREATE TABLE DDL
+    # Build CREATE TABLE DDL (in the data schema)
     col_defs = ",\n    ".join(f'"{c}" {_pg_type(df[c].dtype)}' for c in safe_cols)
     create_sql = f"""
-CREATE TABLE IF NOT EXISTS "{table_name}" (
+CREATE TABLE IF NOT EXISTS {qualified} (
     _row_hash TEXT PRIMARY KEY,
     {col_defs}
 )
@@ -928,12 +930,12 @@ CREATE TABLE IF NOT EXISTS "{table_name}" (
         with conn.cursor() as cur:
             cur.execute(create_sql)
         conn.commit()
-        print(f"  Table '{table_name}' ready.\n")
+        print(f"  Table {qualified} ready.\n")
 
         # Build insert SQL
         quoted_cols = ", ".join(f'"{c}"' for c in safe_cols)
         insert_sql = f"""
-INSERT INTO "{table_name}" (_row_hash, {quoted_cols})
+INSERT INTO {qualified} (_row_hash, {quoted_cols})
 VALUES %s
 ON CONFLICT (_row_hash) DO NOTHING
 """.strip()
