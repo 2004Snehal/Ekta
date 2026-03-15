@@ -18,7 +18,7 @@ logging.basicConfig(
     force=True,
 )
 
-from api.routes import dashboard, intelligence, ingest, nlq
+from api.routes import dashboard, intelligence, ingest, nlq, recommendations
 from api.routes import state as state_route
 from api.routes import dashboard_data
 
@@ -40,7 +40,8 @@ app.include_router(state_route.router,    tags=["Dashboard"])   # GET/POST /dash
 app.include_router(dashboard.router,      tags=["Dashboard"])   # legacy KPI / filter routes
 app.include_router(intelligence.router,   tags=["Intelligence"])
 app.include_router(ingest.router,         tags=["Ingest"])
-app.include_router(nlq.router,            tags=["NLQ"])
+app.include_router(nlq.router,             tags=["NLQ"])
+app.include_router(recommendations.router, tags=["Recommendations"])
 
 
 @app.get("/health")
