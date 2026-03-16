@@ -120,7 +120,20 @@ def _run_sql_path(
         log.warning("[NLQ] SQL path       ✗ non-SELECT blocked")
         return _error("LLM generated a non-SELECT statement — blocked.", question)
 
-    if "LIMIT" not in sql.upper():
+    # Block destructive statements hidden in CTEs or sub-selects
+    sql_upper = sql.upper()
+    for forbidden in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"):
+        if forbidden in sql_upper:
+            log.warning(f"[NLQ] SQL path       ✗ {forbidden} blocked")
+            return _error(f"LLM generated SQL containing {forbidden} — blocked.", question)
+
+    # Enforce client_id isolation: if querying fact table, client_id must be present
+    if "fact_created_videos" in sql.lower() and "client_id" not in sql.lower():
+        log.warning("[NLQ] SQL path       ✗ missing client_id filter — injecting")
+        # Wrap the query to enforce tenant isolation
+        sql = f"SELECT * FROM ({sql.rstrip(';')}) _nlq WHERE client_id = {int(client_id)}"
+
+    if "LIMIT" not in sql_upper:
         sql = sql.rstrip(";") + " LIMIT 500"
 
     log.info("[NLQ] SQL path       raw SQL generated")

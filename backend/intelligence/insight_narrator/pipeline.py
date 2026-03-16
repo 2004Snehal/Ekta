@@ -86,6 +86,16 @@ def _write_cache(conn, client_id: int, response: NarratorResponse) -> None:
     conn.commit()
 
 
+def _safe_numeric(val) -> float | None:
+    """Coerce a value to float, returning None if it's not numeric."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
 def _write_insight_log(conn, client_id: int, response: NarratorResponse) -> None:
     """Persist each card into insight_log for the /insights/ query endpoint."""
     if not response.insights:
@@ -114,16 +124,16 @@ def _write_insight_log(conn, client_id: int, response: NarratorResponse) -> None
                 card.title,
                 card.body,
                 json.dumps({"entity_type": card.entity_type, "entity_id": card.entity_id}),
-                card.current_value,
-                card.reference_value,
-                card.delta_pct,
+                _safe_numeric(card.current_value),
+                _safe_numeric(card.reference_value),
+                _safe_numeric(card.delta_pct),
                 card.category,
                 card.entity_type,
-                card.entity_id,
+                str(card.entity_id) if card.entity_id is not None else None,
                 card.period,
-                card.current_value,
-                card.reference_value,
-                card.confidence,
+                _safe_numeric(card.current_value),
+                _safe_numeric(card.reference_value),
+                _safe_numeric(card.confidence),
                 card.root_cause_hint,
             ),
         )

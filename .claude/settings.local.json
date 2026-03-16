@@ -4,7 +4,9 @@
       "WebFetch(domain:docs.getdbt.com)",
       "Bash(/c/Users/Hp/Desktop/Ekta/.venv/Scripts/python.exe -m pip list 2>&1 | head -60)",
       "mcp__plugin_supabase_supabase__execute_sql",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "mcp__plugin_supabase_supabase__list_projects"
     ]
   },
   "enabledPlugins": {

@@ -40,10 +40,33 @@ def expand_context(ctx: DashboardContext, conn) -> ExpandedContext:
     return handler(ctx, conn)
 
 
+# ── name→id resolver ──────────────────────────────────────────────────────────
+
+def _resolve_entity_id(conn, ctx: DashboardContext) -> int | None:
+    """Look up entity_id from entity_name when the frontend only sends a name."""
+    if ctx.entity_id is not None:
+        return ctx.entity_id
+    if not ctx.entity_name or ctx.entity_name == "All Channels":
+        return None
+    table_map = {
+        "channel": ("data.dim_channel", "channel_id", "channel_name"),
+        "user":    ("data.dim_user",    "user_id",    "user_name"),
+    }
+    entry = table_map.get(ctx.entity_type)
+    if not entry:
+        return None
+    tbl, pk, name_col = entry
+    rows = _fetch(conn, f"SELECT {pk} FROM {tbl} WHERE {name_col} = %s LIMIT 1", (ctx.entity_name,))
+    return rows[0][pk] if rows else None
+
+
 # ── channel_detail ─────────────────────────────────────────────────────────────
 
 def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
-    cid, eid = ctx.client_id, ctx.entity_id
+    eid = _resolve_entity_id(conn, ctx)
+    if eid is None:
+        return _expand_executive_summary(ctx, conn)
+    cid = ctx.client_id
 
     entity_profile = _fetch(conn, """
         SELECT ch.channel_name, ch.channel_code,
@@ -139,7 +162,10 @@ def _expand_channel_detail(ctx: DashboardContext, conn) -> ExpandedContext:
 # ── user_detail ────────────────────────────────────────────────────────────────
 
 def _expand_user_detail(ctx: DashboardContext, conn) -> ExpandedContext:
-    cid, eid = ctx.client_id, ctx.entity_id
+    eid = _resolve_entity_id(conn, ctx)
+    if eid is None:
+        return _expand_executive_summary(ctx, conn)
+    cid = ctx.client_id
 
     entity_profile = _fetch(conn, """
         SELECT ch.channel_name, up.created_count, up.published_count,
@@ -203,7 +229,10 @@ def _expand_user_detail(ctx: DashboardContext, conn) -> ExpandedContext:
 # ── content_mix ────────────────────────────────────────────────────────────────
 
 def _expand_content_mix(ctx: DashboardContext, conn) -> ExpandedContext:
-    cid, eid = ctx.client_id, ctx.entity_id
+    eid = _resolve_entity_id(conn, ctx)
+    if eid is None:
+        return _expand_executive_summary(ctx, conn)
+    cid = ctx.client_id
 
     entity_profile = _fetch(conn, """
         SELECT TO_CHAR(m.month, 'YYYY-MM') AS month,
@@ -432,11 +461,9 @@ def _expand_data_quality(ctx: DashboardContext, conn) -> ExpandedContext:
         SELECT COUNT(*)                                          AS total_rows,
                COUNT(*) FILTER (WHERE channel_id  IS NULL)     AS null_channel_id,
                COUNT(*) FILTER (WHERE user_id     IS NULL)     AS null_user_id,
-               COUNT(*) FILTER (WHERE input_type  IS NULL
-                                  OR  input_type  = 'Unknown') AS missing_input_type,
-               COUNT(*) FILTER (WHERE output_type IS NULL
-                                  OR  output_type = 'Unknown') AS missing_output_type,
-               COUNT(*) FILTER (WHERE created_at  IS NULL)     AS null_created_at,
+               COUNT(*) FILTER (WHERE input_type_id  IS NULL)  AS missing_input_type,
+               COUNT(*) FILTER (WHERE output_type_id IS NULL)  AS missing_output_type,
+               COUNT(*) FILTER (WHERE uploaded_at    IS NULL)  AS null_uploaded_at,
                ROUND(
                    COUNT(*) FILTER (WHERE channel_id IS NULL)::numeric
                    / NULLIF(COUNT(*), 0) * 100, 2
@@ -449,13 +476,10 @@ def _expand_data_quality(ctx: DashboardContext, conn) -> ExpandedContext:
     peer_comparison = _fetch(conn, """
         SELECT ch.channel_name,
                COUNT(*)                                          AS total_rows,
-               COUNT(*) FILTER (WHERE f.input_type  IS NULL
-                                  OR  f.input_type  = 'Unknown') AS missing_input_type,
-               COUNT(*) FILTER (WHERE f.output_type IS NULL
-                                  OR  f.output_type = 'Unknown') AS missing_output_type,
+               COUNT(*) FILTER (WHERE f.input_type_id  IS NULL) AS missing_input_type,
+               COUNT(*) FILTER (WHERE f.output_type_id IS NULL) AS missing_output_type,
                ROUND(
-                   COUNT(*) FILTER (WHERE f.input_type IS NULL
-                                      OR  f.input_type = 'Unknown')::numeric
+                   COUNT(*) FILTER (WHERE f.input_type_id IS NULL)::numeric
                    / NULLIF(COUNT(*), 0) * 100, 2
                )                                               AS missing_input_type_pct
         FROM   data.fact_created_videos f
@@ -468,18 +492,16 @@ def _expand_data_quality(ctx: DashboardContext, conn) -> ExpandedContext:
 
     # Related actors — monthly NULL-rate trend (data quality over time)
     related_actors = _fetch(conn, """
-        SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
+        SELECT TO_CHAR(DATE_TRUNC('month', uploaded_at), 'YYYY-MM') AS month,
                COUNT(*)                                             AS total_rows,
-               COUNT(*) FILTER (WHERE input_type IS NULL
-                                  OR  input_type = 'Unknown')      AS missing_input_type,
+               COUNT(*) FILTER (WHERE input_type_id IS NULL)    AS missing_input_type,
                ROUND(
-                   COUNT(*) FILTER (WHERE input_type IS NULL
-                                      OR  input_type = 'Unknown')::numeric
+                   COUNT(*) FILTER (WHERE input_type_id IS NULL)::numeric
                    / NULLIF(COUNT(*), 0) * 100, 2
                )                                                   AS missing_input_type_pct
         FROM   data.fact_created_videos
-        WHERE  client_id = %s AND created_at IS NOT NULL
-        GROUP  BY DATE_TRUNC('month', created_at)
+        WHERE  client_id = %s AND uploaded_at IS NOT NULL
+        GROUP  BY DATE_TRUNC('month', uploaded_at)
         ORDER  BY month DESC
         LIMIT  6
     """, (cid,))
@@ -494,8 +516,7 @@ def _expand_data_quality(ctx: DashboardContext, conn) -> ExpandedContext:
         JOIN   data.dim_channel ch ON ch.channel_id = f.channel_id
         WHERE  f.client_id = %s
         GROUP  BY ch.channel_name
-        HAVING COUNT(*) FILTER (WHERE f.input_type IS NULL
-                                  OR  f.input_type = 'Unknown') = 0
+        HAVING COUNT(*) FILTER (WHERE f.input_type_id IS NULL) = 0
         ORDER  BY total_rows DESC
         LIMIT  5
     """, (cid,))
@@ -512,6 +533,10 @@ def _expand_data_quality(ctx: DashboardContext, conn) -> ExpandedContext:
 
 def _expand_trend_view(ctx: DashboardContext, conn) -> ExpandedContext:
     cid, eid = ctx.client_id, ctx.entity_id
+
+    # When no entity selected, show network-level trends
+    if eid is None:
+        return _expand_executive_summary(ctx, conn)
 
     entity_profile = _fetch(conn, """
         SELECT TO_CHAR(m.month, 'YYYY-MM') AS month,

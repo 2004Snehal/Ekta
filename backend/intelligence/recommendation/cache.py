@@ -13,8 +13,9 @@ _cache: dict[str, tuple[float, RecommendationResponse]] = {}
 
 def _key(ctx: DashboardContext) -> str:
     return (
-        f"{ctx.client_id}:{ctx.entity_type}:{ctx.entity_id}"
-        f":{ctx.metric_in_focus}:{ctx.time_range}:{ctx.view}"
+        f"{ctx.client_id}:{ctx.user_role}:{ctx.view}"
+        f":{ctx.entity_type}:{ctx.entity_id}:{ctx.entity_name}"
+        f":{ctx.metric_in_focus}:{ctx.time_range}"
     )
 
 

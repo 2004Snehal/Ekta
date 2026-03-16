@@ -3,6 +3,7 @@ Analytics aggregation endpoints — multi-dim, period-compare, funnel, data-qual
 """
 
 import decimal
+import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -10,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from api.deps import get_conn
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analytics")
 
@@ -22,6 +25,7 @@ def _fetch(conn, sql: str, params: tuple = ()) -> list[dict]:
         cur.execute(sql, params)
     except Exception as e:
         conn.rollback()
+        log.error("SQL failed: %s | params=%s | error=%s", sql, params, e)
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -53,7 +57,7 @@ DIM_TABLES = {
     "language":    ("data.dim_language",            "language_id",           "language_name"),
     "input_type":  ("data.dim_input_type",          "input_type_id",         "type_name"),
     "output_type": ("data.dim_output_type",         "output_type_id",        "type_name"),
-    "platform":    ("data.dim_published_platform",  "published_platform_id", "platform_name"),
+    "platform":    ("data.dim_platform",             "platform_id",           "platform_name"),
 }
 
 # Foreign-key column on fact_created_videos for each dimension key
@@ -63,7 +67,7 @@ FACT_DIM_FK = {
     "language":    "language_id",
     "input_type":  "input_type_id",
     "output_type": "output_type_id",
-    "platform":    "published_platform_id",
+    "platform":    "platform_id",
     "team":        "team_id",
 }
 
@@ -342,12 +346,12 @@ def data_quality(client_id: int = 1):
         SELECT
             COUNT(*) AS total_records,
             COUNT(*) FILTER (WHERE f.language_id IS NULL)          AS lang_null,
-            COUNT(*) FILTER (WHERE f.published_platform_id IS NULL) AS platform_null,
+            COUNT(*) FILTER (WHERE f.platform_id IS NULL) AS platform_null,
             COUNT(*) FILTER (WHERE f.team_id IS NULL)              AS team_null,
             COUNT(*) FILTER (WHERE f.user_id IS NULL)              AS user_null,
             COUNT(*) FILTER (WHERE f.input_type_id IS NULL)        AS input_type_null,
             COUNT(*) FILTER (WHERE f.output_type_id IS NULL)       AS output_type_null,
-            COUNT(*) FILTER (WHERE f.published_flag AND f.publish_url IS NULL) AS null_publish_url_on_published,
+            COUNT(*) FILTER (WHERE f.published_flag AND f.published_url IS NULL) AS null_publish_url_on_published,
             COUNT(DISTINCT f.video_id) AS distinct_videos,
             COUNT(*) - COUNT(DISTINCT f.video_id) AS potential_duplicates
         FROM data.fact_created_videos f
@@ -434,8 +438,7 @@ def time_series(
         group_by_extra = f", gd.{dim_name}"
 
     sql = f"""
-        SELECT {period_label} AS period
-               {group_select},
+        SELECT {period_label} AS period{group_select},
                COUNT(*) AS count,
                COALESCE(SUM(f.created_duration_secs), 0) / 3600.0 AS duration_hrs,
                COUNT(*) FILTER (WHERE f.published_flag) AS published_count,
@@ -446,8 +449,8 @@ def time_series(
         FROM   data.fact_created_videos f
                {' '.join(joins)}
         WHERE  {' AND '.join(wheres)}
-        GROUP  BY {period_trunc}{group_by_extra}
-        ORDER  BY {period_trunc}
+        GROUP  BY 1{group_by_extra}
+        ORDER  BY 1
     """
 
     with get_conn() as conn:
