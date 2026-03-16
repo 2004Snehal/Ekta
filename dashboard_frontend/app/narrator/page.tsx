@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Newspaper, RefreshCw, AlertCircle, Clock } from 'lucide-react';
+import { useProfile } from '@/lib/profiles';
 import { InsightCard } from '@/components/InsightCard';
 import type { InsightCardData } from '@/components/InsightCard';
 
@@ -57,6 +58,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 export default function NarratorPage() {
+  const { profileDef } = useProfile();
   const [data,        setData]        = useState<NarratorPayload | null>(null);
   const [loadState,   setLoadState]   = useState<LoadState>('idle');
   const [errorMsg,    setErrorMsg]    = useState<string>('');
@@ -102,7 +104,7 @@ export default function NarratorPage() {
   const insights  = data?.insights ?? [];
 
   return (
-    <div className="min-h-screen bg-background p-6 space-y-6">
+    <div className="min-h-screen p-8 space-y-8" style={{ background: 'var(--void)' }}>
 
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
@@ -113,7 +115,7 @@ export default function NarratorPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Insight Narrator</h1>
             <p className="text-muted-foreground text-sm">
-              Automatically surfaced anomalies, trends, and milestones — no dashboard reading required.
+              Automatically surfaced anomalies, trends, and milestones · {profileDef.displayName}
             </p>
           </div>
         </div>

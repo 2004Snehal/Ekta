@@ -1,6 +1,5 @@
 'use client';
 
-import { Calendar, Plus, X } from 'lucide-react';
 import type {
   DashboardFilterField,
   DashboardFilters,
@@ -16,215 +15,200 @@ interface FiltersProps {
   onApply?: (filters: DashboardFilters) => void;
 }
 
+const DATE_OPTS: { value: DashboardFilters['dateRange']; label: string }[] = [
+  { value: 'last-7-days',  label: '7D'  },
+  { value: 'last-30-days', label: '30D' },
+  { value: 'last-90-days', label: '90D' },
+  { value: 'all-time',     label: 'ALL' },
+];
+
 const DEFAULT_FILTER_KEYS = ['client', 'channel', 'user', 'language', 'type', 'platform'];
 
-function formatOptionLabel(option: FilterOption): string {
-  return option.count ? `${option.label} (${option.count})` : option.label;
-}
+export function Filters({ filters, filterFields, filterOptions, isExpanded, onExpandedChange, onApply }: FiltersProps) {
 
-export function Filters({
-  filters,
-  filterFields,
-  filterOptions,
-  isExpanded,
-  onExpandedChange,
-  onApply,
-}: FiltersProps) {
-  const handleDefaultFilterChange = (key: keyof DashboardFilters, value: string) => {
-    onApply?.({ ...filters, [key]: value });
-  };
-
-  const handleExtraFilterChange = (filterId: string, nextValue: Partial<{ field: string; value: string }>) => {
-    onApply?.({
-      ...filters,
-      extraFilters: filters.extraFilters.map((filter) =>
-        filter.id === filterId
-          ? {
-              ...filter,
-              ...nextValue,
-              value: nextValue.field && nextValue.field !== filter.field ? 'all' : nextValue.value ?? filter.value,
-            }
-          : filter
-      ),
-    });
-  };
-
-  const removeExtraFilter = (filterId: string) => {
-    onApply?.({
-      ...filters,
-      extraFilters: filters.extraFilters.filter((filter) => filter.id !== filterId),
-    });
-  };
+  const set = (key: keyof DashboardFilters, val: string) =>
+    onApply?.({ ...filters, [key]: val });
 
   const addableFields = filterFields.filter(
-    (field) => !DEFAULT_FILTER_KEYS.includes(field.key) && !filters.extraFilters.some((extra) => extra.field === field.key)
+    (f) => !DEFAULT_FILTER_KEYS.includes(f.key) && !filters.extraFilters.some((e) => e.field === f.key)
   );
 
-  const addExtraFilter = () => {
-    const nextField = addableFields[0];
-    if (!nextField) {
-      return;
-    }
-
+  const addExtra = () => {
+    const next = addableFields[0];
+    if (!next) return;
     onApply?.({
       ...filters,
-      extraFilters: [
-        ...filters.extraFilters,
-        {
-          id: `${nextField.key}-${Date.now()}`,
-          field: nextField.key,
-          value: 'all',
-        },
-      ],
+      extraFilters: [...filters.extraFilters, { id: `${next.key}-${Date.now()}`, field: next.key, value: 'all' }],
     });
   };
 
-  const resetFilters = () => {
+  const removeExtra = (id: string) =>
+    onApply?.({ ...filters, extraFilters: filters.extraFilters.filter((f) => f.id !== id) });
+
+  const changeExtra = (id: string, patch: Partial<{ field: string; value: string }>) =>
     onApply?.({
-      dateRange: 'last-90-days',
-      client: 'all',
-      channel: 'all',
-      user: 'all',
-      language: 'all',
-      type: 'all',
-      platform: 'all',
-      extraFilters: [],
+      ...filters,
+      extraFilters: filters.extraFilters.map((f) =>
+        f.id === id ? { ...f, ...patch, value: patch.field && patch.field !== f.field ? 'all' : (patch.value ?? f.value) } : f
+      ),
     });
-  };
+
+  const reset = () =>
+    onApply?.({ dateRange: 'last-90-days', client: '', channel: '', user: '', language: '', type: '', platform: '', extraFilters: [] });
+
+  /* Active filter tokens (non-date, non-empty) */
+  const activeTokens = DEFAULT_FILTER_KEYS
+    .filter((k) => {
+      const v = filters[k as keyof DashboardFilters] as string;
+      return v && v !== 'all' && v !== '';
+    })
+    .map((k) => ({
+      key: k,
+      label: `${(filterFields.find((f) => f.key === k)?.label ?? k).toUpperCase()}: ${(filters[k as keyof DashboardFilters] as string).toUpperCase()}`,
+    }));
+
+  const extraTokens = filters.extraFilters
+    .filter((ef) => ef.value && ef.value !== 'all')
+    .map((ef) => ({
+      id: ef.id,
+      label: `${ef.field.toUpperCase()}: ${ef.value.toUpperCase()}`,
+    }));
 
   return (
-    <div className="bg-card border border-border rounded-lg p-6 mb-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-foreground">Filters</h3>
-        <button onClick={() => onExpandedChange?.(!isExpanded)} className="text-muted-foreground hover:text-foreground transition-colors">
-          {isExpanded ? '−' : '+'}
-        </button>
+    <div style={{ borderBottom: '1px solid var(--wire)', background: 'var(--void)' }}>
+
+      {/* ── Collapsed / summary strip ────────────────────── */}
+      <div className="flex items-center gap-4 px-6 py-2.5 flex-wrap">
+
+        {/* Date range inline options */}
+        <div className="flex items-center gap-0">
+          {DATE_OPTS.map((opt, i) => (
+            <span key={opt.value} className="flex items-center gap-0">
+              <span
+                className={`range-opt${filters.dateRange === opt.value ? ' selected' : ''}`}
+                onClick={() => set('dateRange', opt.value)}
+              >
+                {opt.label}
+              </span>
+              {i < DATE_OPTS.length - 1 && (
+                <span style={{ color: 'var(--wire-mid)', margin: '0 5px', fontSize: '0.55rem' }}>·</span>
+              )}
+            </span>
+          ))}
+        </div>
+
+        <div className="wire-v" style={{ height: '14px' }} />
+
+        {/* Active filter tokens */}
+        {activeTokens.map((tok) => (
+          <span key={tok.key} className="filter-token">
+            {tok.label}
+            <span className="filter-token-x" onClick={() => set(tok.key as keyof DashboardFilters, '')}>×</span>
+          </span>
+        ))}
+        {extraTokens.map((tok) => (
+          <span key={tok.id} className="filter-token">
+            {tok.label}
+            <span className="filter-token-x" onClick={() => removeExtra(tok.id)}>×</span>
+          </span>
+        ))}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Toggle expand */}
+        <span className="action-text" onClick={() => onExpandedChange?.(!isExpanded)}>
+          {isExpanded ? '− LESS' : '+ FILTERS'}
+        </span>
+
+        {(activeTokens.length > 0 || extraTokens.length > 0) && (
+          <>
+            <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
+            <span className="action-text danger" onClick={reset}>↺ RESET</span>
+          </>
+        )}
       </div>
 
+      {/* ── Expanded filter panel ────────────────────────── */}
       {isExpanded && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
-          {/* Date Range */}
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground mb-2">
-              <Calendar className="w-4 h-4 inline mr-2" />
-              Date Range
-            </label>
-            <select
-              value={filters.dateRange}
-              onChange={(e) => handleDefaultFilterChange('dateRange', e.target.value)}
-              className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-foreground text-sm hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-            >
-              <option value="last-7-days">Last 7 Days</option>
-              <option value="last-30-days">Last 30 Days</option>
-              <option value="last-90-days">Last 90 Days</option>
-              <option value="all-time">All Time</option>
-            </select>
-          </div>
+        <div
+          className="px-6 pb-4 pt-1"
+          style={{ borderTop: '1px solid var(--wire)' }}
+        >
+          <div className="flex flex-wrap gap-x-6 gap-y-3 items-end">
 
             {DEFAULT_FILTER_KEYS.map((fieldKey) => {
-              const fieldConfig = filterFields.find((field) => field.key === fieldKey);
-              const options = filterOptions[fieldKey] ?? [{ value: 'all', label: 'All' }];
+              const config  = filterFields.find((f) => f.key === fieldKey);
+              const options = filterOptions[fieldKey] ?? [];
+              const current = (filters[fieldKey as keyof DashboardFilters] as string) || 'all';
 
               return (
-                <div key={fieldKey}>
-                  <label className="block text-sm font-medium text-muted-foreground mb-2">
-                    {fieldConfig?.label ?? fieldKey}
-                  </label>
-                  <select
-                    value={String(filters[fieldKey as keyof DashboardFilters] ?? 'all')}
-                    onChange={(event) => handleDefaultFilterChange(fieldKey as keyof DashboardFilters, event.target.value)}
-                    className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-foreground text-sm hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
+                <div key={fieldKey} className="flex flex-col gap-1" style={{ minWidth: '110px' }}>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-condensed)',
+                      fontSize: '0.55rem',
+                      fontWeight: 700,
+                      letterSpacing: '0.18em',
+                      textTransform: 'uppercase',
+                      color: 'var(--on-low)',
+                    }}
                   >
-                    {options.map((option) => (
-                      <option key={`${fieldKey}-${option.value}`} value={option.value}>
-                        {formatOptionLabel(option)}
+                    {config?.label ?? fieldKey}
+                  </span>
+                  <select
+                    className="bare-select"
+                    value={current}
+                    onChange={(e) => set(fieldKey as keyof DashboardFilters, e.target.value)}
+                  >
+                    <option value="all">All</option>
+                    {options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}{o.count ? ` (${o.count})` : ''}
                       </option>
                     ))}
                   </select>
                 </div>
               );
             })}
-          </div>
 
-          <div className="border border-dashed border-border rounded-lg p-4 bg-secondary/20">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
-              <div>
-                <h4 className="text-sm font-semibold text-foreground">Additional Filters</h4>
-                <p className="text-sm text-muted-foreground">
-                  Add frontend-visible data columns as filters without reloading the cached dataset.
-                </p>
+            {/* Extra filters */}
+            {filters.extraFilters.map((ef) => {
+              const options = filterOptions[ef.field] ?? [];
+              const selectableFields = filterFields.filter(
+                (f) => !DEFAULT_FILTER_KEYS.includes(f.key) && (f.key === ef.field || !filters.extraFilters.some((e) => e.field === f.key))
+              );
+              return (
+                <div key={ef.id} className="flex items-end gap-2">
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontFamily: 'var(--font-condensed)', fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--on-low)' }}>
+                      Dimension
+                    </span>
+                    <select className="bare-select" value={ef.field} onChange={(e) => changeExtra(ef.id, { field: e.target.value })}>
+                      {selectableFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontFamily: 'var(--font-condensed)', fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--on-low)' }}>
+                      Value
+                    </span>
+                    <select className="bare-select" value={ef.value} onChange={(e) => changeExtra(ef.id, { value: e.target.value })}>
+                      <option value="all">All</option>
+                      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <span className="action-text danger pb-0.5" onClick={() => removeExtra(ef.id)}>× REMOVE</span>
+                </div>
+              );
+            })}
+
+            {addableFields.length > 0 && (
+              <div className="flex flex-col justify-end pb-0.5">
+                <span className="action-text" onClick={addExtra}>+ DIM</span>
               </div>
-              <button
-                onClick={addExtraFilter}
-                disabled={!addableFields.length}
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors hover:border-primary/50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4" />
-                Add Filter
-              </button>
-            </div>
-
-            {filters.extraFilters.length ? (
-              <div className="space-y-3">
-                {filters.extraFilters.map((filter) => {
-                  const options = filterOptions[filter.field] ?? [{ value: 'all', label: 'All' }];
-                  const selectableFields = filterFields.filter(
-                    (field) => !DEFAULT_FILTER_KEYS.includes(field.key) && (field.key === filter.field || !filters.extraFilters.some((extra) => extra.field === field.key))
-                  );
-
-                  return (
-                    <div key={filter.id} className="grid grid-cols-1 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)_auto] gap-3">
-                      <select
-                        value={filter.field}
-                        onChange={(event) => handleExtraFilterChange(filter.id, { field: event.target.value })}
-                        className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-foreground text-sm hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-                      >
-                        {selectableFields.map((field) => (
-                          <option key={field.key} value={field.key}>
-                            {field.label}
-                          </option>
-                        ))}
-                      </select>
-
-                      <select
-                        value={filter.value}
-                        onChange={(event) => handleExtraFilterChange(filter.id, { value: event.target.value })}
-                        className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-foreground text-sm hover:border-primary/50 focus:outline-none focus:border-primary transition-colors"
-                      >
-                        {options.map((option) => (
-                          <option key={`${filter.id}-${option.value}`} value={option.value}>
-                            {formatOptionLabel(option)}
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        onClick={() => removeExtraFilter(filter.id)}
-                        className="inline-flex items-center justify-center rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
-                        aria-label={`Remove ${filter.field} filter`}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No extra filters selected yet.</p>
             )}
           </div>
         </div>
-      )}
-
-      {isExpanded && (
-        <button
-          onClick={resetFilters}
-          className="mt-4 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <X className="w-4 h-4" />
-          Reset Filters
-        </button>
       )}
     </div>
   );

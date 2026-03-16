@@ -126,12 +126,12 @@ class PostgreSQLAdapter(DBAdapter):
         return schema
 
     def sample_rows(self, table: str, n: int = 5) -> List[Dict[str, Any]]:
-        safe = self._quote(table)
-        return self.execute(f"SELECT * FROM {safe} LIMIT %s", [n])
+        qualified = self._qualify(table)
+        return self.execute(f"SELECT * FROM {qualified} LIMIT %s", [n])
 
     def row_count(self, table: str) -> int:
-        safe = self._quote(table)
-        result = self.execute(f"SELECT COUNT(*) AS cnt FROM {safe}")
+        qualified = self._qualify(table)
+        result = self.execute(f"SELECT COUNT(*) AS cnt FROM {qualified}")
         return int(result[0]["cnt"]) if result else 0
 
     # ------------------------------------------------------------------ #
@@ -148,6 +148,19 @@ class PostgreSQLAdapter(DBAdapter):
     # ------------------------------------------------------------------ #
     # Private helpers
     # ------------------------------------------------------------------ #
+
+    def _qualify(self, table: str) -> str:
+        """Returns a schema-qualified, double-quoted table reference.
+
+        If *table* already contains a dot (e.g. ``data.fact_created_videos``)
+        both parts are quoted separately; otherwise ``self._schema`` is
+        prepended so bare names resolve correctly.
+        """
+        if '.' in table:
+            schema, tbl = table.split('.', 1)
+            return f'"{schema}"."{re.sub(r"[^A-Za-z0-9_]", "_", tbl)}"'
+        safe = re.sub(r'[^A-Za-z0-9_]', '_', table)
+        return f'"{self._schema}"."{safe}"'
 
     @staticmethod
     def _quote(name: str) -> str:

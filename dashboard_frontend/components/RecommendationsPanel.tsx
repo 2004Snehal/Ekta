@@ -1,12 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Lightbulb, RefreshCw } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import type { DashboardFilters, DashboardKPI, DashboardKpiId } from '@/types/dashboard';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type UserRole = 'ops_lead' | 'editor' | 'exec';
+import { useProfile, type ProfileKey } from '@/lib/profiles';
 
 type Rec = {
   title: string;
@@ -25,231 +22,247 @@ type RecResponse = {
   cached: boolean;
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const ROLE_LABELS: Record<UserRole, string> = {
-  ops_lead: 'Ops Lead',
-  editor:   'Editor',
-  exec:     'Executive',
-};
-
 const KPI_TO_METRIC: Partial<Record<DashboardKpiId, string>> = {
-  publish_rate:      'publish_rate_pct',
-  processed_videos:  'created_count',
-  published_videos:  'published_count',
+  publish_rate:     'publish_rate_pct',
+  processed_videos: 'created_count',
+  published_videos: 'published_count',
 };
 
-const PRIORITY_CARD: Record<string, string> = {
-  high:   'border-red-500/40 bg-red-500/5',
-  medium: 'border-yellow-500/40 bg-yellow-500/5',
-  low:    'border-green-500/40 bg-green-500/5',
+const PRIORITY_COLOR: Record<string, string> = {
+  high:   'var(--signal)',
+  medium: 'var(--warn)',
+  low:    'var(--ok)',
 };
 
-const PRIORITY_BADGE: Record<string, string> = {
-  high:   'bg-red-500/20 text-red-400',
-  medium: 'bg-yellow-500/20 text-yellow-400',
-  low:    'bg-green-500/20 text-green-400',
-};
+function getViewFromPathname(pathname: string): string {
+  if (pathname === '/dashboard') return 'executive_summary';
+  if (pathname.startsWith('/dashboard/usage')) return 'trend_view';
+  if (pathname.startsWith('/dashboard/analysis')) return 'channel_detail';
+  if (pathname.startsWith('/dashboard/funnel')) return 'content_mix';
+  return 'executive_summary';
+}
 
-function buildContext(
-  filters: DashboardFilters,
-  kpis: DashboardKPI[],
-  selectedKpiId: DashboardKpiId | null,
-  userRole: UserRole,
-) {
+function buildContext(filters: DashboardFilters, kpis: DashboardKPI[], selectedKpiId: DashboardKpiId | null, userRole: ProfileKey, pathname: string) {
   const channelFilter = filters.channel && filters.channel !== 'all' ? filters.channel : null;
   const userFilter    = filters.user    && filters.user    !== 'all' ? filters.user    : null;
 
-  let view        = 'executive_summary';
-  let entityType  = 'network';
-  let entityName  = 'All Channels';
+  let view = getViewFromPathname(pathname), entityType = 'network', entityName = 'All Channels';
+  if (channelFilter) { view = 'channel_detail'; entityType = 'channel'; entityName = channelFilter; }
+  else if (userFilter) { view = 'user_detail'; entityType = 'user'; entityName = userFilter; }
 
-  if (channelFilter) {
-    view       = 'channel_detail';
-    entityType = 'channel';
-    entityName = channelFilter;
-  } else if (userFilter) {
-    view       = 'user_detail';
-    entityType = 'user';
-    entityName = userFilter;
-  }
+  const focusKpiId   = selectedKpiId ?? 'publish_rate';
+  const metricName   = KPI_TO_METRIC[focusKpiId] ?? 'publish_rate_pct';
+  const focusedKpi   = kpis.find((k) => k.id === focusKpiId);
+  const rawValue     = focusedKpi?.value;
+  const currentValue = typeof rawValue === 'number' ? rawValue
+    : typeof rawValue === 'string' ? parseFloat(rawValue.replace(/[^0-9.-]/g, '')) || null
+    : null;
 
-  const focusKpiId  = selectedKpiId ?? 'publish_rate';
-  const metricName  = KPI_TO_METRIC[focusKpiId] ?? 'publish_rate_pct';
-  const focusedKpi  = kpis.find((k) => k.id === focusKpiId);
-  const rawValue    = focusedKpi?.value;
-  const currentValue =
-    typeof rawValue === 'number'
-      ? rawValue
-      : typeof rawValue === 'string'
-      ? parseFloat(rawValue.replace(/[^0-9.-]/g, '')) || null
-      : null;
-
-  return {
-    client_id:       1,
-    view,
-    entity_type:     entityType,
-    entity_id:       null,
-    entity_name:     entityName,
-    metric_in_focus: metricName,
-    current_value:   currentValue,
-    time_range:      null,
-    user_role:       userRole,
-  };
+  return { client_id: 1, view, entity_type: entityType, entity_id: null, entity_name: entityName,
+           metric_in_focus: metricName, current_value: currentValue, time_range: null, user_role: userRole };
 }
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
   apiBaseUrl: string;
   filters: DashboardFilters;
   kpis: DashboardKPI[];
   selectedKpiId: DashboardKpiId | null;
-  dataReady: boolean; // only fetch once dashboard data is loaded
+  dataReady: boolean;
 }
 
 export function RecommendationsPanel({ apiBaseUrl, filters, kpis, selectedKpiId, dataReady }: Props) {
-  const [userRole, setUserRole] = useState<UserRole>('ops_lead');
-  const [recs,     setRecs]     = useState<RecResponse | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
+  const { profile, profileDef } = useProfile();
+  const pathname = usePathname();
+  const [recs,    setRecs]    = useState<RecResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function fetchRecs(role: UserRole) {
+  async function fetchRecs(role: ProfileKey) {
     if (!apiBaseUrl || !dataReady) return;
     setLoading(true);
     setError(null);
     try {
-      const body = buildContext(filters, kpis, selectedKpiId, role);
-      const res = await fetch(`${apiBaseUrl}/recommendations/contextual`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
+      const body = buildContext(filters, kpis, selectedKpiId, role, pathname);
+      const res  = await fetch(`${apiBaseUrl}/recommendations/contextual`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`${res.status} — ${await res.text()}`);
+      if (!res.ok) throw new Error(`${res.status}`);
       setRecs(await res.json() as RecResponse);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load recommendations');
+      setError(e instanceof Error ? e.message : 'Failed');
     } finally {
       setLoading(false);
     }
   }
 
-  // Auto-fetch when filters/kpis/data readiness changes (debounced)
   useEffect(() => {
     if (!dataReady) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void fetchRecs(userRole), 600);
+    debounceRef.current = setTimeout(() => void fetchRecs(profile), 600);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, kpis, selectedKpiId, dataReady]);
-
-  function handleRoleChange(role: UserRole) {
-    setUserRole(role);
-    void fetchRecs(role);
-  }
+  }, [filters, kpis, selectedKpiId, dataReady, profile, pathname]);
 
   return (
-    <div className="bg-card border border-border rounded-lg p-6">
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-5">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
-            <Lightbulb className="w-4 h-4 text-primary" />
-          </div>
-          <div>
-            <h3 className="text-base font-semibold text-foreground">AI Recommendations</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Context-aware actions based on current view
-              {recs && !loading && (
-                <span className="ml-2">
-                  · <span className="text-foreground">{recs.entity_name}</span>
-                  {recs.cached && <span className="ml-1 text-muted-foreground/60">(cached)</span>}
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Role selector */}
-          <div className="flex rounded-lg border border-border overflow-hidden text-xs">
-            {(Object.keys(ROLE_LABELS) as UserRole[]).map((role) => (
-              <button
-                key={role}
-                onClick={() => handleRoleChange(role)}
-                className={`px-3 py-1.5 transition-colors ${
-                  userRole === role
-                    ? 'bg-primary text-primary-foreground font-medium'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-                }`}
-              >
-                {ROLE_LABELS[role]}
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={() => void fetchRecs(userRole)}
-            disabled={loading}
-            className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+      <div className="flex items-center justify-between mb-4">
+        <span className="section-id">Recommendations</span>
+        <span
+          className="action-text"
+          onClick={() => void fetchRecs(profile)}
+          style={{ color: loading ? 'var(--signal)' : undefined }}
+        >
+          {loading ? <span className="spin-anim">↻</span> : '↻'}
+        </span>
       </div>
 
-      {/* Loading skeleton */}
+      {/* Profile context display */}
+      <div className="flex items-center gap-2 mb-4">
+        <span
+          style={{
+            fontFamily: 'var(--font-condensed)',
+            fontSize: '0.6rem',
+            fontWeight: 700,
+            letterSpacing: '0.14em',
+            color: 'var(--on)',
+            paddingBottom: '1px',
+            borderBottom: '1px solid var(--signal)',
+          }}
+        >
+          {profileDef.displayName.toUpperCase()}
+        </span>
+        {recs && !loading && (
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.55rem',
+              color: 'var(--on-low)',
+              marginLeft: 'auto',
+            }}
+          >
+            {recs.entity_name}
+          </span>
+        )}
+      </div>
+
+      <div className="wire-h" style={{ marginBottom: '12px' }} />
+
+      {/* Loading skeleton — scan lines */}
       {loading && (
-        <div className="space-y-3">
+        <div className="flex flex-col gap-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-20 rounded-lg bg-secondary/30 animate-pulse" />
+            <div key={i} style={{ animationDelay: `${i * 0.1}s` }}>
+              <div className="scan-loader" style={{ animationDelay: `${i * 0.15}s`, marginBottom: '8px' }} />
+              <div style={{ height: '8px', background: 'var(--surface-raise)', width: '60%', marginBottom: '4px' }} />
+              <div style={{ height: '6px', background: 'var(--surface-hi)', width: '80%' }} />
+            </div>
           ))}
         </div>
       )}
 
       {/* Error */}
       {!loading && error && (
-        <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
-          {error}
-        </p>
+        <div style={{ borderLeft: '2px solid var(--signal)', paddingLeft: '10px' }}>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--signal)' }}>
+            ERR: {error}
+          </p>
+        </div>
       )}
 
-      {/* Empty / not ready */}
+      {/* Empty state */}
       {!loading && !error && !recs && (
-        <p className="text-sm text-muted-foreground text-center py-6">
-          Recommendations load automatically once the dashboard data is ready.
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-low)' }}>
+          — awaiting dashboard data
         </p>
       )}
 
-      {/* Recommendations */}
+      {/* Recommendation rows */}
       {!loading && !error && recs && (
-        <div className="space-y-3">
+        <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
           {recs.recommendations.map((rec, i) => (
-            <div
-              key={i}
-              className={`rounded-lg border p-4 ${PRIORITY_CARD[rec.priority] ?? 'border-border'}`}
-            >
-              <div className="flex items-start justify-between gap-3 mb-1.5">
-                <span className="text-sm font-semibold text-foreground leading-snug">{rec.title}</span>
-                <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${PRIORITY_BADGE[rec.priority] ?? ''}`}>
-                  {rec.priority}
-                </span>
-              </div>
+            <div key={i} className="rec-row" style={{ animationDelay: `${i * 0.08}s` }}>
+              {/* Priority bar */}
+              <div
+                className="rec-bar"
+                style={{ background: PRIORITY_COLOR[rec.priority] ?? 'var(--wire-hi)' }}
+              />
 
-              <p className="text-xs font-medium text-primary mb-1.5">→ {rec.action}</p>
-              <p className="text-xs text-muted-foreground leading-relaxed mb-2">{rec.rationale}</p>
-
-              {Object.keys(rec.supporting_metrics).length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.entries(rec.supporting_metrics).map(([k, v]) => (
-                    <span key={k} className="text-[10px] bg-secondary/60 rounded px-2 py-0.5 text-muted-foreground">
-                      {k.replace(/_/g, ' ')}: <span className="text-foreground font-medium">{String(v)}</span>
-                    </span>
-                  ))}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* Priority label + title */}
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-condensed)',
+                      fontSize: '0.55rem',
+                      fontWeight: 700,
+                      letterSpacing: '0.18em',
+                      color: PRIORITY_COLOR[rec.priority] ?? 'var(--on-low)',
+                    }}
+                  >
+                    {rec.priority.toUpperCase()}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-sans)',
+                      fontSize: '0.75rem',
+                      fontWeight: 500,
+                      color: 'var(--on)',
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    {rec.title}
+                  </span>
                 </div>
-              )}
+
+                {/* Action */}
+                <p
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.65rem',
+                    color: 'var(--signal)',
+                    marginBottom: '4px',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  → {rec.action}
+                </p>
+
+                {/* Rationale */}
+                <p
+                  style={{
+                    fontSize: '0.7rem',
+                    color: 'var(--on-mid)',
+                    lineHeight: 1.45,
+                    marginBottom: '6px',
+                  }}
+                >
+                  {rec.rationale}
+                </p>
+
+                {/* Supporting metrics chips */}
+                {Object.keys(rec.supporting_metrics).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(rec.supporting_metrics).map(([k, v]) => (
+                      <span
+                        key={k}
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '0.55rem',
+                          background: 'var(--surface-raise)',
+                          color: 'var(--on-mid)',
+                          padding: '1px 5px',
+                          letterSpacing: '0.04em',
+                        }}
+                      >
+                        {k.replace(/_/g, ' ')}: <span style={{ color: 'var(--on)' }}>{String(v)}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>

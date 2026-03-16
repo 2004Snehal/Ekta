@@ -32,6 +32,8 @@ def expand_context(ctx: DashboardContext, conn) -> ExpandedContext:
         "content_mix":       _expand_content_mix,
         "executive_summary": _expand_executive_summary,
         "trend_view":        _expand_trend_view,
+        "client_health":     _expand_client_health,
+        "data_quality":      _expand_data_quality,
     }
     handler = handlers.get(ctx.view, _expand_executive_summary)
     log.info(f"[REC] Expanding context for view={ctx.view} entity={ctx.entity_name}")
@@ -329,6 +331,173 @@ def _expand_executive_summary(ctx: DashboardContext, conn) -> ExpandedContext:
         WHERE  m.client_id = %s AND m.input_type_id IS NOT NULL
         GROUP  BY it.type_name
         ORDER  BY publish_rate_pct DESC
+    """, (cid,))
+
+    return ExpandedContext(
+        entity_profile=entity_profile,
+        peer_comparison=peer_comparison,
+        related_actors=related_actors,
+        benchmark=benchmark,
+    )
+
+
+# ── client_health ──────────────────────────────────────────────────────────────
+
+def _expand_client_health(ctx: DashboardContext, conn) -> ExpandedContext:
+    """
+    Client-level aggregations for the client_success profile.
+    Surfaces channels-per-client counts, active-user totals, and publish
+    rates grouped by client so account managers can triage quickly.
+    """
+    cid = ctx.client_id
+
+    # Entity profile — aggregate health for this client
+    entity_profile = _fetch(conn, """
+        SELECT COUNT(h.channel_id)            AS total_channels,
+               SUM(h.active_users)            AS total_active_users,
+               SUM(h.total_created)           AS total_created,
+               SUM(h.total_published)         AS total_published,
+               ROUND(
+                   SUM(h.total_published)::numeric
+                   / NULLIF(SUM(h.total_created), 0) * 100, 1
+               )                              AS publish_rate_pct
+        FROM   data.mv_channel_health h
+        WHERE  h.client_id = %s
+    """, (cid,))
+
+    # Peer comparison — per-channel publish rates ranked worst-first (churn risk)
+    peer_comparison = _fetch(conn, """
+        SELECT ch.channel_name,
+               h.publish_rate_pct,
+               h.active_users,
+               h.total_created,
+               h.total_published,
+               h.last_activity::date AS last_activity
+        FROM   data.mv_channel_health h
+        JOIN   data.dim_channel ch ON ch.channel_id = h.channel_id
+        WHERE  h.client_id = %s
+        ORDER  BY h.publish_rate_pct ASC
+        LIMIT  10
+    """, (cid,))
+
+    # Related actors — monthly publish rate trend for this client
+    related_actors = _fetch(conn, """
+        SELECT TO_CHAR(m.month, 'YYYY-MM') AS month,
+               SUM(m.created_count)        AS created,
+               SUM(m.published_count)      AS published,
+               ROUND(
+                   SUM(m.published_count)::numeric
+                   / NULLIF(SUM(m.created_count), 0) * 100, 1
+               )                           AS publish_rate_pct
+        FROM   data.mv_monthly_kpis m
+        WHERE  m.client_id = %s
+        GROUP  BY m.month
+        ORDER  BY m.month DESC
+        LIMIT  6
+    """, (cid,))
+
+    # Benchmark — top 3 channels by publish rate for positive comparison
+    benchmark = _fetch(conn, """
+        SELECT ch.channel_name,
+               h.publish_rate_pct,
+               h.active_users,
+               h.total_created
+        FROM   data.mv_channel_health h
+        JOIN   data.dim_channel ch ON ch.channel_id = h.channel_id
+        WHERE  h.client_id = %s
+        ORDER  BY h.publish_rate_pct DESC
+        LIMIT  3
+    """, (cid,))
+
+    return ExpandedContext(
+        entity_profile=entity_profile,
+        peer_comparison=peer_comparison,
+        related_actors=related_actors,
+        benchmark=benchmark,
+    )
+
+
+# ── data_quality ───────────────────────────────────────────────────────────────
+
+def _expand_data_quality(ctx: DashboardContext, conn) -> ExpandedContext:
+    """
+    Data-quality diagnostics for the tech_product profile.
+    Counts NULLs and unknowns across key columns in fact_created_videos
+    so engineers and PMs can prioritise coverage fixes.
+    """
+    cid = ctx.client_id
+
+    # Entity profile — total row count and per-column NULL rates
+    entity_profile = _fetch(conn, """
+        SELECT COUNT(*)                                          AS total_rows,
+               COUNT(*) FILTER (WHERE channel_id  IS NULL)     AS null_channel_id,
+               COUNT(*) FILTER (WHERE user_id     IS NULL)     AS null_user_id,
+               COUNT(*) FILTER (WHERE input_type  IS NULL
+                                  OR  input_type  = 'Unknown') AS missing_input_type,
+               COUNT(*) FILTER (WHERE output_type IS NULL
+                                  OR  output_type = 'Unknown') AS missing_output_type,
+               COUNT(*) FILTER (WHERE created_at  IS NULL)     AS null_created_at,
+               ROUND(
+                   COUNT(*) FILTER (WHERE channel_id IS NULL)::numeric
+                   / NULLIF(COUNT(*), 0) * 100, 2
+               )                                               AS null_channel_pct
+        FROM   data.fact_created_videos
+        WHERE  client_id = %s
+    """, (cid,))
+
+    # Peer comparison — NULL rates broken down by channel (worst first)
+    peer_comparison = _fetch(conn, """
+        SELECT ch.channel_name,
+               COUNT(*)                                          AS total_rows,
+               COUNT(*) FILTER (WHERE f.input_type  IS NULL
+                                  OR  f.input_type  = 'Unknown') AS missing_input_type,
+               COUNT(*) FILTER (WHERE f.output_type IS NULL
+                                  OR  f.output_type = 'Unknown') AS missing_output_type,
+               ROUND(
+                   COUNT(*) FILTER (WHERE f.input_type IS NULL
+                                      OR  f.input_type = 'Unknown')::numeric
+                   / NULLIF(COUNT(*), 0) * 100, 2
+               )                                               AS missing_input_type_pct
+        FROM   data.fact_created_videos f
+        JOIN   data.dim_channel ch ON ch.channel_id = f.channel_id
+        WHERE  f.client_id = %s
+        GROUP  BY ch.channel_name
+        ORDER  BY missing_input_type_pct DESC
+        LIMIT  10
+    """, (cid,))
+
+    # Related actors — monthly NULL-rate trend (data quality over time)
+    related_actors = _fetch(conn, """
+        SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
+               COUNT(*)                                             AS total_rows,
+               COUNT(*) FILTER (WHERE input_type IS NULL
+                                  OR  input_type = 'Unknown')      AS missing_input_type,
+               ROUND(
+                   COUNT(*) FILTER (WHERE input_type IS NULL
+                                      OR  input_type = 'Unknown')::numeric
+                   / NULLIF(COUNT(*), 0) * 100, 2
+               )                                                   AS missing_input_type_pct
+        FROM   data.fact_created_videos
+        WHERE  client_id = %s AND created_at IS NOT NULL
+        GROUP  BY DATE_TRUNC('month', created_at)
+        ORDER  BY month DESC
+        LIMIT  6
+    """, (cid,))
+
+    # Benchmark — channels with zero NULL issues (fully clean, for contrast)
+    benchmark = _fetch(conn, """
+        SELECT ch.channel_name,
+               COUNT(*) AS total_rows,
+               0        AS missing_input_type,
+               0.0      AS missing_input_type_pct
+        FROM   data.fact_created_videos f
+        JOIN   data.dim_channel ch ON ch.channel_id = f.channel_id
+        WHERE  f.client_id = %s
+        GROUP  BY ch.channel_name
+        HAVING COUNT(*) FILTER (WHERE f.input_type IS NULL
+                                  OR  f.input_type = 'Unknown') = 0
+        ORDER  BY total_rows DESC
+        LIMIT  5
     """, (cid,))
 
     return ExpandedContext(

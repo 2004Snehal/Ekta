@@ -1,7 +1,5 @@
 'use client';
 
-import { ArrowUp, ArrowDown, TrendingUp } from 'lucide-react';
-
 interface KPICardProps {
   title: string;
   value: string | number;
@@ -9,40 +7,61 @@ interface KPICardProps {
   timeframe: string;
   icon?: React.ReactNode;
   onClick?: () => void;
+  active?: boolean;
 }
 
-export function KPICard({ title, value, change, timeframe, icon, onClick }: KPICardProps) {
+export function KPICard({ title, value, change, onClick, active }: KPICardProps) {
   const isPositive = change >= 0;
-  const clickable = Boolean(onClick);
+  const changeAbs  = Math.abs(change);
+  const arrow      = isPositive ? '▲' : '▼';
 
   return (
-    <button
-      type="button"
+    <div
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
-      className={`w-full rounded-lg border border-border bg-card p-6 text-left transition-all duration-300 ${
-        clickable
-          ? 'hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/40'
-          : ''
-      }`}
+      onKeyDown={(e) => { if (onClick && (e.key === 'Enter' || e.key === ' ')) onClick(); }}
+      className={`kpi-cell${active ? ' kpi-active' : ''}`}
     >
-      <div className="mb-4 flex items-start justify-between">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">{title}</p>
-          <h3 className="mt-2 text-3xl font-bold text-foreground">{value}</h3>
-        </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          {icon || <TrendingUp className="h-5 w-5" />}
-        </div>
-      </div>
+      {/* Label */}
+      <p
+        style={{
+          fontFamily: 'var(--font-condensed)',
+          fontSize: '0.6rem',
+          fontWeight: 700,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          color: 'var(--on-low)',
+          marginBottom: '8px',
+        }}
+      >
+        {title}
+      </p>
 
-      <div className="flex items-center gap-2">
-        <div className={`flex items-center gap-1 ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
-          {isPositive ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
-          <span className="font-semibold">{Math.abs(change)}%</span>
-        </div>
-        <span className="text-sm text-muted-foreground">{timeframe}</span>
-      </div>
-      {clickable && <p className="mt-3 text-xs text-muted-foreground">Click to expand details</p>}
-    </button>
+      {/* Value */}
+      <p
+        className="data-number"
+        style={{
+          fontSize: '2rem',
+          fontWeight: 500,
+          color: 'var(--on)',
+          marginBottom: '6px',
+        }}
+      >
+        {value}
+      </p>
+
+      {/* Change */}
+      <p
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.65rem',
+          color: isPositive ? 'var(--ok)' : 'var(--signal)',
+          letterSpacing: '0.04em',
+        }}
+      >
+        {arrow} {changeAbs}%
+      </p>
+    </div>
   );
 }

@@ -21,12 +21,14 @@ logging.basicConfig(
     force=True,
 )
 
+from api.routes import analytics
 from api.routes import dashboard, intelligence, ingest, nlq, recommendations
 from api.routes import state as state_route
 from api.routes import dashboard_data
 from api.routes import nlq_session
 from api.routes import kpi_lab
 from api.routes import data_manager
+from api.routes import profiles
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +149,8 @@ app.include_router(nlq_session.router,     tags=["NLQ"])
 app.include_router(kpi_lab.router,         tags=["KPI Lab"])       # Auto-KPI Discovery Engine
 app.include_router(data_manager.router,    tags=["Data Manager"])  # CSV append + row deletion
 app.include_router(recommendations.router, tags=["Recommendations"])
+app.include_router(profiles.router,         tags=["Profiles"])
+app.include_router(analytics.router,        tags=["Analytics"])
 
 
 @app.get("/health")

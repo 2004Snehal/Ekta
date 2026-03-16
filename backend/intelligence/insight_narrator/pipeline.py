@@ -132,10 +132,16 @@ def _write_insight_log(conn, client_id: int, response: NarratorResponse) -> None
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
 
-def run_pipeline(client_id: int) -> NarratorResponse | None:
+def run_pipeline(
+    client_id: int,
+    profile: str | None = None,
+) -> NarratorResponse | None:
     """
     Full pipeline: detect → dedup → narrate → cache → log.
     Returns the NarratorResponse on success, None on fatal error.
+
+    ``profile`` is forwarded to ``narrate()`` so the LLM frames insight cards
+    for the appropriate user role. Defaults to None (generic framing).
 
     Uses an in-process lock to prevent concurrent runs for the same client.
     """
@@ -178,7 +184,7 @@ def run_pipeline(client_id: int) -> NarratorResponse | None:
                 return empty
 
             # Step 4: LLM narration
-            cards, digest = narrate(surfaced, include_digest=True)
+            cards, digest = narrate(surfaced, include_digest=True, profile=profile)
             if not cards:
                 logger.error("pipeline: narrator returned no cards for client %s", client_id)
                 return None

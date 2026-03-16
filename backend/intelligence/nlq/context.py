@@ -107,18 +107,49 @@ def fetch_live_schema(conn) -> str:
     return schema_str
 
 
-def build_system_prompt(client_id: int, conn=None) -> str:
+PROFILE_PREAMBLES = {
+    "founder": (
+        "The user is a founder/executive. Prioritize high-level trends, growth metrics, "
+        "and strategic comparisons. Default to monthly granularity."
+    ),
+    "client_success": (
+        "The user is from client success. Prioritize client-level breakdowns, "
+        "adoption metrics, and health indicators."
+    ),
+    "operations": (
+        "The user is from operations. Prioritize throughput, bottlenecks, "
+        "team workloads, and process efficiency."
+    ),
+    "editorial": (
+        "The user is from editorial/production. Prioritize content type breakdowns, "
+        "format trends, and editorial pipeline metrics."
+    ),
+    "tech_product": (
+        "The user is from tech/product. Prioritize data quality, platform distribution, "
+        "system metrics, and coverage gaps."
+    ),
+}
+
+
+def build_system_prompt(client_id: int, conn=None, profile: str = "operations") -> str:
     """
     Build the NLQ system prompt. If conn is provided the schema is live-introspected;
     otherwise a generic fallback is used (should not happen in normal operation).
+
+    The optional ``profile`` parameter injects a role-aware preamble so the LLM
+    biases its SQL and chart choices toward the user's area of responsibility.
     """
     if conn is not None:
         schema_str = fetch_live_schema(conn)
     else:
         schema_str = "Schema unavailable — write generic SQL using information_schema if needed."
 
+    profile_preamble = PROFILE_PREAMBLES.get(profile, PROFILE_PREAMBLES["operations"])
+
     return f"""You are a PostgreSQL analytics expert.
 Convert the user's natural language question into a SQL query and specify how to visualize the result.
+
+USER CONTEXT: {profile_preamble}
 
 {schema_str}
 

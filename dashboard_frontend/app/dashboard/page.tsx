@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { KPICard } from '@/components/KPICard';
+import { SparkKPI } from '@/components/SparkKPI';
 import { KPIDetailModal } from '@/components/KPIDetailModal';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { Filters } from '@/components/Filters';
 import { InsightPanel } from '@/components/InsightPanel';
+import { InsightBanner } from '@/components/InsightBanner';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
-import { BarChart3, Video, Zap, TrendingUp, Share2, Check, Loader2 } from 'lucide-react';
 import {
   buildDashboardCharts,
   buildDashboardInsights,
@@ -31,7 +31,8 @@ import type {
   DashboardStatePayload,
 } from '@/types/dashboard';
 
-const USER_ID = process.env.NEXT_PUBLIC_DASHBOARD_USER_ID ?? 'demo-user';
+const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
+const USER_ID    = process.env.NEXT_PUBLIC_DASHBOARD_USER_ID ?? 'demo-user';
 const STORAGE_KEY = `dashboard-state:${USER_ID}`;
 
 type ShareStatus = 'idle' | 'saving' | 'copied';
@@ -40,324 +41,359 @@ function getRequiredDataRange(range: DashboardDateRange): DashboardDateRange {
   return range === 'all-time' ? 'all-time' : 'last-90-days';
 }
 
-function resolveDashboardIcon(iconKey: string) {
-  switch (iconKey) {
-    case 'video':
-      return <Video className="w-5 h-5" />;
-    case 'zap':
-      return <Zap className="w-5 h-5" />;
-    case 'trending':
-      return <TrendingUp className="w-5 h-5" />;
-    default:
-      return <BarChart3 className="w-5 h-5" />;
+/** Build a simple 12-point sparkline from filtered records bucketed by the last N periods */
+function buildSparkline(records: DashboardRecord[], key: 'uploadedVideos' | 'processedVideos' | 'publishedVideos', buckets = 12): number[] {
+  if (records.length === 0) return [];
+  const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date));
+  const chunkSize = Math.ceil(sorted.length / buckets);
+  const result: number[] = [];
+  for (let i = 0; i < sorted.length; i += chunkSize) {
+    const chunk = sorted.slice(i, i + chunkSize);
+    result.push(chunk.reduce((s, r) => s + ((r[key] as number) ?? 0), 0));
   }
+  return result;
 }
 
 export default function Dashboard() {
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
-  const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
-  const [allRecords, setAllRecords] = useState<DashboardRecord[]>([]);
+  const apiBaseUrl = API;
+  const [filters, setFilters]         = useState<DashboardFilters>(DEFAULT_FILTERS);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [allRecords, setAllRecords]   = useState<DashboardRecord[]>([]);
   const [loadedRange, setLoadedRange] = useState<DashboardDateRange | null>(null);
   const [filterFields, setFilterFields] = useState(() => normalizeFilterFields(createMockDashboardRecords('last-90-days')));
-  const [dataSource, setDataSource] = useState<'live' | 'mock'>('mock');
+  const [dataSource, setDataSource]   = useState<'live' | 'mock'>('mock');
   const [stateSource, setStateSource] = useState<'api' | 'local'>('local');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading]     = useState(true);
   const [selectedKpiId, setSelectedKpiId] = useState<DashboardKpiId | null>(null);
-  const [stateReady, setStateReady] = useState(false);
+  const [stateReady, setStateReady]   = useState(false);
   const [shareStatus, setShareStatus] = useState<ShareStatus>('idle');
   const lastSavedState = useRef('');
 
+  // New: narrator insights for InsightBanner
+  const [narratorInsights, setNarratorInsights] = useState<{ title: string; severity: 'high' | 'medium' | 'low'; body?: string }[]>([]);
+
+  // New: period comparison data for delta values on SparkKPIs
+  const [periodDeltas, setPeriodDeltas] = useState<Record<string, number>>({});
+
+  /* ── Fetch narrator insights ─────────────────────────────── */
+  useEffect(() => {
+    if (!apiBaseUrl) return;
+    fetch(`${apiBaseUrl}/narrator/insights?client_id=1`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        const raw = Array.isArray(data) ? data : (data.insights ?? []);
+        setNarratorInsights(raw.slice(0, 3).map((ins: any) => ({
+          title: ins.title ?? ins.headline ?? String(ins),
+          severity: ins.severity ?? ins.priority ?? 'medium',
+          body: ins.body ?? ins.description ?? undefined,
+        })));
+      })
+      .catch(() => {});
+  }, [apiBaseUrl]);
+
+  /* ── Fetch period deltas for SparkKPI ────────────────────── */
+  useEffect(() => {
+    if (!apiBaseUrl) return;
+    fetch(`${apiBaseUrl}/analytics/period-compare?client_id=1&period=month`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.deltas) return;
+        setPeriodDeltas({
+          uploaded_videos:  data.deltas.count_pct ?? 0,
+          processed_videos: data.deltas.count_pct ?? 0,
+          published_videos: data.deltas.published_pct ?? 0,
+          publish_rate:     data.deltas.publish_rate_delta ?? 0,
+          average_duration: data.deltas.duration_pct ?? 0,
+        });
+      })
+      .catch(() => {});
+  }, [apiBaseUrl]);
+
+  /* ── Share ──────────────────────────────────────────── */
   async function handleShare() {
     if (!apiBaseUrl || shareStatus !== 'idle') return;
     setShareStatus('saving');
     try {
       const payload = createDashboardState(USER_ID, filters, filtersExpanded, loadedRange ?? 'last-90-days', selectedKpiId ?? undefined);
       const res = await fetch(`${apiBaseUrl}/dashboard/state`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error('save failed');
       const { state_id } = await res.json() as { state_id: string };
-      const url = `${window.location.origin}/dashboard?state=${state_id}`;
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(`${window.location.origin}/dashboard?state=${state_id}`);
       setShareStatus('copied');
       setTimeout(() => setShareStatus('idle'), 2500);
-    } catch {
-      setShareStatus('idle');
-    }
+    } catch { setShareStatus('idle'); }
   }
 
+  /* ── State hydration ────────────────────────────────── */
   useEffect(() => {
-    let isCancelled = false;
+    let cancelled = false;
+    const hydrate = async () => {
+      let restored: DashboardStatePayload | null = null;
 
-    const hydrateState = async () => {
-      let restoredState: DashboardStatePayload | null = null;
-
-      // 1. Check URL for a shared state_id (?state=<uuid>)
       if (typeof window !== 'undefined' && apiBaseUrl) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const sharedStateId = urlParams.get('state');
-        if (sharedStateId) {
+        const stateId = new URLSearchParams(window.location.search).get('state');
+        if (stateId) {
           try {
-            const res = await fetch(`${apiBaseUrl}/dashboard/state/${sharedStateId}`, { cache: 'no-store' });
-            if (res.ok) {
-              const payload = await res.json() as DashboardStatePayload;
-              restoredState = payload;
-              if (!isCancelled) setStateSource('api');
-            }
-          } catch { /* fall through */ }
+            const res = await fetch(`${apiBaseUrl}/dashboard/state/${stateId}`, { cache: 'no-store' });
+            if (res.ok) { restored = await res.json() as DashboardStatePayload; if (!cancelled) setStateSource('api'); }
+          } catch { /* fallthrough */ }
         }
       }
 
-      // 2. Fallback: localStorage
-      if (!restoredState && typeof window !== 'undefined') {
-        const localState = window.localStorage.getItem(STORAGE_KEY);
-        if (localState) {
-          try {
-            restoredState = JSON.parse(localState) as DashboardStatePayload;
-            if (!isCancelled) setStateSource('local');
-          } catch {
-            window.localStorage.removeItem(STORAGE_KEY);
-          }
+      if (!restored && typeof window !== 'undefined') {
+        const local = window.localStorage.getItem(STORAGE_KEY);
+        if (local) {
+          try { restored = JSON.parse(local) as DashboardStatePayload; if (!cancelled) setStateSource('local'); }
+          catch { window.localStorage.removeItem(STORAGE_KEY); }
         }
       }
 
-      // 3. Fallback: user state from API
-      if (!restoredState && apiBaseUrl) {
+      if (!restored && apiBaseUrl) {
         try {
-          const response = await fetch(`${apiBaseUrl}/dashboard/state?user_id=${encodeURIComponent(USER_ID)}`, {
-            cache: 'no-store',
-          });
-          if (response.ok) {
-            const payload = (await response.json()) as DashboardStatePayload | { state?: DashboardStatePayload };
-            restoredState = 'state' in payload && payload.state ? payload.state : (payload as DashboardStatePayload);
-            if (!isCancelled) setStateSource('api');
+          const res = await fetch(`${apiBaseUrl}/dashboard/state?user_id=${encodeURIComponent(USER_ID)}`, { cache: 'no-store' });
+          if (res.ok) {
+            const p = await res.json() as DashboardStatePayload | { state?: DashboardStatePayload };
+            restored = 'state' in p && p.state ? p.state : (p as DashboardStatePayload);
+            if (!cancelled) setStateSource('api');
           }
         } catch { /* no remote state */ }
       }
 
-      if (!isCancelled && restoredState) {
-        setFilters({ ...DEFAULT_FILTERS, ...restoredState.filters });
-        setFiltersExpanded(restoredState.filtersExpanded);
-        setSelectedKpiId(restoredState.selectedKpiId ?? null);
+      if (!cancelled && restored) {
+        const restoredFilters = {
+          ...DEFAULT_FILTERS,
+          ...restored.filters,
+          extraFilters: (restored.filters?.extraFilters ?? []).filter((ef) => ef.value && ef.value !== 'all'),
+        };
+        setFilters(restoredFilters);
+        setFiltersExpanded(restored.filtersExpanded);
+        setSelectedKpiId(restored.selectedKpiId ?? null);
       }
-
-      if (!isCancelled) {
-        setStateReady(true);
-      }
+      if (!cancelled) setStateReady(true);
     };
-
-    void hydrateState();
-
-    return () => {
-      isCancelled = true;
-    };
+    void hydrate();
+    return () => { cancelled = true; };
   }, [apiBaseUrl]);
 
+  /* ── Data load ──────────────────────────────────────── */
   useEffect(() => {
-    if (!stateReady) {
-      return;
-    }
+    if (!stateReady) return;
+    const reqRange = getRequiredDataRange(filters.dateRange);
+    if (supportsRange(loadedRange, reqRange) && allRecords.length > 0) return;
 
-    const requestedRange = getRequiredDataRange(filters.dateRange);
-    if (supportsRange(loadedRange, requestedRange) && allRecords.length > 0) {
-      return;
-    }
-
-    let isCancelled = false;
-
-    const loadDashboardData = async () => {
+    let cancelled = false;
+    const load = async () => {
       setIsLoading(true);
-
       if (apiBaseUrl) {
         try {
-          const response = await fetch(
-            `${apiBaseUrl}/dashboard?user_id=${encodeURIComponent(USER_ID)}&date_range=${encodeURIComponent(requestedRange)}`,
-            { cache: 'no-store' }
-          );
-
-          if (!response.ok) {
-            throw new Error('Dashboard request failed');
-          }
-
-          const payload = (await response.json()) as DashboardDatasetResponse;
-          if (!isCancelled) {
+          const res = await fetch(`${apiBaseUrl}/dashboard?user_id=${encodeURIComponent(USER_ID)}&date_range=${encodeURIComponent(reqRange)}`, { cache: 'no-store' });
+          if (!res.ok) throw new Error('failed');
+          const payload = await res.json() as DashboardDatasetResponse;
+          if (!cancelled) {
             setAllRecords(payload.records ?? []);
             setFilterFields(normalizeFilterFields(payload.records ?? [], payload.filter_fields));
-            setLoadedRange(payload.requested_range ?? requestedRange);
+            setLoadedRange(payload.requested_range ?? reqRange);
             setDataSource('live');
             setIsLoading(false);
           }
           return;
-        } catch {
-          if (!isCancelled) {
-            setDataSource('mock');
-          }
-        }
+        } catch { if (!cancelled) setDataSource('mock'); }
       }
-
-      const mockRecords = createMockDashboardRecords(requestedRange);
-      if (!isCancelled) {
-        setAllRecords(mockRecords);
-        setFilterFields(normalizeFilterFields(mockRecords));
-        setLoadedRange(requestedRange);
-        setIsLoading(false);
-      }
+      const mock = createMockDashboardRecords(reqRange);
+      if (!cancelled) { setAllRecords(mock); setFilterFields(normalizeFilterFields(mock)); setLoadedRange(reqRange); setIsLoading(false); }
     };
-
-    void loadDashboardData();
-
-    return () => {
-      isCancelled = true;
-    };
+    void load();
+    return () => { cancelled = true; };
   }, [allRecords.length, apiBaseUrl, filters.dateRange, loadedRange, stateReady]);
 
+  /* ── State persistence ──────────────────────────────── */
   useEffect(() => {
-    if (!stateReady || !loadedRange) {
-      return;
-    }
-
-    const nextState = createDashboardState(USER_ID, filters, filtersExpanded, loadedRange, selectedKpiId ?? undefined);
-    const serialized = JSON.stringify(nextState);
-
-    if (serialized === lastSavedState.current) {
-      return;
-    }
-
-    lastSavedState.current = serialized;
-
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(STORAGE_KEY, serialized);
-    }
-
-    if (apiBaseUrl) {
-      void fetch(`${apiBaseUrl}/dashboard/state`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: serialized,
-      }).catch(() => undefined);
-    }
+    if (!stateReady || !loadedRange) return;
+    const next = createDashboardState(USER_ID, filters, filtersExpanded, loadedRange, selectedKpiId ?? undefined);
+    const ser  = JSON.stringify(next);
+    if (ser === lastSavedState.current) return;
+    lastSavedState.current = ser;
+    if (typeof window !== 'undefined') window.localStorage.setItem(STORAGE_KEY, ser);
+    if (apiBaseUrl) void fetch(`${apiBaseUrl}/dashboard/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ser }).catch(() => undefined);
   }, [apiBaseUrl, filters, filtersExpanded, loadedRange, selectedKpiId, stateReady]);
 
+  /* ── Derived data ───────────────────────────────────── */
   const filteredRecords = useMemo(() => filterDashboardRecords(allRecords, filters), [allRecords, filters]);
-
-  const filterOptions = useMemo(
-    () =>
-      Object.fromEntries(
-        filterFields.map((field) => [field.key, getFilterOptions(filterDashboardRecords(allRecords, filters, { ignoreField: field.key }), field.key)])
-      ),
-    [allRecords, filterFields, filters]
-  );
-
-  const kpis = useMemo(() => buildDashboardKpis(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
-  const kpiDetails = useMemo(() => buildDashboardKpiDetails(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
-  const charts = useMemo(() => buildDashboardCharts(filteredRecords), [filteredRecords]);
-  const insights = useMemo(() => buildDashboardInsights(filteredRecords, filterFields), [filteredRecords, filterFields]);
+  const filterOptions   = useMemo(() =>
+    Object.fromEntries(filterFields.map((f) => [f.key, getFilterOptions(filterDashboardRecords(allRecords, filters, { ignoreField: f.key }), f.key)])),
+    [allRecords, filterFields, filters]);
+  const kpis            = useMemo(() => buildDashboardKpis(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
+  const kpiDetails      = useMemo(() => buildDashboardKpiDetails(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
+  const charts          = useMemo(() => buildDashboardCharts(filteredRecords), [filteredRecords]);
+  const insights        = useMemo(() => buildDashboardInsights(filteredRecords, filterFields), [filteredRecords, filterFields]);
   const selectedKpiDetail = selectedKpiId ? kpiDetails[selectedKpiId] ?? null : null;
-  const loadedRangeLabel = loadedRange ? getDisplayRangeLabel(loadedRange) : 'Loading';
+  const dataReady       = !isLoading && filteredRecords.length > 0;
+
+  // Build sparklines per KPI from filtered records
+  const sparklines = useMemo(() => ({
+    uploaded_videos:  buildSparkline(filteredRecords, 'uploadedVideos'),
+    processed_videos: buildSparkline(filteredRecords, 'processedVideos'),
+    published_videos: buildSparkline(filteredRecords, 'publishedVideos'),
+    publish_rate:     buildSparkline(filteredRecords, 'publishedVideos'),
+    average_duration: [],
+  }), [filteredRecords]);
 
   return (
-    <div className="p-8 min-h-screen">
-      <div className="mb-8 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <h1 className="text-4xl font-bold text-foreground mb-2">Analytics Dashboard</h1>
-          <p className="text-muted-foreground">Client-side filters are applied on the loaded dataset, so narrower ranges reuse cached data instead of recalling the backend.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span className="rounded-full border border-border px-3 py-1">User: {USER_ID}</span>
-          <span className="rounded-full border border-border px-3 py-1">Dataset: {dataSource === 'live' ? 'Backend' : 'Mock fallback'}</span>
-          <span className="rounded-full border border-border px-3 py-1">Loaded window: {loadedRangeLabel}</span>
-          <span className="rounded-full border border-border px-3 py-1">State: {stateSource === 'api' ? 'Synced API' : 'Local cache'}</span>
-          <span className="rounded-full border border-border px-3 py-1">Rows in view: {filteredRecords.length.toLocaleString()}</span>
-          {apiBaseUrl && (
-            <button
-              onClick={() => void handleShare()}
-              disabled={shareStatus !== 'idle'}
-              className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1 hover:border-primary/60 hover:text-foreground transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {shareStatus === 'saving' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : shareStatus === 'copied' ? (
-                <Check className="w-3.5 h-3.5 text-green-400" />
-              ) : (
-                <Share2 className="w-3.5 h-3.5" />
-              )}
-              {shareStatus === 'copied' ? 'Link copied!' : shareStatus === 'saving' ? 'Saving…' : 'Share'}
-            </button>
-          )}
-        </div>
+    <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
+
+      {/* ── Filter strip (sticky) ──────────────────────── */}
+      <div className="sticky top-11 z-40" style={{ background: 'var(--void)' }}>
+        <Filters
+          filters={filters}
+          filterFields={filterFields}
+          filterOptions={filterOptions}
+          isExpanded={filtersExpanded}
+          onExpandedChange={setFiltersExpanded}
+          onApply={setFilters}
+        />
       </div>
 
-      <Filters
-        filters={filters}
-        filterFields={filterFields}
-        filterOptions={filterOptions}
-        isExpanded={filtersExpanded}
-        onExpandedChange={setFiltersExpanded}
-        onApply={setFilters}
-      />
-
-      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {kpis.map((kpi) => (
-          <KPICard
-            key={kpi.id}
-            title={kpi.title}
-            value={kpi.value}
-            change={kpi.change}
-            timeframe={kpi.timeframe}
-            icon={resolveDashboardIcon(kpi.iconKey)}
-            onClick={() => setSelectedKpiId(kpi.id)}
-          />
-        ))}
+      {/* ── KPI strip ─────────────────────────────────── */}
+      <div
+        className="flex"
+        style={{ borderBottom: '1px solid var(--wire)' }}
+      >
+        {isLoading ? (
+          <div className="flex-1 px-6 py-8">
+            <div className="scan-loader" />
+          </div>
+        ) : (
+          kpis.map((kpi, i) => (
+            <div key={kpi.id} className="flex" style={{ flex: 1 }}>
+              {i > 0 && <div className="wire-v" />}
+              <SparkKPI
+                title={kpi.title}
+                value={kpi.value}
+                delta={periodDeltas[kpi.id] ?? kpi.change ?? null}
+                sparkData={sparklines[kpi.id] ?? []}
+                active={selectedKpiId === kpi.id}
+                onClick={() => setSelectedKpiId(kpi.id === selectedKpiId ? null : kpi.id)}
+              />
+            </div>
+          ))
+        )}
       </div>
 
-      {isLoading ? (
-        <div className="bg-card border border-border rounded-lg p-8 text-muted-foreground">Loading dashboard dataset...</div>
-      ) : filteredRecords.length ? (
-        <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            {charts.slice(0, 2).map((chart, idx) => (
-              <ChartRenderer key={idx} chart={chart} />
-            ))}
-          </div>
+      {/* ── Status bar ────────────────────────────────── */}
+      <div
+        className="flex items-center gap-4 px-6 py-1.5 flex-wrap"
+        style={{ borderBottom: '1px solid var(--wire)' }}
+      >
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
+          USER:{USER_ID}
+        </span>
+        <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: dataSource === 'live' ? 'var(--ok)' : 'var(--on-low)' }}>
+          {dataSource === 'live' ? 'LIVE' : 'MOCK'}
+        </span>
+        <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
+          {filteredRecords.length.toLocaleString()} ROWS
+        </span>
+        <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
+          {getDisplayRangeLabel(filters.dateRange).toUpperCase()}
+        </span>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            {charts.slice(2, 4).map((chart, idx) => (
-              <ChartRenderer key={idx + 2} chart={chart} />
-            ))}
-          </div>
+        <div className="flex-1" />
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <InsightPanel insights={insights.slice(0, 2)} />
-            <InsightPanel insights={insights.slice(2, 4)} />
-          </div>
+        {apiBaseUrl && (
+          <span
+            className="action-text"
+            onClick={() => void handleShare()}
+            style={{ color: shareStatus === 'copied' ? 'var(--ok)' : shareStatus === 'saving' ? 'var(--warn)' : undefined }}
+          >
+            {shareStatus === 'copied' ? 'COPIED ✓' : shareStatus === 'saving' ? 'SAVING…' : 'SHARE ↗'}
+          </span>
+        )}
+      </div>
 
-          <RecommendationsPanel
-            apiBaseUrl={apiBaseUrl}
-            filters={filters}
-            kpis={kpis}
-            selectedKpiId={selectedKpiId}
-            dataReady={!isLoading && filteredRecords.length > 0}
-          />
-        </>
-      ) : (
-        <div className="bg-card border border-border rounded-lg p-8 text-muted-foreground">
-          No dashboard rows match the active filters. Reset filters or remove one of the added filters to repopulate the view.
+      {/* ── Main content ──────────────────────────────── */}
+      {!isLoading && filteredRecords.length === 0 && (
+        <div className="px-6 py-12">
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--on-low)' }}>
+            — no rows match active filters. clear filters to repopulate.
+          </p>
         </div>
       )}
 
+      {!isLoading && filteredRecords.length > 0 && (
+        <div className="flex" style={{ minHeight: '600px' }}>
+
+          {/* Left: charts (65%) */}
+          <div style={{ flex: '0 0 65%', borderRight: '1px solid var(--wire)', padding: '24px 28px' }}>
+
+            {/* Section: Trends */}
+            <div style={{ marginBottom: '32px' }}>
+              {charts.slice(0, 2).map((chart, i) => (
+                <div key={i} style={{ marginBottom: i === 0 ? '32px' : '0' }}>
+                  <ChartRenderer chart={chart} />
+                </div>
+              ))}
+            </div>
+
+            <div className="wire-h" style={{ marginBottom: '32px' }} />
+
+            {/* Section: Distribution */}
+            <div
+              className="grid"
+              style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}
+            >
+              {charts.slice(2, 4).map((chart, i) => (
+                <ChartRenderer key={i + 2} chart={chart} />
+              ))}
+            </div>
+
+            {insights.length > 0 && (
+              <>
+                <div className="wire-h" style={{ margin: '32px 0 24px' }} />
+                <div
+                  className="grid"
+                  style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}
+                >
+                  <InsightPanel insights={insights.slice(0, 2)} label="Insights" />
+                  {insights.length > 2 && (
+                    <InsightPanel insights={insights.slice(2, 4)} label="More Insights" />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Right: InsightBanner + recommendations (35%) */}
+          <div style={{ flex: '0 0 35%', padding: '24px 24px', position: 'sticky', top: '88px', alignSelf: 'flex-start', maxHeight: 'calc(100vh - 88px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+
+            {/* InsightBanner at top of right column */}
+            {narratorInsights.length > 0 && (
+              <div style={{ marginBottom: '16px', flexShrink: 0 }}>
+                <InsightBanner insights={narratorInsights} />
+              </div>
+            )}
+
+            <RecommendationsPanel
+              apiBaseUrl={apiBaseUrl}
+              filters={filters}
+              kpis={kpis}
+              selectedKpiId={selectedKpiId}
+              dataReady={dataReady}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── KPI detail modal ──────────────────────────── */}
       <KPIDetailModal
         open={Boolean(selectedKpiId && selectedKpiDetail)}
         detail={selectedKpiDetail}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedKpiId(null);
-          }
-        }}
+        onOpenChange={(open) => { if (!open) setSelectedKpiId(null); }}
       />
     </div>
   );

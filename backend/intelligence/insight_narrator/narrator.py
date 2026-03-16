@@ -27,6 +27,17 @@ from intelligence.insight_narrator.schemas import FlaggedMetric, InsightCard
 logger = logging.getLogger(__name__)
 
 
+# ── Profile framing ───────────────────────────────────────────────────────────
+
+_PROFILE_FRAMING = {
+    "founder": "Frame insights for executives focused on strategic growth and revenue impact.",
+    "client_success": "Frame insights for account managers focused on client health and adoption.",
+    "operations": "Frame insights for operations leads focused on throughput and efficiency.",
+    "editorial": "Frame insights for editors focused on content quality and production pipeline.",
+    "tech_product": "Frame insights for engineers focused on data quality and platform health.",
+}
+
+
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 _NARRATOR_SYSTEM = """\
@@ -97,15 +108,15 @@ def _retry(fn, retries: int = 3, backoff: float = 5.0):
 
 # ── LLM call (JSON array) ─────────────────────────────────────────────────────
 
-def _call_llm_json_array(user_message: str) -> list[dict]:
+def _call_llm_json_array(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
     if LLM_PROVIDER == "gemini":
-        return _gemini_narrator(user_message)
+        return _gemini_narrator(user_message, system_prompt=system_prompt)
     elif LLM_PROVIDER == "openai":
-        return _openai_narrator(user_message)
+        return _openai_narrator(user_message, system_prompt=system_prompt)
     raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'")
 
 
-def _gemini_narrator(user_message: str) -> list[dict]:
+def _gemini_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
     try:
         import google.genai as genai
         import google.genai.types as genai_types
@@ -135,7 +146,7 @@ def _gemini_narrator(user_message: str) -> list[dict]:
         model=LLM_MODEL,
         contents=user_message,
         config={
-            "system_instruction": _NARRATOR_SYSTEM,
+            "system_instruction": system_prompt,
             "response_mime_type": "application/json",
             "response_schema":    insight_schema,
         },
@@ -143,7 +154,7 @@ def _gemini_narrator(user_message: str) -> list[dict]:
     return json.loads(response.text)
 
 
-def _openai_narrator(user_message: str) -> list[dict]:
+def _openai_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
     try:
         from openai import OpenAI
     except ImportError:
@@ -156,7 +167,7 @@ def _openai_narrator(user_message: str) -> list[dict]:
     response = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[
-            {"role": "system", "content": _NARRATOR_SYSTEM},
+            {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
@@ -230,9 +241,14 @@ def _generate_digest(metrics: list[FlaggedMetric], period: str) -> Optional[str]
 def narrate(
     metrics: list[FlaggedMetric],
     include_digest: bool = True,
+    profile: Optional[str] = None,
 ) -> tuple[list[InsightCard], Optional[str]]:
     """
     Calls the LLM to produce InsightCard objects for each FlaggedMetric.
+
+    ``profile`` is one of: "founder" | "client_success" | "operations" |
+    "editorial" | "tech_product". When supplied, a framing line is prepended
+    to the system prompt so the LLM tailors language and emphasis accordingly.
 
     Returns (insight_cards, digest_text).
     On LLM failure, logs the error and returns empty lists — the pipeline
@@ -241,12 +257,18 @@ def narrate(
     if not metrics:
         return [], None
 
+    # Optionally inject a profile-aware framing line into the system prompt
+    if profile and profile in _PROFILE_FRAMING:
+        effective_system = _PROFILE_FRAMING[profile] + "\n\n" + _NARRATOR_SYSTEM
+    else:
+        effective_system = _NARRATOR_SYSTEM
+
     evidence     = _format_evidence(metrics)
     period       = metrics[0].period
     digest_text  = _generate_digest(metrics, period) if include_digest else None
 
     try:
-        raw_cards = _call_llm_json_array(evidence)
+        raw_cards = _call_llm_json_array(evidence, system_prompt=effective_system)
     except Exception as e:
         logger.error("narrator LLM call failed: %s", e)
         return [], digest_text

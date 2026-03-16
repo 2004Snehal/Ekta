@@ -27,16 +27,20 @@ REQUIRED_KEYS_SQL = {"path", "sql", "chart_type", "title", "x", "y"}
 _SEP = "─" * 52
 
 
-def run_nlq_query(question: str, client_id: int, conn) -> dict:
+def run_nlq_query(question: str, client_id: int, conn, profile: str = "operations") -> dict:
     """
     Execute an NLQ query end-to-end.
     Returns a dict ready to send as API response.
+
+    ``profile`` is one of: "founder" | "client_success" | "operations" |
+    "editorial" | "tech_product". It biases the system prompt toward the
+    user's area of responsibility.
     """
     t_start = time.perf_counter()
     log.info(_SEP)
-    log.info(f'[NLQ] ← "{question}"  (client={client_id})')
+    log.info(f'[NLQ] ← "{question}"  (client={client_id}, profile={profile})')
 
-    system_prompt = build_system_prompt(client_id, conn)
+    system_prompt = build_system_prompt(client_id, conn, profile=profile)
 
     # ── Step 1: LLM routing + query generation ────────────────────────────────
     t0 = time.perf_counter()

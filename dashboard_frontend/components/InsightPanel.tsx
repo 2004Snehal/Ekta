@@ -1,35 +1,54 @@
 'use client';
 
-import { Lightbulb } from 'lucide-react';
-
 interface InsightPanelProps {
   insights: {
     title: string;
     description: string;
     actionable?: boolean;
   }[];
+  label?: string;
 }
 
-export function InsightPanel({ insights }: InsightPanelProps) {
-  return (
-    <div className="bg-card border border-border rounded-lg p-6">
-      <div className="flex items-center gap-2 mb-4">
-        <Lightbulb className="w-5 h-5 text-primary" />
-        <h3 className="text-lg font-semibold text-foreground">AI Insights</h3>
-      </div>
+export function InsightPanel({ insights, label = 'Insights' }: InsightPanelProps) {
+  if (!insights.length) return null;
 
-      <div className="space-y-3">
-        {insights.map((insight, idx) => (
-          <div
-            key={idx}
-            className="p-3 bg-secondary/50 border border-border/50 rounded-lg hover:border-primary/50 transition-colors"
-          >
-            <p className="font-semibold text-foreground text-sm">{insight.title}</p>
-            <p className="text-muted-foreground text-sm mt-1">{insight.description}</p>
-            {insight.actionable && (
-              <button className="mt-2 text-xs font-semibold text-primary hover:text-primary/80 transition-colors">
-                Take Action →
-              </button>
+  return (
+    <div>
+      <span className="section-id" style={{ marginBottom: '12px', display: 'flex' }}>{label}</span>
+      <div>
+        {insights.map((ins, i) => (
+          <div key={i} className="insight-row" style={{ animationDelay: `${i * 0.1}s` }}>
+            <p
+              style={{
+                fontFamily: 'var(--font-condensed)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                color: 'var(--on)',
+                letterSpacing: '0.02em',
+                marginBottom: '3px',
+              }}
+            >
+              {ins.title}
+            </p>
+            <p style={{ fontSize: '0.72rem', color: 'var(--on-mid)', lineHeight: 1.45 }}>
+              {ins.description}
+            </p>
+            {ins.actionable && (
+              <span
+                style={{
+                  display: 'inline-block',
+                  marginTop: '5px',
+                  fontFamily: 'var(--font-condensed)',
+                  fontSize: '0.6rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.14em',
+                  color: 'var(--signal)',
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                }}
+              >
+                ACT →
+              </span>
             )}
           </div>
         ))}

@@ -20,8 +20,9 @@ class DashboardContext(BaseModel):
     current_value: float | None = None
     time_range: str | None = None
     # "2024-11" | null for all-time
-    user_role: str = "ops_lead"
-    # "ops_lead" | "editor" | "exec"
+    user_role: str = "operations"
+    # "founder" | "client_success" | "operations" | "editorial" | "tech_product"
+    # Legacy keys still accepted: "exec" → "founder", "ops_lead" → "operations", "editor" → "editorial"
 
 
 class ExpandedContext(BaseModel):

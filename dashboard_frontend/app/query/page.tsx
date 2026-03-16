@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useProfile } from '@/lib/profiles';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import {
   Send, Code2, Clock, AlertCircle, Loader2,
@@ -216,8 +217,17 @@ function AssistantBubble({ msg }: { msg: Message }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function QueryPage() {
+  return (
+    <Suspense fallback={<div style={{ height: 'calc(100vh - 44px)', background: 'var(--void)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="scan-loader" style={{ width: '200px' }} /></div>}>
+      <QueryPageInner />
+    </Suspense>
+  );
+}
+
+function QueryPageInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
+  const { profile, profileDef } = useProfile();
 
   const [messages,        setMessages]        = useState<Message[]>([]);
   const [sessionId,       setSessionId]       = useState<string | null>(null);
@@ -304,7 +314,7 @@ export default function QueryPage() {
       const res    = await fetch(`${API_URL}/nlq/query`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID }),
+        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID, profile }),
       });
       const result: NLQResult = await res.json();
       const doneMsg: Message  = { id: pendingId, role: 'assistant', question: question.trim(), result, ts: new Date().toISOString() };
@@ -404,10 +414,10 @@ export default function QueryPage() {
   ];
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 44px)', background: 'var(--void)' }}>
 
       {/* ── LEFT PANEL ──────────────────────────────────────────────────── */}
-      <aside className="w-80 shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
+      <aside className="w-72 shrink-0 flex flex-col overflow-hidden" style={{ borderRight: '1px solid var(--wire)', background: 'var(--surface)' }}>
 
         {/* Header */}
         <div className="px-4 py-3 border-b border-sidebar-border">
@@ -477,7 +487,7 @@ export default function QueryPage() {
               <h1 className="text-lg font-semibold text-foreground">Natural Language Query</h1>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Ask any question about your video operations data — the AI generates SQL and visualises the result.
+              Ask any question · {profileDef.displayName}
             </p>
           </div>
 
