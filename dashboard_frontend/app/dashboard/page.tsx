@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { SparkKPI } from '@/components/SparkKPI';
 import { KPIDetailModal } from '@/components/KPIDetailModal';
 import { ChartRenderer } from '@/components/ChartRenderer';
@@ -22,6 +23,7 @@ import {
   filterDashboardRecords,
   supportsRange,
 } from '@/lib/dashboard-data';
+import { buildDrillUrl } from '@/lib/drill-down';
 import type {
   DashboardDatasetResponse,
   DashboardDateRange,
@@ -55,6 +57,7 @@ function buildSparkline(records: DashboardRecord[], key: 'uploadedVideos' | 'pro
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const apiBaseUrl = API;
   const [filters, setFilters]         = useState<DashboardFilters>(DEFAULT_FILTERS);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
@@ -241,6 +244,39 @@ export default function Dashboard() {
     average_duration: [],
   }), [filteredRecords]);
 
+  // Enrich charts with drill-down metadata and ref links
+  const enrichedCharts = useMemo(() => {
+    return charts.map((chart, idx) => {
+      const enriched = { ...chart };
+      if (idx < 2) {
+        enriched.refLinks = [
+          { label: 'View in Usage', href: '/dashboard/usage?from=summary' },
+        ];
+      } else {
+        const xKey = chart.axes?.x?.field ?? chart.x ?? chart.category ?? '';
+        if (xKey) {
+          enriched.drillDown = {
+            dimensionKey: xKey,
+            targetPage: '/dashboard/analysis',
+            targetParam: 'dim1',
+          };
+        }
+        enriched.refLinks = [
+          { label: 'See Funnel', href: buildDrillUrl('/dashboard/funnel', { group_by: xKey || 'channel', from: 'summary' }) },
+        ];
+      }
+      return enriched;
+    });
+  }, [charts]);
+
+  const handleChartClick = useCallback((dimensionKey: string, value: string) => {
+    router.push(buildDrillUrl('/dashboard/analysis', {
+      dim1: dimensionKey,
+      filter: { [dimensionKey]: value },
+      from: 'summary',
+    }));
+  }, [router]);
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
 
@@ -333,9 +369,9 @@ export default function Dashboard() {
 
             {/* Section: Trends */}
             <div style={{ marginBottom: '32px' }}>
-              {charts.slice(0, 2).map((chart, i) => (
+              {enrichedCharts.slice(0, 2).map((chart, i) => (
                 <div key={i} style={{ marginBottom: i === 0 ? '32px' : '0' }}>
-                  <ChartRenderer chart={chart} />
+                  <ChartRenderer chart={chart} onElementClick={handleChartClick} />
                 </div>
               ))}
             </div>
@@ -347,8 +383,8 @@ export default function Dashboard() {
               className="grid"
               style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}
             >
-              {charts.slice(2, 4).map((chart, i) => (
-                <ChartRenderer key={i + 2} chart={chart} />
+              {enrichedCharts.slice(2, 4).map((chart, i) => (
+                <ChartRenderer key={i + 2} chart={chart} onElementClick={handleChartClick} />
               ))}
             </div>
 

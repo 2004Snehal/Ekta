@@ -18,6 +18,7 @@ interface FunnelChartProps {
     process_rate: number;
     publish_rate: number;
   };
+  onGroupClick?: (groupName: string) => void;
 }
 
 function FunnelBar({ label, value, maxValue, color }: { label: string; value: number; maxValue: number; color: string }) {
@@ -44,7 +45,7 @@ function FunnelBar({ label, value, maxValue, color }: { label: string; value: nu
   );
 }
 
-export function FunnelChart({ data, totals }: FunnelChartProps) {
+export function FunnelChart({ data, totals, onGroupClick }: FunnelChartProps) {
   const maxVal = Math.max(totals.uploaded, totals.processed, totals.published, 1);
 
   return (
@@ -92,7 +93,18 @@ export function FunnelChart({ data, totals }: FunnelChartProps) {
               <tbody>
                 {data.map((row) => (
                   <tr key={row.group} style={{ borderBottom: '1px solid var(--wire)' }}>
-                    <td style={{ padding: '5px 8px', fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on)' }}>{row.group}</td>
+                    <td
+                      style={{
+                        padding: '5px 8px',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.65rem',
+                        color: onGroupClick ? 'var(--uplink)' : 'var(--on)',
+                        cursor: onGroupClick ? 'pointer' : 'default',
+                      }}
+                      onClick={() => onGroupClick?.(row.group)}
+                    >
+                      {row.group}
+                    </td>
                     <td style={{ padding: '5px 8px', fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-mid)' }}>{row.uploaded.toLocaleString()}</td>
                     <td style={{ padding: '5px 8px', fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-mid)' }}>{row.processed.toLocaleString()}</td>
                     <td style={{ padding: '5px 8px', fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-mid)' }}>{row.published.toLocaleString()}</td>

@@ -75,6 +75,16 @@ export interface UniversalChartSpec {
   /** Optional custom colour palette (hex strings) */
   colors?: string[];
 
+  /** Drill-down configuration: clicking a chart element navigates to another page */
+  drillDown?: {
+    dimensionKey: string;
+    targetPage: string;
+    targetParam: 'dim1' | 'filter';
+  };
+
+  /** Reference links shown below the chart */
+  refLinks?: Array<{ label: string; href: string }>;
+
   // ─── Legacy flat fields (kept for backward compatibility) ──────────────────
 
   /** @deprecated Use axes.x.field instead */

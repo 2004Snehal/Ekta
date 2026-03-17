@@ -33,9 +33,11 @@ interface CrossTabChartProps {
   dim1Key: string;
   dim2Key: string | null;
   metric: string;
+  onBarClick?: (dimensionValue: string) => void;
 }
 
-export function CrossTabChart({ rows, dim1Key, dim2Key, metric }: CrossTabChartProps) {
+export function CrossTabChart({ rows, dim1Key, dim2Key, metric, onBarClick }: CrossTabChartProps) {
+  const barCursor = onBarClick ? 'pointer' : 'default';
   if (!dim2Key) {
     // Single dimension — simple bar chart
     return (
@@ -49,7 +51,8 @@ export function CrossTabChart({ rows, dim1Key, dim2Key, metric }: CrossTabChartP
             <XAxis type="number" {...AXIS_STYLE} />
             <YAxis type="category" dataKey="dim1" {...AXIS_STYLE} width={75} />
             <Tooltip contentStyle={TOOLTIP_STYLE} />
-            <Bar dataKey={metric} fill={COLORS[0]} maxBarSize={20} />
+            <Bar dataKey={metric} fill={COLORS[0]} maxBarSize={20}
+              cursor={barCursor} onClick={(entry: any) => onBarClick?.(String(entry?.dim1 ?? ''))} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -87,7 +90,8 @@ export function CrossTabChart({ rows, dim1Key, dim2Key, metric }: CrossTabChartP
           <Tooltip contentStyle={TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontFamily: 'var(--font-mono)', fontSize: '0.55rem', color: '#9A9590' }} />
           {series.map((s, i) => (
-            <Bar key={s} dataKey={s} stackId="a" fill={COLORS[i % COLORS.length]} maxBarSize={32} />
+            <Bar key={s} dataKey={s} stackId="a" fill={COLORS[i % COLORS.length]} maxBarSize={32}
+              cursor={barCursor} onClick={(entry: any) => onBarClick?.(String(entry?.dim1 ?? ''))} />
           ))}
         </BarChart>
       </ResponsiveContainer>

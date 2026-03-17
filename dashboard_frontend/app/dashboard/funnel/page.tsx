@@ -1,16 +1,30 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useProfile } from '@/lib/profiles';
+import { parseDrillParams, buildDrillUrl } from '@/lib/drill-down';
 import { FunnelChart } from '@/components/FunnelChart';
 import { ChartRenderer } from '@/components/ChartRenderer';
+import { DrillBreadcrumb } from '@/components/DrillBreadcrumb';
 import type { UniversalChartSpec } from '@/types/chart';
 
 const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 
 export default function FunnelPage() {
+  return (
+    <Suspense fallback={<div className="px-6 py-8"><div className="scan-loader" /></div>}>
+      <FunnelPageInner />
+    </Suspense>
+  );
+}
+
+function FunnelPageInner() {
   const { profileDef } = useProfile();
-  const [groupBy, setGroupBy] = useState('channel');
+  const searchParams = useSearchParams();
+  const drillParams = parseDrillParams(searchParams);
+
+  const [groupBy, setGroupBy] = useState(drillParams.group_by ?? 'channel');
   const [funnelData, setFunnelData] = useState<any>(null);
   const [typeMix, setTypeMix] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -43,6 +57,9 @@ export default function FunnelPage() {
     category: 'dim1',
     value: 'count',
     data: typeMix.rows ?? [],
+    refLinks: [
+      { label: 'Analyze in Detail', href: buildDrillUrl('/dashboard/analysis', { dim1: 'input_type', from: 'funnel' }) },
+    ],
   } : null;
 
   const conversionChart: UniversalChartSpec | null = funnelData ? {
@@ -51,7 +68,31 @@ export default function FunnelPage() {
     x: 'group',
     y: 'publish_rate',
     data: (funnelData.funnel ?? []).sort((a: any, b: any) => (b.publish_rate ?? 0) - (a.publish_rate ?? 0)),
+    drillDown: {
+      dimensionKey: 'group',
+      targetPage: '/dashboard/analysis',
+      targetParam: 'dim1',
+    },
+    refLinks: [
+      { label: 'View in Analysis', href: buildDrillUrl('/dashboard/analysis', { dim1: groupBy, from: 'funnel' }) },
+    ],
   } : null;
+
+  function handleGroupClick(groupName: string) {
+    window.location.href = buildDrillUrl('/dashboard/analysis', {
+      dim1: groupBy,
+      filter: { [groupBy]: groupName },
+      from: 'funnel',
+    });
+  }
+
+  function handleConversionBarClick(_dimKey: string, value: string) {
+    window.location.href = buildDrillUrl('/dashboard/analysis', {
+      dim1: groupBy,
+      filter: { [groupBy]: value },
+      from: 'funnel',
+    });
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
@@ -79,13 +120,28 @@ export default function FunnelPage() {
         </span>
       </div>
 
+      {/* Breadcrumb */}
+      {drillParams.source && (
+        <div className="px-6 pt-2">
+          <DrillBreadcrumb
+            source={drillParams.source}
+            currentPage="Funnel"
+            filters={drillParams.filters}
+          />
+        </div>
+      )}
+
       {loading ? (
         <div className="px-6 py-8"><div className="scan-loader" /></div>
       ) : (
         <div style={{ padding: '24px 28px' }}>
           {/* Funnel */}
           {funnelData && (
-            <FunnelChart data={funnelData.funnel ?? []} totals={funnelData.totals ?? {}} />
+            <FunnelChart
+              data={funnelData.funnel ?? []}
+              totals={funnelData.totals ?? {}}
+              onGroupClick={handleGroupClick}
+            />
           )}
 
           <div className="wire-h" style={{ margin: '28px 0' }} />
@@ -93,7 +149,7 @@ export default function FunnelPage() {
           {/* Type mix + Conversion side by side */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
             {inputTypeChart && <ChartRenderer chart={inputTypeChart} />}
-            {conversionChart && <ChartRenderer chart={conversionChart} />}
+            {conversionChart && <ChartRenderer chart={conversionChart} onElementClick={handleConversionBarClick} />}
           </div>
         </div>
       )}
