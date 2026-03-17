@@ -1,10 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  ScatterChart, Scatter,
+  ScatterChart, Scatter, Brush,
 } from 'recharts';
 import type { UniversalChartSpec } from '@/types/chart';
 
@@ -28,6 +28,9 @@ const AXIS_STYLE = {
 };
 
 const GRID_STYLE = { stroke: '#E5DFD7', strokeDasharray: '2 4' };
+
+const BAR_SHOW_ALL_THRESHOLD = 10;
+const BRUSH_THRESHOLD = 15;
 
 function resolveFields(chart: UniversalChartSpec): { xField: string; yField: string } {
   return {
@@ -58,9 +61,68 @@ function pivotStackedData(
   return { pivoted: Array.from(map.values()), seriesKeys: Array.from(seriesSet) };
 }
 
-export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
+/** Ref-links row rendered below charts */
+function RefLinks({ links }: { links: Array<{ label: string; href: string }> }) {
+  return (
+    <div className="flex gap-4 mt-2">
+      {links.map((link) => (
+        <a
+          key={link.href}
+          href={link.href}
+          style={{
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.68rem',
+            color: 'var(--uplink)',
+            textDecoration: 'none',
+            cursor: 'pointer',
+          }}
+          onMouseEnter={(e) => { (e.target as HTMLElement).style.textDecoration = 'underline'; }}
+          onMouseLeave={(e) => { (e.target as HTMLElement).style.textDecoration = 'none'; }}
+        >
+          {link.label} →
+        </a>
+      ))}
+    </div>
+  );
+}
+
+interface ChartRendererProps {
+  chart: UniversalChartSpec;
+  onElementClick?: (dimensionKey: string, value: string) => void;
+}
+
+export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const colors = chart.colors ?? COLORS;
   const { xField, yField } = resolveFields(chart);
+  const hasDrill = Boolean(chart.drillDown);
+  const cursorStyle = hasDrill ? 'pointer' : 'default';
+  const [showAll, setShowAll] = useState(false);
+
+  function handleClick(dimensionKey: string, value: unknown) {
+    if (onElementClick && value != null) {
+      onElementClick(dimensionKey, String(value));
+    }
+  }
+
+  /** Custom tooltip that shows drill hint */
+  function DrillTooltip({ active, payload, label }: any) {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={TOOLTIP_STYLE}>
+        <p style={{ margin: 0, fontWeight: 600 }}>{label}</p>
+        {payload.map((entry: any, i: number) => (
+          <p key={i} style={{ margin: '2px 0 0', color: entry.color }}>
+            {entry.name}: {typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value}
+          </p>
+        ))}
+        {hasDrill && (
+          <p style={{ margin: '4px 0 0', fontSize: '0.62rem', color: 'var(--on-low)', fontStyle: 'italic' }}>
+            Click to drill down
+          </p>
+        )}
+      </div>
+    );
+  }
 
   const renderChart = () => {
     switch (chart.chart_type) {
@@ -72,24 +134,75 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
               <CartesianGrid {...GRID_STYLE} />
               <XAxis dataKey={xField} {...AXIS_STYLE} />
               <YAxis {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ stroke: '#E5DFD7' }} />
-              <Line type="monotone" dataKey={yField} stroke={colors[0]} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: colors[0], stroke: '#fff', strokeWidth: 2 }} />
+              <Tooltip content={hasDrill ? <DrillTooltip /> : undefined} contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined} cursor={{ stroke: '#E5DFD7' }} />
+              <Line
+                type="monotone"
+                dataKey={yField}
+                stroke={colors[0]}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{
+                  r: 4,
+                  fill: colors[0],
+                  stroke: '#fff',
+                  strokeWidth: 2,
+                  cursor: cursorStyle,
+                  onClick: (_: any, payload: any) => {
+                    if (payload?.payload) handleClick(xField, payload.payload[xField]);
+                  },
+                }}
+              />
+              {chart.data.length > BRUSH_THRESHOLD && (
+                <Brush dataKey={xField} height={20} stroke={colors[0]} travellerWidth={8}
+                  fill="var(--surface)" />
+              )}
             </LineChart>
           </ResponsiveContainer>
         );
 
-      case 'bar':
+      case 'bar': {
+        const allData = chart.data;
+        const displayData = (!showAll && allData.length > BAR_SHOW_ALL_THRESHOLD)
+          ? allData.slice(0, BAR_SHOW_ALL_THRESHOLD)
+          : allData;
         return (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chart.data} margin={{ top: 4, right: 12, left: -16, bottom: 4 }}>
-              <CartesianGrid {...GRID_STYLE} />
-              <XAxis dataKey={xField} {...AXIS_STYLE} />
-              <YAxis {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(196, 85, 58, 0.04)' }} />
-              <Bar dataKey={yField} fill={colors[0]} radius={[4, 4, 0, 0]} maxBarSize={36} />
-            </BarChart>
-          </ResponsiveContainer>
+          <>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={displayData} margin={{ top: 4, right: 12, left: -16, bottom: 4 }}>
+                <CartesianGrid {...GRID_STYLE} />
+                <XAxis dataKey={xField} {...AXIS_STYLE} />
+                <YAxis {...AXIS_STYLE} />
+                <Tooltip content={hasDrill ? <DrillTooltip /> : undefined} contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined} cursor={{ fill: 'rgba(196, 85, 58, 0.04)' }} />
+                <Bar
+                  dataKey={yField}
+                  fill={colors[0]}
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={36}
+                  cursor={cursorStyle}
+                  onClick={(entry: any) => handleClick(xField, entry?.[xField])}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+            {allData.length > BAR_SHOW_ALL_THRESHOLD && (
+              <button
+                onClick={() => setShowAll((p) => !p)}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.65rem',
+                  color: 'var(--uplink)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  marginTop: '4px',
+                  padding: 0,
+                }}
+              >
+                {showAll ? `Show top ${BAR_SHOW_ALL_THRESHOLD}` : `Show all ${allData.length}`}
+              </button>
+            )}
+          </>
         );
+      }
 
       case 'pie': {
         const { categoryField, valueField } = resolvePieFields(chart);
@@ -105,12 +218,14 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
                 nameKey={categoryField}
                 strokeWidth={2}
                 stroke="#F5F1EB"
+                cursor={cursorStyle}
+                onClick={(entry: any) => handleClick(categoryField, entry?.[categoryField] ?? entry?.name)}
               >
                 {chart.data.map((_, i) => (
                   <Cell key={i} fill={colors[i % colors.length]} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Tooltip content={hasDrill ? <DrillTooltip /> : undefined} contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined} />
               <Legend
                 iconSize={8}
                 iconType="circle"
@@ -128,8 +243,13 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
               <CartesianGrid {...GRID_STYLE} />
               <XAxis type="number" dataKey={xField} {...AXIS_STYLE} />
               <YAxis type="number" dataKey={yField} {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ stroke: '#E5DFD7' }} />
-              <Scatter data={chart.data} fill={colors[0]} />
+              <Tooltip content={hasDrill ? <DrillTooltip /> : undefined} contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined} cursor={{ stroke: '#E5DFD7' }} />
+              <Scatter
+                data={chart.data}
+                fill={colors[0]}
+                cursor={cursorStyle}
+                onClick={(entry: any) => handleClick(xField, entry?.[xField])}
+              />
             </ScatterChart>
           </ResponsiveContainer>
         );
@@ -150,10 +270,13 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
               <CartesianGrid {...GRID_STYLE} />
               <XAxis dataKey={xField} {...AXIS_STYLE} />
               <YAxis {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(196, 85, 58, 0.04)' }} />
+              <Tooltip content={hasDrill ? <DrillTooltip /> : undefined} contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined} cursor={{ fill: 'rgba(196, 85, 58, 0.04)' }} />
               <Legend wrapperStyle={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: '#7A7067' }} />
               {seriesKeys.map((key, idx) => (
-                <Bar key={key} dataKey={key} stackId="a" fill={colors[idx % colors.length]} radius={idx === seriesKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} maxBarSize={36} />
+                <Bar key={key} dataKey={key} stackId="a" fill={colors[idx % colors.length]}
+                  radius={idx === seriesKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                  maxBarSize={36} cursor={cursorStyle}
+                  onClick={(entry: any) => handleClick(xField, entry?.[xField])} />
               ))}
             </BarChart>
           </ResponsiveContainer>
@@ -227,6 +350,7 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
         </div>
       )}
       {renderChart()}
+      {chart.refLinks && chart.refLinks.length > 0 && <RefLinks links={chart.refLinks} />}
     </div>
   );
 }

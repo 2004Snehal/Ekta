@@ -1,15 +1,29 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useProfile } from '@/lib/profiles';
+import { parseDrillParams, buildDrillUrl } from '@/lib/drill-down';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { PeriodComparison } from '@/components/PeriodComparison';
+import { DrillBreadcrumb } from '@/components/DrillBreadcrumb';
 import type { UniversalChartSpec } from '@/types/chart';
 
 const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 
 export default function UsagePage() {
+  return (
+    <Suspense fallback={<div className="px-6 py-8"><div className="scan-loader" /></div>}>
+      <UsagePageInner />
+    </Suspense>
+  );
+}
+
+function UsagePageInner() {
   const { profileDef } = useProfile();
+  const searchParams = useSearchParams();
+  const drillParams = parseDrillParams(searchParams);
+
   const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('month');
   const [timeSeries, setTimeSeries] = useState<any[]>([]);
   const [durationSeries, setDurationSeries] = useState<any[]>([]);
@@ -29,12 +43,28 @@ export default function UsagePage() {
     }).catch(() => {}).finally(() => setLoading(false));
   }, [granularity]);
 
+  function handlePeriodClick(_dimKey: string, periodValue: string) {
+    window.location.href = buildDrillUrl('/dashboard/analysis', {
+      dim1: 'period',
+      filter: { period: periodValue },
+      from: 'usage',
+    });
+  }
+
   const countChart: UniversalChartSpec = {
     chart_type: 'line',
     title: 'Video Count Over Time',
     x: 'period',
     y: 'count',
     data: timeSeries,
+    drillDown: {
+      dimensionKey: 'period',
+      targetPage: '/dashboard/analysis',
+      targetParam: 'filter',
+    },
+    refLinks: [
+      { label: 'View in Analysis', href: buildDrillUrl('/dashboard/analysis', { dim1: 'channel', from: 'usage' }) },
+    ],
   };
 
   const durationChart: UniversalChartSpec = {
@@ -43,6 +73,14 @@ export default function UsagePage() {
     x: 'period',
     y: 'duration_hrs',
     data: durationSeries,
+    drillDown: {
+      dimensionKey: 'period',
+      targetPage: '/dashboard/analysis',
+      targetParam: 'filter',
+    },
+    refLinks: [
+      { label: 'View in Analysis', href: buildDrillUrl('/dashboard/analysis', { dim1: 'channel', from: 'usage' }) },
+    ],
   };
 
   const GRANS = [
@@ -77,12 +115,23 @@ export default function UsagePage() {
         </span>
       </div>
 
+      {/* Breadcrumb */}
+      {drillParams.source && (
+        <div className="px-6 pt-2">
+          <DrillBreadcrumb
+            source={drillParams.source}
+            currentPage="Usage"
+            filters={drillParams.filters}
+          />
+        </div>
+      )}
+
       {loading ? (
         <div className="px-6 py-8"><div className="scan-loader" /></div>
       ) : (
         <div style={{ padding: '24px 28px' }}>
           {/* Primary chart */}
-          <ChartRenderer chart={countChart} />
+          <ChartRenderer chart={countChart} onElementClick={handlePeriodClick} />
 
           <div className="wire-h" style={{ margin: '28px 0' }} />
 
@@ -95,7 +144,7 @@ export default function UsagePage() {
                 deltas={periodData.deltas}
               />
             )}
-            <ChartRenderer chart={durationChart} />
+            <ChartRenderer chart={durationChart} onElementClick={handlePeriodClick} />
           </div>
         </div>
       )}

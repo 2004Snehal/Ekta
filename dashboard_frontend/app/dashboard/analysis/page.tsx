@@ -1,18 +1,32 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useProfile } from '@/lib/profiles';
+import { parseDrillParams, buildDrillUrl } from '@/lib/drill-down';
 import { DimensionPicker } from '@/components/DimensionPicker';
 import { CrossTabChart } from '@/components/CrossTabChart';
 import { DataTable } from '@/components/DataTable';
+import { DrillBreadcrumb } from '@/components/DrillBreadcrumb';
 
 const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 
 export default function AnalysisPage() {
+  return (
+    <Suspense fallback={<div className="px-6 py-8"><div className="scan-loader" /></div>}>
+      <AnalysisPageInner />
+    </Suspense>
+  );
+}
+
+function AnalysisPageInner() {
   const { profileDef } = useProfile();
-  const [dim1, setDim1] = useState('channel');
-  const [dim2, setDim2] = useState<string | null>('input_type');
-  const [metric, setMetric] = useState('count');
+  const searchParams = useSearchParams();
+  const drillParams = parseDrillParams(searchParams);
+
+  const [dim1, setDim1] = useState(drillParams.dim1 ?? 'channel');
+  const [dim2, setDim2] = useState<string | null>(drillParams.dim2 ?? 'input_type');
+  const [metric, setMetric] = useState(drillParams.metric ?? 'count');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
@@ -29,6 +43,28 @@ export default function AnalysisPage() {
       .finally(() => setLoading(false));
   }, [dim1, dim2, metric]);
 
+  // Client-side filter from URL params
+  const filteredRows = data?.rows
+    ? data.rows.filter((row: any) => {
+        for (const [key, val] of Object.entries(drillParams.filters)) {
+          if (row[key] != null && String(row[key]) !== val && row.dim1 !== val && row.dim2 !== val) {
+            return false;
+          }
+        }
+        return true;
+      })
+    : [];
+
+  const displayData = data ? { ...data, rows: Object.keys(drillParams.filters).length > 0 ? filteredRows : data.rows } : null;
+
+  function handleBarClick(dimensionValue: string) {
+    window.location.href = buildDrillUrl('/dashboard/funnel', {
+      group_by: dim1,
+      filter: { [dim1]: dimensionValue },
+      from: 'analysis',
+    });
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
       {/* Header */}
@@ -39,6 +75,17 @@ export default function AnalysisPage() {
           {profileDef.displayName}
         </span>
       </div>
+
+      {/* Breadcrumb */}
+      {drillParams.source && (
+        <div className="px-6 pt-2">
+          <DrillBreadcrumb
+            source={drillParams.source}
+            currentPage="Analysis"
+            filters={drillParams.filters}
+          />
+        </div>
+      )}
 
       {/* Dimension picker */}
       <DimensionPicker
@@ -52,44 +99,57 @@ export default function AnalysisPage() {
 
       {loading ? (
         <div className="px-6 py-8"><div className="scan-loader" /></div>
-      ) : data ? (
+      ) : displayData ? (
         <div style={{ padding: '24px 28px' }}>
           {/* Chart */}
           <CrossTabChart
-            rows={data.rows}
-            dim1Key={data.dim1_key}
-            dim2Key={data.dim2_key}
+            rows={displayData.rows}
+            dim1Key={displayData.dim1_key}
+            dim2Key={displayData.dim2_key}
             metric={metric}
+            onBarClick={handleBarClick}
           />
+
+          {/* Ref links */}
+          <div className="flex gap-4 mt-3">
+            <a href={buildDrillUrl('/dashboard/funnel', { group_by: dim1, from: 'analysis' })}
+              style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', color: 'var(--uplink)', textDecoration: 'none' }}>
+              See Funnel →
+            </a>
+            <a href={buildDrillUrl('/dashboard/usage', { from: 'analysis' })}
+              style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', color: 'var(--uplink)', textDecoration: 'none' }}>
+              See Usage →
+            </a>
+          </div>
 
           <div className="wire-h" style={{ margin: '28px 0' }} />
 
           {/* Breakdown table */}
           <DataTable
-            data={data.rows}
+            data={displayData.rows}
             title="Breakdown"
             pageSize={25}
           />
 
           {/* Grand total */}
-          {data.grand_total && (
+          {displayData.grand_total && (
             <div style={{ marginTop: '20px', padding: '12px 14px', borderLeft: '2px solid var(--signal)', background: 'var(--signal-dim)' }}>
               <span style={{ fontFamily: 'var(--font-condensed)', fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--on-low)' }}>
                 GRAND TOTAL
               </span>
               <div className="flex gap-6 mt-1">
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--on)' }}>
-                  Count: {data.grand_total.count?.toLocaleString()}
+                  Count: {displayData.grand_total.count?.toLocaleString()}
                 </span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--on-mid)' }}>
-                  Duration: {data.grand_total.duration_hrs?.toFixed(1)}h
+                  Duration: {displayData.grand_total.duration_hrs?.toFixed(1)}h
                 </span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--on-mid)' }}>
-                  Published: {data.grand_total.published_count?.toLocaleString()}
+                  Published: {displayData.grand_total.published_count?.toLocaleString()}
                 </span>
-                {data.grand_total.publish_rate != null && (
+                {displayData.grand_total.publish_rate != null && (
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--ok)' }}>
-                    Rate: {data.grand_total.publish_rate}%
+                    Rate: {displayData.grand_total.publish_rate}%
                   </span>
                 )}
               </div>

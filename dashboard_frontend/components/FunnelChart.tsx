@@ -18,6 +18,7 @@ interface FunnelChartProps {
     process_rate: number;
     publish_rate: number;
   };
+  onGroupClick?: (groupName: string) => void;
 }
 
 function FunnelBar({ label, value, maxValue, color }: { label: string; value: number; maxValue: number; color: string }) {
@@ -49,7 +50,7 @@ function FunnelBar({ label, value, maxValue, color }: { label: string; value: nu
   );
 }
 
-export function FunnelChart({ data, totals }: FunnelChartProps) {
+export function FunnelChart({ data, totals, onGroupClick }: FunnelChartProps) {
   const maxVal = Math.max(totals.uploaded, totals.processed, totals.published, 1);
 
   return (
@@ -100,7 +101,19 @@ export function FunnelChart({ data, totals }: FunnelChartProps) {
               <tbody>
                 {data.map((row, i) => (
                   <tr key={row.group} style={{ borderBottom: '1px solid var(--wire)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface-hi)' }}>
-                    <td style={{ padding: '7px 12px', fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on)', fontWeight: 500 }}>{row.group}</td>
+                    <td
+                      style={{
+                        padding: '7px 12px',
+                        fontFamily: 'var(--font-sans)',
+                        fontSize: '0.78rem',
+                        color: onGroupClick ? 'var(--uplink)' : 'var(--on)',
+                        fontWeight: 500,
+                        cursor: onGroupClick ? 'pointer' : 'default',
+                      }}
+                      onClick={() => onGroupClick?.(row.group)}
+                    >
+                      {row.group}
+                    </td>
                     <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-mid)' }}>{row.uploaded.toLocaleString()}</td>
                     <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-mid)' }}>{row.processed.toLocaleString()}</td>
                     <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-mid)' }}>{row.published.toLocaleString()}</td>
