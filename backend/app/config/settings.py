@@ -4,7 +4,7 @@ All configuration is centralised here — no magic strings anywhere else.
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -12,18 +12,21 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # ── PostgreSQL ────────────────────────────────────────────────────────────
+    database_url: Optional[str] = Field(None, env="DATABASE_URL")
     db_host: str = Field("localhost", env="DB_HOST")
     db_port: int = Field(5432, env="DB_PORT")
     db_name: str = Field("ekta_db", env="DB_NAME")
     db_user: str = Field("postgres", env="DB_USER")
     db_password: str = Field("", env="DB_PASSWORD")
 
-    # ── LLM Provider (openai | gemini) ────────────────────────────────────────
-    llm_provider: Literal["openai", "gemini"] = Field("openai", env="LLM_PROVIDER")
+    # ── LLM Provider (openai | gemini | groq) ────────────────────────────────
+    llm_provider: Literal["openai", "gemini", "groq"] = Field("openai", env="LLM_PROVIDER")
     openai_api_key: str = Field("", env="OPENAI_API_KEY")
     openai_model: str = Field("gpt-4o", env="OPENAI_MODEL")
     gemini_api_key: str = Field("", env="GEMINI_API_KEY")
-    gemini_model: str = Field("gemini-1.5-pro", env="GEMINI_MODEL")
+    gemini_model: str = Field("gemini-2.0-flash", env="GEMINI_MODEL")
+    groq_api_key: str = Field("", env="GROQ_API_KEY")
+    groq_model: str = Field("llama-3.3-70b-versatile", env="GROQ_MODEL")
 
     # ── Vanna ─────────────────────────────────────────────────────────────────
     # Vanna uses its own ChromaDB internally; set the persist directory

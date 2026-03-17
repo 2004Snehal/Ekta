@@ -1,8 +1,10 @@
 """
 Schema introspection for PostgreSQL.
 
-Loads table/column/type/constraint metadata and formats it as a
-human-readable DDL string suitable for inclusion in LLM prompts.
+Loads table/column/type/constraint metadata from BOTH 'public' and 'data' schemas
+and formats it as a DDL string for Vanna/LLM prompts.
+Tables are referenced with their fully-qualified schema prefix (e.g. data.dim_channel)
+so generated SQL uses the correct schema.
 """
 
 from typing import Dict, List
@@ -11,6 +13,9 @@ from app.db.postgres import execute_query
 from app.utils.logger import get_logger
 
 logger = get_logger("nlq.schema")
+
+# Schemas to introspect — 'data' first (analytics tables), then 'public' (utility tables)
+TARGET_SCHEMAS = ["data", "public"]
 
 # Cached schema string — only reloaded on demand
 _schema_cache: str | None = None
@@ -37,11 +42,14 @@ def _build_schema_string() -> str:
     lines: List[str] = []
 
     for table in tables:
+        schema_name = table["table_schema"]
         table_name = table["table_name"]
-        cols = _get_columns(table_name)
-        fks = _get_foreign_keys(table_name)
+        qualified = f"{schema_name}.{table_name}"
 
-        lines.append(f"TABLE {table_name} (")
+        cols = _get_columns(schema_name, table_name)
+        fks = _get_foreign_keys(schema_name, table_name)
+
+        lines.append(f"TABLE {qualified} (")
         for col in cols:
             nullable = "NOT NULL" if col["is_nullable"] == "NO" else ""
             default = f"DEFAULT {col['column_default']}" if col["column_default"] else ""
@@ -53,7 +61,7 @@ def _build_schema_string() -> str:
         for fk in fks:
             lines.append(
                 f"  FOREIGN KEY ({fk['column_name']}) REFERENCES "
-                f"{fk['foreign_table_name']}({fk['foreign_column_name']}),"
+                f"{fk['foreign_table_schema']}.{fk['foreign_table_name']}({fk['foreign_column_name']}),"
             )
 
         # Remove trailing comma on last line
@@ -66,33 +74,35 @@ def _build_schema_string() -> str:
 
 
 def _get_tables() -> List[Dict]:
-    sql = """
-        SELECT table_name
+    schemas = ", ".join(f"'{s}'" for s in TARGET_SCHEMAS)
+    sql = f"""
+        SELECT table_schema, table_name
         FROM information_schema.tables
-        WHERE table_schema = 'public'
+        WHERE table_schema IN ({schemas})
           AND table_type = 'BASE TABLE'
-        ORDER BY table_name;
+        ORDER BY table_schema, table_name;
     """
     return execute_query(sql)
 
 
-def _get_columns(table_name: str) -> List[Dict]:
+def _get_columns(schema_name: str, table_name: str) -> List[Dict]:
     sql = f"""
         SELECT column_name, data_type, is_nullable, column_default
         FROM information_schema.columns
-        WHERE table_schema = 'public'
+        WHERE table_schema = '{schema_name}'
           AND table_name = '{table_name}'
         ORDER BY ordinal_position;
     """
     return execute_query(sql)
 
 
-def _get_foreign_keys(table_name: str) -> List[Dict]:
+def _get_foreign_keys(schema_name: str, table_name: str) -> List[Dict]:
     sql = f"""
         SELECT
             kcu.column_name,
-            ccu.table_name  AS foreign_table_name,
-            ccu.column_name AS foreign_column_name
+            ccu.table_schema AS foreign_table_schema,
+            ccu.table_name   AS foreign_table_name,
+            ccu.column_name  AS foreign_column_name
         FROM information_schema.table_constraints AS tc
         JOIN information_schema.key_column_usage AS kcu
             ON tc.constraint_name = kcu.constraint_name
@@ -101,11 +111,13 @@ def _get_foreign_keys(table_name: str) -> List[Dict]:
             ON ccu.constraint_name = tc.constraint_name
            AND ccu.table_schema = tc.table_schema
         WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = '{schema_name}'
           AND tc.table_name = '{table_name}';
     """
     return execute_query(sql)
 
 
 def get_table_names() -> List[str]:
+    """Return fully-qualified table names (schema.table) for all discovered tables."""
     rows = _get_tables()
-    return [r["table_name"] for r in rows]
+    return [f"{r['table_schema']}.{r['table_name']}" for r in rows]

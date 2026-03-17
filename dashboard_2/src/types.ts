@@ -117,10 +117,10 @@ export interface NLQResult {
   question: string
   answer?: string
   sql: string | null
-  chart_type: 'bar' | 'line' | 'pie' | 'table' | 'stacked_bar'
-  title: string
-  x: string
-  y: string
+  chart_type: 'bar' | 'line' | 'pie' | 'table' | 'stacked_bar' | null
+  title: string | null
+  x: string | null
+  y: string | null
   description: string
   data: Record<string, unknown>[]
   columns: string[]

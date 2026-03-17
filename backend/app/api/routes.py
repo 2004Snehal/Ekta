@@ -12,6 +12,7 @@ Orchestrates the full NLQ pipeline:
   7. Update session context
 """
 
+import numbers as _numbers
 import time
 
 from fastapi import APIRouter, HTTPException, status
@@ -32,6 +33,56 @@ logger = get_logger("nlq.routes")
 router = APIRouter()
 
 
+def _flatten_rows(rows: list) -> list:
+    """
+    Serialize any nested dict/list values (e.g. jsonb columns) to JSON strings
+    so the response is always a flat list of primitives the frontend can display.
+    """
+    import json as _json
+    flat = []
+    for row in rows:
+        flat.append({
+            k: (_json.dumps(v) if isinstance(v, (dict, list)) else v)
+            for k, v in row.items()
+        })
+    return flat
+
+
+def _fill_chart_meta(vr, rows: list, question: str) -> None:
+    """Infer missing chart metadata from actual result rows when Vanna didn't supply it."""
+    if not rows:
+        if not vr.chart_type:
+            vr.chart_type = "table"
+        return
+
+    first = rows[0]
+    cols = list(first.keys())
+    numeric_cols = [c for c in cols if isinstance(first.get(c), _numbers.Number)]
+    text_cols = [c for c in cols if c not in numeric_cols]
+
+    if not vr.x_column:
+        vr.x_column = text_cols[0] if text_cols else (numeric_cols[0] if numeric_cols else None)
+    if not vr.y_column:
+        y_candidates = [c for c in numeric_cols if c != vr.x_column]
+        vr.y_column = y_candidates[0] if y_candidates else (numeric_cols[0] if numeric_cols else None)
+
+    if not vr.chart_type:
+        if text_cols and numeric_cols:
+            x_lower = (vr.x_column or "").lower()
+            time_kws = ("month", "date", "year", "week", "day", "time", "period")
+            if any(kw in x_lower for kw in time_kws):
+                vr.chart_type = "line"
+            elif len(rows) <= 8 and len(numeric_cols) == 1:
+                vr.chart_type = "pie"
+            else:
+                vr.chart_type = "bar"
+        else:
+            vr.chart_type = "table"
+
+    if not vr.title:
+        vr.title = question[:80]
+
+
 @router.post(
     "/query",
     response_model=QueryResponse,
@@ -45,9 +96,10 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
         return (time.perf_counter() - t_start) * 1000  # ms
 
     logger.info(
-        "Received query | session=%s | explore=%s | question='%s'",
+        "Received query | session=%s | explore=%s | role=%s | question='%s'",
         request.session_id,
         request.explore,
+        request.user_role or "none",
         request.question,
     )
 
@@ -64,6 +116,7 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
         vanna_result = vanna_service.generate_sql(
             question=request.question,
             previous_sql=previous_sql,
+            user_role=request.user_role,
         )
     except Exception as exc:
         logger.error("Vanna SQL generation failed: %s", exc, exc_info=True)
@@ -89,12 +142,18 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
         )
     logger.info("[Step 3/6] SQL executed in %.0f ms → %d rows returned", (time.perf_counter() - t3) * 1000, len(rows))
 
+    # Flatten any nested dicts/lists (e.g. jsonb columns) to strings so JSON serialisation never breaks
+    rows = _flatten_rows(rows)
+
+    # Fill any missing chart metadata from actual result data
+    _fill_chart_meta(vanna_result, rows, request.question)
+
     # ── Step 4: Optional LIDA insights ───────────────────────────────────────
     insights = []
     if request.explore:
         t4 = time.perf_counter()
         logger.info("[Step 4/6] explore=true — invoking LIDA insight engine…")
-        insights = lida_service.generate_insights(df=df, question=request.question)
+        insights = lida_service.generate_insights(df=df, question=request.question, user_role=request.user_role)
         logger.info("[Step 4/6] LIDA generated %d insights in %.0f ms", len(insights), (time.perf_counter() - t4) * 1000)
     else:
         logger.info("[Step 4/6] Skipped LIDA (explore=false)")
@@ -107,6 +166,7 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
             question=request.question,
             sql=final_sql,
             data=rows,
+            user_role=request.user_role,
         )
     except Exception as exc:
         logger.warning("LLM answer generation failed: %s — using fallback.", exc)
@@ -159,3 +219,10 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
 async def health() -> dict:
     """Simple liveness probe."""
     return {"status": "ok"}
+
+
+@router.get("/roles", summary="Available user roles")
+async def get_roles() -> dict:
+    """Return all supported user roles with display names and suggested questions."""
+    from app.services.role_config import get_all_roles
+    return {"roles": get_all_roles()}

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChartRenderer } from '@/components/ChartRenderer';
-import { Send, Code2, Clock, AlertCircle, Loader2, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
+import { VegaChart } from '@/components/VegaChart';
+import { Send, Code2, Clock, AlertCircle, Loader2, ChevronDown, ChevronRight, Sparkles, FlaskConical, TrendingUp, Users, Settings, Pen, Cpu } from 'lucide-react';
 import type { UniversalChartSpec } from '@/types/chart';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
@@ -10,17 +11,47 @@ const CLIENT_ID = 1;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+// ── Role configuration ────────────────────────────────────────────────────────
+
+interface RoleOption {
+  key: string;
+  display_name: string;
+  suggested_questions: string[];
+}
+
+const ROLE_META: Record<string, { icon: React.ReactNode; color: string; description: string }> = {
+  founder:        { icon: <TrendingUp className="w-4 h-4" />, color: 'text-amber-400 border-amber-400/40 bg-amber-400/10',   description: 'Growth, KPIs, strategic overview' },
+  client_success: { icon: <Users className="w-4 h-4" />,     color: 'text-blue-400 border-blue-400/40 bg-blue-400/10',       description: 'Client delivery, SLA, health' },
+  operations:     { icon: <Settings className="w-4 h-4" />,   color: 'text-green-400 border-green-400/40 bg-green-400/10',   description: 'Throughput, efficiency, workflow' },
+  editorial:      { icon: <Pen className="w-4 h-4" />,        color: 'text-purple-400 border-purple-400/40 bg-purple-400/10', description: 'Content, language, team output' },
+  tech:           { icon: <Cpu className="w-4 h-4" />,        color: 'text-cyan-400 border-cyan-400/40 bg-cyan-400/10',      description: 'System metrics, data quality' },
+};
+
+const DEFAULT_ROLES: RoleOption[] = [
+  { key: 'founder',        display_name: 'Founder / CEO',        suggested_questions: ['What is our overall publish rate?', 'Show month-over-month growth', 'Which channel is performing best?', 'Top 5 clients by output volume'] },
+  { key: 'client_success', display_name: 'Client Success',       suggested_questions: ['Which clients have the lowest publish rate?', 'Show published vs created per client', 'Which clients have the most unpublished videos?', 'Average time to publish by client'] },
+  { key: 'operations',     display_name: 'Operations Team',      suggested_questions: ['What is the average upload duration by channel?', 'Show total uploaded hours by team', 'Which content type takes longest to publish?', 'Daily upload volume trend'] },
+  { key: 'editorial',      display_name: 'Editorial / Production', suggested_questions: ['Show created vs published videos by language', 'Which content type has the highest publish rate?', 'Top 10 users by output count', 'Compare publish rate across channels'] },
+  { key: 'tech',           display_name: 'Tech / Product',       suggested_questions: ['Show data quality issue counts', 'Monthly trend of uploads over 6 months', 'Which channels have missing language data?', 'Billable vs non-billable video distribution'] },
+];
+
+interface LidaInsight {
+  title: string;
+  chart_spec: Record<string, unknown>;
+}
+
 interface NLQResult {
   question:   string;
   sql:        string | null;
-  chart_type: string;
-  title:      string;
-  x:          string;
-  y:          string;
+  chart_type: string | null;
+  title:      string | null;
+  x:          string | null;
+  y:          string | null;
   description: string;
   data:       Record<string, unknown>[];
   columns:    string[];
   row_count:  number;
+  insights:   LidaInsight[];
   processing_time_ms?: number;
   error?:     string;
 }
@@ -38,11 +69,11 @@ interface Message {
 
 function nlqToChartSpec(r: NLQResult): UniversalChartSpec {
   return {
-    chart_type:  r.chart_type as UniversalChartSpec['chart_type'],
-    title:       r.title,
+    chart_type:  (r.chart_type ?? 'table') as UniversalChartSpec['chart_type'],
+    title:       r.title ?? undefined,
     description: r.description,
-    x:           r.x,
-    y:           r.y,
+    x:           r.x ?? undefined,
+    y:           r.y ?? undefined,
     data:        r.data,
   };
 }
@@ -174,6 +205,27 @@ function AssistantBubble({ msg }: { msg: Message }) {
           </div>
         )}
 
+        {/* LIDA insights */}
+        {r.insights && r.insights.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 px-1">
+              <FlaskConical className="w-3.5 h-3.5 text-primary" />
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Explore Insights ({r.insights.length})
+              </span>
+            </div>
+            {r.insights.map((ins, i) =>
+              ins.chart_spec && Object.keys(ins.chart_spec).length > 0 ? (
+                <VegaChart key={i} spec={ins.chart_spec} title={ins.title} />
+              ) : (
+                <div key={i} className="bg-card border border-border rounded-lg px-4 py-3 text-sm text-muted-foreground">
+                  {ins.title}
+                </div>
+              )
+            )}
+          </div>
+        )}
+
         {/* SQL toggle */}
         {r.sql && (
           <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -204,6 +256,8 @@ export default function QueryPage() {
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [exploreMode, setExploreMode] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -233,7 +287,7 @@ export default function QueryPage() {
       const res = await fetch(`${API_URL}/nlq/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question.trim(), client_id: CLIENT_ID }),
+        body: JSON.stringify({ question: question.trim(), client_id: CLIENT_ID, explore: exploreMode, user_role: selectedRole }),
       });
 
       if (!res.ok) {
@@ -256,7 +310,7 @@ export default function QueryPage() {
         question: question.trim(),
         result: {
           question: question.trim(), sql: null, chart_type: 'table', title: 'Error',
-          x: '', y: '', description: '', data: [], columns: [], row_count: 0,
+          x: '', y: '', description: '', data: [], columns: [], row_count: 0, insights: [],
           error: err instanceof Error ? err.message : 'Network error — is the backend running?',
         },
         ts: new Date(),
@@ -274,7 +328,8 @@ export default function QueryPage() {
     }
   }
 
-  const suggestions = [
+  const activeRole = selectedRole ? DEFAULT_ROLES.find((r) => r.key === selectedRole) ?? null : null;
+  const suggestions = activeRole?.suggested_questions ?? [
     'Which channel had the highest publish rate last month?',
     'Show me created vs published videos by language',
     'Top 10 users by output count',
@@ -292,6 +347,34 @@ export default function QueryPage() {
             <h2 className="text-sm font-semibold text-sidebar-foreground">Query History</h2>
           </div>
           <p className="text-xs text-muted-foreground mt-1">Click a query to preview its SQL</p>
+        </div>
+
+        {/* Role selector */}
+        <div className="px-3 py-3 border-b border-sidebar-border space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground px-1 uppercase tracking-wide">Your role</p>
+          <div className="space-y-1">
+            {DEFAULT_ROLES.map((role) => {
+              const meta = ROLE_META[role.key];
+              const isActive = selectedRole === role.key;
+              return (
+                <button
+                  key={role.key}
+                  onClick={() => setSelectedRole(isActive ? null : role.key)}
+                  className={`w-full text-left rounded-lg px-3 py-2 flex items-center gap-2.5 transition-colors border text-xs ${
+                    isActive
+                      ? `${meta.color} border-current`
+                      : 'border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                  }`}
+                >
+                  <span className={isActive ? '' : 'opacity-60'}>{meta.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{role.display_name}</div>
+                    <div className={`text-[10px] truncate ${isActive ? 'opacity-80' : 'opacity-60'}`}>{meta.description}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* History list */}
@@ -337,9 +420,17 @@ export default function QueryPage() {
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-primary" />
             <h1 className="text-lg font-semibold text-foreground">Natural Language Query</h1>
+            {activeRole && (
+              <span className={`ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border font-medium ${ROLE_META[activeRole.key].color}`}>
+                {ROLE_META[activeRole.key].icon}
+                {activeRole.display_name}
+              </span>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Ask any question about your video operations data — the AI generates SQL and visualises the result.
+            {activeRole
+              ? `Answering as ${activeRole.display_name} — ${ROLE_META[activeRole.key].description}`
+              : 'Ask any question about your video operations data — the AI generates SQL and visualises the result.'}
           </p>
         </div>
 
@@ -352,9 +443,13 @@ export default function QueryPage() {
                 <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
                   <Sparkles className="w-8 h-8 text-primary" />
                 </div>
-                <h2 className="text-xl font-semibold text-foreground">Ask your data anything</h2>
+                <h2 className="text-xl font-semibold text-foreground">
+                  {activeRole ? `Hello, ${activeRole.display_name}` : 'Ask your data anything'}
+                </h2>
                 <p className="text-sm text-muted-foreground mt-2 max-w-md">
-                  Type a plain-English question. The AI will generate SQL, run it against your Frammer database, and render the result as a chart.
+                  {activeRole
+                    ? `Insights tailored for ${activeRole.display_name}. ${ROLE_META[activeRole.key].description}.`
+                    : 'Type a plain-English question. The AI will generate SQL, run it against your Frammer database, and render the result as a chart.'}
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
@@ -397,6 +492,18 @@ export default function QueryPage() {
               disabled={isLoading}
             />
             <button
+              type="button"
+              onClick={() => setExploreMode((v) => !v)}
+              title={exploreMode ? 'Explore mode ON — LIDA will generate extra insight charts' : 'Enable Explore mode for additional AI-generated charts'}
+              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-colors border ${
+                exploreMode
+                  ? 'bg-primary/20 border-primary text-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
+              }`}
+            >
+              <FlaskConical className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => void sendQuestion(input)}
               disabled={!input.trim() || isLoading}
               className="shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
@@ -409,7 +516,9 @@ export default function QueryPage() {
             </button>
           </div>
           <p className="text-xs text-muted-foreground text-center mt-2">
-            Queries are executed read-only against your Frammer database.
+            {exploreMode
+              ? '🔬 Explore mode on — LIDA will generate extra insight charts after each query'
+              : 'Queries are executed read-only against your Frammer database.'}
           </p>
         </div>
       </main>

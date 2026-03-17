@@ -37,7 +37,7 @@ export type ChartType =
 
 export interface UniversalChartSpec {
   /** Discriminator: which kind of chart to render */
-  chart_type: ChartType;
+  chart_type: ChartType | null | undefined;
 
   /** Human-readable title shown in the card header */
   title?: string;

@@ -36,11 +36,19 @@ def heal_sql(
     Returns:
         A corrected SQL string.
     """
-    schema = load_schema()
+    schema = load_schema(force_reload=True)  # always use live schema when healing
+
+    # Extract available table names for explicit guidance
+    from app.db.schema_loader import get_table_names
+    available_tables = get_table_names()
+    tables_str = ", ".join(available_tables) if available_tables else "none found"
 
     prompt = f"""You are a PostgreSQL expert. The following SQL query produced an error.
 
-## Database Schema
+## Available Tables (ONLY use these — do not reference any other table)
+{tables_str}
+
+## Full Database Schema
 {schema}
 
 ## Original User Question
@@ -54,8 +62,10 @@ def heal_sql(
 ## Error
 {error_message}
 
-Fix the SQL query so it runs without errors and correctly answers the question.
-Return ONLY the corrected SQL query with no explanation, no markdown fences, no extra text.
+Fix the SQL so it runs without errors using ONLY the tables listed above.
+IMPORTANT: Do NOT generate placeholder/dummy SQL like SELECT 0 or SELECT 'data not available'.
+If the required data does not exist in these tables, generate a SELECT that returns 0 rows (e.g. SELECT ... WHERE 1=0).
+Return ONLY the corrected SQL with no explanation, no markdown fences, no extra text.
 """
     logger.info("Requesting SQL fix from LLM…")
     corrected = call_llm(prompt, system="You are a PostgreSQL SQL expert.")

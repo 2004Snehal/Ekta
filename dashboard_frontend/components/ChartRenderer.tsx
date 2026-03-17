@@ -34,12 +34,25 @@ const TOOLTIP_STYLE = {
 /**
  * Extracts the x / y field key from either the new universal spec
  * (axes.x.field / axes.y.field) or the legacy flat fields (x / y / yAxis).
- * This keeps the component backward-compatible while supporting the new format.
+ * Falls back to auto-detecting from data when fields are missing.
  */
 function resolveFields(chart: UniversalChartSpec): { xField: string; yField: string } {
-  const xField = chart.axes?.x?.field ?? chart.x ?? '';
-  const yField = chart.axes?.y?.field ?? chart.y ?? chart.yAxis ?? '';
-  return { xField, yField };
+  const rawX = chart.axes?.x?.field ?? chart.x ?? '';
+  const rawY = chart.axes?.y?.field ?? chart.y ?? chart.yAxis ?? '';
+
+  if (rawX && rawY) return { xField: rawX, yField: rawY };
+
+  // Auto-detect from data when backend didn't supply axes
+  if (chart.data?.length) {
+    const allKeys = Object.keys(chart.data[0]);
+    const numericKeys = allKeys.filter((k) => typeof chart.data[0][k] === 'number');
+    const textKeys = allKeys.filter((k) => typeof chart.data[0][k] !== 'number');
+    const xField = rawX || textKeys[0] || allKeys[0] || '';
+    const yField = rawY || numericKeys.find((k) => k !== xField) || numericKeys[0] || allKeys[1] || allKeys[0] || '';
+    return { xField, yField };
+  }
+
+  return { xField: rawX, yField: rawY };
 }
 
 /** Resolves pie-specific fields: category (name column) and value (size column). */
@@ -105,7 +118,7 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
   const { xField, yField } = resolveFields(chart);
 
   const renderChart = () => {
-    switch (chart.chart_type) {
+    switch (chart.chart_type ?? 'table') {
 
       // ── Line ───────────────────────────────────────────────────────────────
       case 'line':
@@ -241,7 +254,11 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
                   <tr key={i} className="border-b border-border/50 hover:bg-secondary/30 transition-colors">
                     {cols.map((col) => (
                       <td key={col} className="px-3 py-2">
-                        {String(row[col] ?? '—')}
+                        {row[col] == null
+                          ? '—'
+                          : typeof row[col] === 'object'
+                          ? JSON.stringify(row[col])
+                          : String(row[col])}
                       </td>
                     ))}
                   </tr>

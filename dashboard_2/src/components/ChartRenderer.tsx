@@ -7,12 +7,12 @@ import {
 } from 'recharts'
 
 export interface ChartSpec {
-  chart_type: 'bar' | 'line' | 'pie' | 'table' | 'stacked_bar'
+  chart_type: 'bar' | 'line' | 'pie' | 'table' | 'stacked_bar' | string | null | undefined
   title?: string
   description?: string
   data: Record<string, unknown>[]
-  x: string
-  y: string
+  x?: string | null
+  y?: string | null
   colors?: string[]
 }
 
@@ -33,17 +33,24 @@ export function ChartRenderer({ spec }: { spec: ChartSpec }) {
       return <p className="text-gray-500 text-sm text-center py-8">No data</p>
     }
 
+    // Auto-detect x/y keys from data when not provided
+    const allKeys = Object.keys(spec.data[0])
+    const numericKeys = allKeys.filter(k => typeof spec.data[0][k] === 'number')
+    const textKeys = allKeys.filter(k => typeof spec.data[0][k] !== 'number')
+    const xKey: string = spec.x || textKeys[0] || allKeys[0]
+    const yKey: string = spec.y || numericKeys.find(k => k !== xKey) || numericKeys[0] || allKeys[1] || allKeys[0]
+
     switch (spec.chart_type) {
       case 'line':
         return (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={spec.data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis dataKey={spec.x} stroke="#6b7280" tick={{ fontSize: 11 }} />
+              <XAxis dataKey={xKey} stroke="#6b7280" tick={{ fontSize: 11 }} />
               <YAxis stroke="#6b7280" tick={{ fontSize: 11 }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey={spec.y} stroke={colors[0]} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey={yKey} stroke={colors[0]} strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         )
@@ -53,22 +60,22 @@ export function ChartRenderer({ spec }: { spec: ChartSpec }) {
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={spec.data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis dataKey={spec.x} stroke="#6b7280" tick={{ fontSize: 11 }} />
+              <XAxis dataKey={xKey} stroke="#6b7280" tick={{ fontSize: 11 }} />
               <YAxis stroke="#6b7280" tick={{ fontSize: 11 }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey={spec.y} fill={colors[0]} radius={[4, 4, 0, 0]} />
+              <Bar dataKey={yKey} fill={colors[0]} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )
 
       case 'stacked_bar': {
-        const seriesKeys = Object.keys(spec.data[0] ?? {}).filter(k => k !== spec.x)
+        const seriesKeys = Object.keys(spec.data[0] ?? {}).filter(k => k !== xKey)
         return (
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={spec.data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis dataKey={spec.x} stroke="#6b7280" tick={{ fontSize: 11 }} />
+              <XAxis dataKey={xKey} stroke="#6b7280" tick={{ fontSize: 11 }} />
               <YAxis stroke="#6b7280" tick={{ fontSize: 11 }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -85,7 +92,7 @@ export function ChartRenderer({ spec }: { spec: ChartSpec }) {
         return (
           <ResponsiveContainer width="100%" height={280}>
             <PieChart>
-              <Pie data={spec.data} dataKey={spec.y} nameKey={spec.x}
+              <Pie data={spec.data} dataKey={yKey} nameKey={xKey}
                 cx="50%" cy="50%" outerRadius={100}
                 label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
               >

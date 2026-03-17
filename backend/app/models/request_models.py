@@ -2,6 +2,8 @@
 Pydantic request models for the NLQ API.
 """
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -21,4 +23,9 @@ class QueryRequest(BaseModel):
     explore: bool = Field(
         default=False,
         description="When true, runs LIDA for additional insight visualizations",
+    )
+    user_role: Optional[str] = Field(
+        default=None,
+        description="User role key: founder | client_success | operations | editorial | tech",
+        examples=["founder"],
     )
