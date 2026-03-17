@@ -120,7 +120,8 @@ User Question
      │
      ▼ Step 5
 [LLM Answer Generator]
- - Convert raw rows into a 2-4 sentence plain-English insight
+ - Python computes a compact statistical summary guided by Call 1's answer_strategy
+ - Second LLM call narrates the summary into a 1-3 sentence plain-English insight
      │
      ▼ Step 6
 [Store Q→SQL in Vanna KB]
@@ -270,28 +271,47 @@ A user asking *"show me published videos by channel"* may not know to also ask a
 ### Step 5 — LLM Answer Generator
 
 **What happens:**
-A second LLM call converts the raw tabular data into a human-readable analytics sentence. The prompt includes the original question, the executed SQL, and up to 20 rows of results. The system prompt is customised per user role (e.g., "You are presenting findings to a company founder").
+A two-phase process converts the full result set into a human-readable analytics sentence without sending raw rows to the LLM.
 
-**Input:**
+**Phase A — Statistical pre-summarization (Python, no LLM):**
+`build_summary()` uses the `answer_strategy` emitted by Call 1 to deterministically compute a compact, query-appropriate summary of the full result set. Five strategies cover every query shape:
+
+| Strategy | Query shape | What is computed |
+|---|---|---|
+| `time_series_trend` | Trend over months (line chart) | first, last, peak, trough, mean, trend direction, % change |
+| `top_n_ranked` | Ranking / leaderboard (bar chart) | top 5, bottom 3, total, leader's share % |
+| `distribution` | Share / proportion (pie, stacked_bar) | all slices enriched with `_share_pct`, total |
+| `single_aggregate` | COUNT/SUM returning one row | that row, verbatim |
+| `detail_sample` | Row-level table queries | first 15 rows + total row count |
+
+For any result set size — 5 rows or 500 rows — the summary passed to the LLM is always compact and semantically complete. No arbitrary row slicing.
+
+**Phase B — LLM narration (Call 2):**
+The second LLM call receives the computed summary and a `focus` array (also from Call 1's `answer_strategy`) that instructs it which aspects to highlight (e.g., `["peak", "direction", "change_pct"]` for a trend query). The LLM writes a 1–3 sentence answer from this structured input.
+
+**Input to Call 2:**
 ```
 question = "Top 5 clients by output volume"
-sql      = "SELECT client_id, COUNT(*) AS output_count ..."
-data     = [{"client_id": 42, "output_count": 1820}, ...]
-user_role = "founder"
+summary  = {
+    "total_rows": 5,
+    "top_5": [{"client_id": 42, "output_count": 1820}, ...],
+    "total": 6210,
+    "top1_share_pct": 29.3
+}
+focus    = ["winner", "spread", "total"]
 ```
 
 **Output:**
 ```
-"Client 42 leads output volume with 1,820 videos, followed by Client 17 with 1,340.
-The top 5 clients collectively account for 68% of total output this quarter,
-suggesting heavy concentration among a small number of accounts."
+"Client 42 leads output volume with 1,820 videos — 29% of the total across all clients.
+The top 5 collectively account for 6,210 outputs, with a wide spread between first and fifth place."
 ```
 
 **Why it is needed:**
-Raw tabular data requires the user to interpret numbers themselves. A natural language summary immediately answers the *"so what?"* question, making the analytics accessible to non-technical stakeholders.
+Raw tabular data requires the user to interpret numbers themselves. A natural language summary immediately answers the *"so what?"* question, making the analytics accessible to non-technical stakeholders. The strategy-guided approach ensures a 365-row time-series answer is as accurate as a 5-row bar chart answer — Call 1's understanding of query intent guides which statistics matter.
 
 **What could go wrong:**
-If the LLM call fails (network error, quota), the system falls back gracefully to a simple `"Query returned N rows."` string rather than failing the entire response.
+If the LLM call fails (network error, quota), the system falls back gracefully to an empty string rather than failing the entire response. The chart, data, and SQL are unaffected.
 
 ---
 
@@ -720,63 +740,68 @@ This ensures that when a founder and an operations engineer see insights from th
 
 ### 7.1 Why a Second LLM Call is Needed
 
-Step 2 (Vanna) uses the LLM to convert natural language to SQL. That is a code generation task.
+Call 1 (SQL generation) uses the LLM as a code generator: it knows the question and the schema, but has no data yet.
 
-Step 5 uses the LLM for a different purpose: **data interpretation**. It reads query results and writes a plain-English explanation of what the numbers mean. These are fundamentally different prompts requiring different instructions.
+Call 2 (answer generation) uses the LLM as a narrator: it knows the question and the actual computed numbers, but doesn't need to touch SQL. These are fundamentally different tasks requiring different system prompts and different inputs.
 
-### 7.2 Prompt Structure
+### 7.2 How Call 1 Informs Call 2 — The `answer_strategy`
+
+Call 1's JSON output includes an `answer_strategy` block alongside the chart metadata:
+
+```json
+{
+  "sql": "...",
+  "chart_type": "line",
+  "title": "Monthly Publish Rate Trend",
+  "x": "month",
+  "y": "publish_rate_pct",
+  "description": "...",
+  "answer_strategy": {
+    "type": "time_series_trend",
+    "focus": ["peak", "direction", "change_pct"]
+  }
+}
+```
+
+The `type` tells Python which statistical algorithm to run. The `focus` array tells the answer LLM which aspects of the summary to emphasise. Call 1 can infer both from the question intent — the same reasoning that leads it to choose `"line"` as the chart type also tells it that `"time_series_trend"` is the right summary strategy.
+
+### 7.3 Statistical Pre-Summarization (Python, no LLM)
+
+`build_summary(data, x_col, y_col, strategy)` runs after SQL execution and before Call 2. It is pure Python — deterministic, instant, zero token cost — and produces a compact dict regardless of result set size:
 
 ```python
-prompt = f"""A user asked the following analytics question:{role_instruction}
+# strategy: { "type": "time_series_trend", "focus": [...] }
+# data: 365 rows of monthly publish rates
 
-Question: {question}
-
-SQL executed:
-{sql}
-
-Results (up to 20 rows):
-{preview}
-
-Generate a clear, concise analytics answer in 2–4 sentences.
-Focus on key numbers, trends, or comparisons visible in the data.
-Do not mention SQL or technical details.
-"""
+summary = {
+    "total_periods": 365,
+    "first":   {"month": "Jan 2023", "publish_rate_pct": 41.2},
+    "last":    {"month": "Mar 2026", "publish_rate_pct": 78.9},
+    "peak":    {"month": "Aug 2024", "publish_rate_pct": 91.3},
+    "trough":  {"month": "Feb 2023", "publish_rate_pct": 28.7},
+    "mean":    63.4,
+    "trend":   "upward",
+    "change_pct": 91.5,
+}
 ```
 
-The system prompt is role-specific:
-```
-# For a Founder / CEO:
-"You are a data analyst presenting findings to a company founder or CEO.
-Lead with the single most important business insight. Focus on growth,
-efficiency, and strategic implications. Use percentages and comparisons.
-Keep it under 4 sentences."
+For a 365-row time series, Call 2 receives 9 fields instead of 365 rows. For a single-aggregate query (one row), it receives that row verbatim. The summary is always the right size for the query shape.
 
-# For an Operations Team:
-"You are a data analyst supporting an operations team.
-Focus on efficiency, throughput, and identifying bottlenecks.
-Highlight process metrics and operational KPIs..."
-```
-
-### 7.3 Data Preview Truncation
-
-Only the first 20 rows are included in the answer prompt:
+### 7.4 Call 2 Prompt Structure
 
 ```python
-preview = data[:20]
+user_message = (
+    f"Question: {question}\n\n"
+    f"Data summary:\n{json.dumps(summary, default=str)}\n\n"
+    f"Focus on: {', '.join(focus)}"
+)
 ```
 
-For a typical bar chart query returning 10 rows this is the full dataset. For time-series queries returning 365 rows, only the first 20 are included. This prevents the prompt from exceeding the LLM's context window while still providing enough data for a meaningful summary.
+The system prompt instructs the LLM to answer in 1–3 sentences using only specific values from the summary, state answers as facts (no meta-phrases like "the data shows"), and follow question-type conventions (name the winner for ranking questions, describe direction and peak for trend questions, etc.).
 
-### 7.4 Fallback
+### 7.5 Fallback
 
-If the LLM call fails for any reason:
-```python
-except Exception as exc:
-    logger.warning("LLM answer generation failed: %s — using fallback.", exc)
-    answer = f"Query returned {len(rows)} rows."
-```
-
-The user always receives a response. The description may be less rich, but the SQL, data, and chart metadata are unaffected.
+If Call 2 fails for any reason (network error, quota), `generate_answer` returns an empty string silently. The chart, data, SQL, and all other response fields are unaffected — the user still gets a complete, renderable result.
 
 ---
 
@@ -983,9 +1008,14 @@ LIMIT 1;
 ```json
 {
   "chart_type": "bar",
-  "x_column": "channel",
-  "y_column": "publish_rate_pct",
-  "title": "Channel with Highest Publish Rate"
+  "x": "channel",
+  "y": "publish_rate_pct",
+  "title": "Channel with Highest Publish Rate",
+  "description": "Publish rate percentage per channel, ranked highest to lowest",
+  "answer_strategy": {
+    "type": "top_n_ranked",
+    "focus": ["winner", "spread"]
+  }
 }
 ```
 
@@ -1004,13 +1034,25 @@ Skipped (`explore: false`).
 
 ### Step 5 — LLM Answer
 
-Prompt sent to LLM:
+**Phase A — Python builds the summary** (strategy: `top_n_ranked`, 1 row returned):
+```python
+summary = {
+    "total_rows": 1,
+    "top_5": [{"channel": "Alpha Studio", "total_videos": 3200, "published_videos": 2784, "publish_rate_pct": 87.0}],
+    "bottom_3": [],
+    "total": 87.0,
+    "top1_share_pct": 100.0,
+}
 ```
-[Answering for: Founder / CEO]
+
+**Phase B — Call 2 prompt:**
+```
 Question: Which channel has the highest publish rate?
-SQL: SELECT channel, ...
-Results: [{"channel": "Alpha Studio", ..., "publish_rate_pct": 87.0}]
-Generate a clear, concise analytics answer in 2–4 sentences...
+
+Data summary:
+{"total_rows": 1, "top_5": [{"channel": "Alpha Studio", ..., "publish_rate_pct": 87.0}], ...}
+
+Focus on: winner, spread
 ```
 
 Answer returned:
@@ -1094,7 +1136,7 @@ By asking the LLM to output chart metadata alongside SQL (and falling back to he
 ### 13.1 Current Limitations
 
 **Semantic errors are invisible to self-healing:**
-If a generated SQL runs successfully but answers the wrong question (computes a simple count when a rate was asked for), there is no mechanism to detect this. The user sees a technically valid but analytically wrong result.
+If a generated SQL runs successfully but answers the wrong question (computes a simple count when a rate was asked for), there is no mechanism to detect this. The user sees a technically valid but analytically wrong result. The same blind spot applies to `answer_strategy`: if Call 1 picks the wrong strategy type, the summary may omit the most relevant statistics even though the SQL was correct.
 
 **Session memory is single-turn:**
 Only the immediately previous SQL is stored. If a user says *"go back to the query from two steps ago"*, the system cannot comply. Full conversation history is not maintained.
@@ -1133,9 +1175,12 @@ Replace the in-memory session dict with Redis or a database table. This enables 
 **Multi-turn LIDA integration:**
 Pass the original user question into LIDA's goal generation to bias the insights toward what the user actually cares about, rather than purely what the data can show.
 
+**Answer strategy validation:**
+Log the `answer_strategy` type used per query alongside query success/failure. Over time this reveals which strategy types produce poor answers (e.g., `top_n_ranked` chosen for a time-series question), enabling targeted corrections to the Call 1 prompt guidelines.
+
 **SQL validation layer:**
 Before executing LLM-generated SQL, run a dry-run `EXPLAIN` to catch syntax and structural errors without scanning data. This is faster than a full execute → error → heal cycle.
 
 ---
 
-*Document generated: 2026-03-17 | Backend version: Aryan_sqlrag_vanna branch*
+*Document updated: 2026-03-18 | Backend version: Aryan_sqlrag_vanna branch*

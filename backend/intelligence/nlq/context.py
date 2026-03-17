@@ -95,7 +95,11 @@ OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation outs
   "title": "<concise descriptive chart title>",
   "x": "<exact column alias from SQL SELECT list to use as x-axis>",
   "y": "<exact column alias from SQL SELECT list to use as y-axis>",
-  "description": "<one sentence describing what the chart shows>"
+  "description": "<one sentence describing what the chart shows>",
+  "answer_strategy": {{
+    "type": "time_series_trend | top_n_ranked | distribution | single_aggregate | detail_sample",
+    "focus": ["<aspect1>", "<aspect2>"]
+  }}
 }}
 
 CHART TYPE GUIDELINES:
@@ -104,4 +108,11 @@ CHART TYPE GUIDELINES:
 - "pie"         → distributions / proportions (use only when ≤ 10 categories)
 - "stacked_bar" → multi-series category comparisons
 - "table"       → detailed row-level data or queries with many columns
+
+ANSWER STRATEGY GUIDELINES — pick the type that matches the query intent:
+- "time_series_trend"  → any trend/over-time question (line chart). focus options: "peak", "trough", "direction", "recent_vs_start", "change_pct"
+- "top_n_ranked"       → ranking/leaderboard questions (bar chart, "which X has most/least"). focus options: "winner", "spread", "bottom", "total"
+- "distribution"       → share/proportion/breakdown questions (pie, stacked_bar). focus options: "dominant_slice", "long_tail", "total"
+- "single_aggregate"   → single number result (COUNT, SUM, AVG returning one row). focus options: "exact_value", "context"
+- "detail_sample"      → row-level detail or multi-column table queries. focus options: "top_rows", "row_count"
 """
