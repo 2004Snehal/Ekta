@@ -19,6 +19,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!dashboard_frontend/lib/
 lib64/
 parts/
 sdist/
@@ -100,7 +101,5 @@ logs/
 *.temp
 
 data
-# Claude Code
-.claude/
-SCHEMA_AUDIT_REPORT.md
-SCHEMA_ISSUES_DETAILED.md
+
+claude
