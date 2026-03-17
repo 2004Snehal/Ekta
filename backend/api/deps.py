@@ -20,7 +20,9 @@ def _safe_parse(url: str):
         userinfo = url[_scheme_end:_at]
         if ":" in userinfo:
             _user, _raw_pass = userinfo.split(":", 1)
-            url = url[:_scheme_end] + _user + ":" + quote(_raw_pass, safe="") + url[_at:]
+            # Decode first (in case already URL-encoded), then re-encode cleanly
+            _decoded_pass = unquote(_raw_pass)
+            url = url[:_scheme_end] + _user + ":" + quote(_decoded_pass, safe="") + url[_at:]
     return urlparse(url)
 
 _p = _safe_parse(DATABASE_URL)
