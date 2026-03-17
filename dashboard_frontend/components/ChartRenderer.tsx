@@ -1,12 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ScatterChart, Scatter, Brush,
 } from 'recharts';
 import type { UniversalChartSpec } from '@/types/chart';
+import { ChartInsightPanel } from '@/components/ChartInsightPanel';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 const COLORS = ['#E5001A', '#2D9CDB', '#F2A11A', '#1DB954', '#9B59B6', '#E67E22'];
 
@@ -95,6 +98,64 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const hasDrill = Boolean(chart.drillDown);
   const cursorStyle = hasDrill ? 'pointer' : 'default';
   const [showAll, setShowAll] = useState(false);
+
+  // ── Hover insight state ────────────────────────────────────────────────────
+  const [insightVisible, setInsightVisible] = useState(false);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightSummary, setInsightSummary] = useState('');
+  const [insightBullets, setInsightBullets] = useState<string[]>([]);
+  const [insightError, setInsightError] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetched    = useRef(false);
+
+  const fetchInsights = useCallback(async () => {
+    if (fetched.current || !chart.data?.length) return;
+    fetched.current = true;
+    setInsightLoading(true);
+    setInsightError(false);
+    try {
+      const url = `${API_BASE}/chart/insights`;
+      console.log(`[ChartInsights] calling ${url} for chart: "${chart.title ?? chart.chart_type}" (${chart.data.length} rows)`);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chart_title: chart.title ?? chart.chart_type,
+          chart_type:  chart.chart_type,
+          x_label:     xField || undefined,
+          y_label:     yField || undefined,
+          data:        chart.data,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setInsightSummary(json.summary ?? '');
+        setInsightBullets(json.insights ?? []);
+      } else {
+        console.error(`[ChartInsights] ${res.status} from ${url}`);
+        setInsightError(true);
+      }
+    } catch (err) {
+      console.error('[ChartInsights] fetch failed:', err);
+      setInsightError(true);
+    } finally {
+      setInsightLoading(false);
+    }
+  }, [chart, xField, yField]);
+
+  function handleMouseEnter() {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      setInsightVisible(true);
+      fetchInsights();
+    }, 400);
+  }
+
+  function handleMouseLeave() {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hideTimer.current = setTimeout(() => setInsightVisible(false), 300);
+  }
 
   function handleClick(dimensionKey: string, value: unknown) {
     if (onElementClick && value != null) {
@@ -312,7 +373,12 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   };
 
   return (
-    <div className="chart-panel">
+    <div
+      className="chart-panel"
+      style={{ position: 'relative' }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {chart.title && (
         <div className="flex items-center gap-3 mb-4">
           <span className="section-id">{chart.title}</span>
@@ -325,6 +391,13 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       )}
       {renderChart()}
       {chart.refLinks && chart.refLinks.length > 0 && <RefLinks links={chart.refLinks} />}
+      <ChartInsightPanel
+        visible={insightVisible}
+        loading={insightLoading}
+        summary={insightSummary}
+        insights={insightBullets}
+        error={insightError}
+      />
     </div>
   );
 }

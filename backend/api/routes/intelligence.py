@@ -4,7 +4,7 @@ Intelligence routes — reads from operational tables written to by intelligence
 
 import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from typing import Optional
+from typing import Optional, Any
 from api.deps import get_conn
 
 logger = logging.getLogger(__name__)
@@ -193,6 +193,31 @@ def record_insight_feedback(
             raise HTTPException(status_code=404, detail="insight not found")
         conn.commit()
     return {"status": "ok"}
+
+
+# ── Chart Insight Agent endpoint ─────────────────────────────────────────────
+
+@router.post("/chart/insights")
+def get_chart_insights(payload: dict[str, Any]):
+    """
+    On-demand LLM analysis of a single chart's visible data.
+    Called by the frontend when a user hovers over a chart.
+    Receives the exact data rendered in the chart and returns
+    3-5 plain-English insights + a one-sentence summary.
+    """
+    from intelligence.chart_insight_agent.agent import generate_chart_insights
+    from intelligence.chart_insight_agent.schemas import ChartInsightRequest
+
+    try:
+        req = ChartInsightRequest(**payload)
+        print(f"[/chart/insights] request received — chart: '{req.chart_title}', type: {req.chart_type}, rows: {len(req.data)}")
+        result = generate_chart_insights(req)
+        print(f"[/chart/insights] done — summary: '{result.summary}', insights count: {len(result.insights)}")
+        return result.model_dump()
+    except Exception as e:
+        print(f"[/chart/insights] error: {e}")
+        logger.error("chart insight agent failed: %s", e)
+        raise HTTPException(status_code=500, detail="Chart insight generation failed")
 
 
 @router.get("/kpis/registry")
