@@ -1,31 +1,31 @@
 import type { Metadata } from 'next'
-import { Barlow_Condensed, IBM_Plex_Mono, Barlow } from 'next/font/google'
+import { Plus_Jakarta_Sans, JetBrains_Mono, Playfair_Display } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { TopNav } from '@/components/TopNav'
 import { ProfileProvider } from '@/lib/profiles'
 import './globals.css'
 
-const barlow = Barlow({
+const plusJakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600'],
+  weight: ['300', '400', '500', '600', '700', '800'],
   variable: '--font-sans',
 })
 
-const barlowCondensed = Barlow_Condensed({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-condensed',
-})
-
-const ibmPlexMono = IBM_Plex_Mono({
+const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
   weight: ['400', '500', '600'],
   variable: '--font-mono',
 })
 
+const playfair = Playfair_Display({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-display',
+})
+
 export const metadata: Metadata = {
-  title: 'Frammer AI — Operations Center',
-  description: 'Real-time video processing and publishing analytics',
+  title: 'Frammer AI — Analytics Studio',
+  description: 'Video processing and publishing analytics',
   icons: {
     icon: [
       { url: '/icon-light-32x32.png', media: '(prefers-color-scheme: light)' },
@@ -38,12 +38,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${barlow.variable} ${barlowCondensed.variable} ${ibmPlexMono.variable} antialiased`}
+    <html lang="en">
+      <body className={`${plusJakarta.variable} ${jetbrainsMono.variable} ${playfair.variable} antialiased`}
             style={{ background: 'var(--void)', color: 'var(--on)' }}>
         <ProfileProvider>
           <TopNav />
-          <main className="pt-11">
+          <main className="pt-[55px]">
             {children}
           </main>
         </ProfileProvider>

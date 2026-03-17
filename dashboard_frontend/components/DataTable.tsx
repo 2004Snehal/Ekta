@@ -73,7 +73,7 @@ export function DataTable({ data, columns: propColumns, pageSize = 50, searchabl
   return (
     <div>
       {/* Header row */}
-      <div className="flex items-center gap-4 mb-3 flex-wrap">
+      <div className="flex items-center gap-4 mb-4 flex-wrap">
         {title && <span className="section-id">{title}</span>}
         <div className="flex-1" />
         {searchable && (
@@ -81,50 +81,65 @@ export function DataTable({ data, columns: propColumns, pageSize = 50, searchabl
             type="text"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            placeholder="Search..."
+            placeholder="Search…"
             style={{
-              background: 'var(--surface-hi)',
-              border: '1px solid var(--wire)',
+              background: 'var(--surface)',
+              border: '1.5px solid var(--wire)',
               color: 'var(--on)',
               fontFamily: 'var(--font-mono)',
-              fontSize: '0.65rem',
-              padding: '4px 10px',
+              fontSize: '0.75rem',
+              padding: '6px 12px',
               outline: 'none',
-              width: '200px',
+              width: '220px',
+              borderRadius: '8px',
+              transition: 'border-color 0.2s',
             }}
+            onFocus={(e) => { e.target.style.borderColor = 'var(--signal)'; }}
+            onBlur={(e) => { e.target.style.borderColor = 'var(--wire)'; }}
           />
         )}
         {exportable && (
-          <span className="action-text" onClick={exportCSV}>CSV ↓</span>
+          <button
+            className="action-text"
+            onClick={exportCSV}
+            style={{
+              background: 'var(--surface-raise)',
+              border: '1px solid var(--wire)',
+              padding: '5px 12px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+            }}
+          >
+            CSV ↓
+          </button>
         )}
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" style={{ borderRadius: '12px', border: '1px solid var(--wire)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid var(--wire-mid)' }}>
+            <tr style={{ background: 'var(--surface-hi)', borderBottom: '1.5px solid var(--wire)' }}>
               {columns.map((col) => (
                 <th
                   key={col}
                   onClick={() => handleSort(col)}
                   style={{
-                    padding: '6px 8px',
-                    fontFamily: 'var(--font-condensed)',
-                    fontSize: '0.55rem',
+                    padding: '9px 12px',
+                    fontFamily: 'var(--font-sans)',
+                    fontSize: '0.72rem',
                     fontWeight: 700,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                    color: sortKey === col ? 'var(--on)' : 'var(--on-low)',
+                    color: sortKey === col ? 'var(--signal)' : 'var(--on-low)',
                     textAlign: 'left',
                     cursor: 'pointer',
                     userSelect: 'none',
                     whiteSpace: 'nowrap',
+                    letterSpacing: '0.02em',
                   }}
                 >
                   {col.replace(/_/g, ' ')}
                   {sortKey === col && (
-                    <span style={{ marginLeft: '4px', fontSize: '0.5rem' }}>
+                    <span style={{ marginLeft: '5px', fontSize: '0.55rem' }}>
                       {sortDir === 'asc' ? '▲' : '▼'}
                     </span>
                   )}
@@ -134,19 +149,26 @@ export function DataTable({ data, columns: propColumns, pageSize = 50, searchabl
           </thead>
           <tbody>
             {pageData.map((row, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid var(--wire)' }}>
+              <tr
+                key={i}
+                style={{
+                  borderBottom: '1px solid var(--wire)',
+                  background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface-hi)',
+                  transition: 'background 0.15s',
+                }}
+              >
                 {columns.map((col) => (
                   <td key={col} style={{
-                    padding: '5px 8px',
+                    padding: '7px 12px',
                     fontFamily: 'var(--font-mono)',
-                    fontSize: '0.65rem',
+                    fontSize: '0.72rem',
                     color: 'var(--on-mid)',
                     whiteSpace: 'nowrap',
                     maxWidth: '200px',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                   }}>
-                    {String(row[col] ?? '—')}
+                    {String(row[col] ?? '\u2014')}
                   </td>
                 ))}
               </tr>
@@ -156,30 +178,44 @@ export function DataTable({ data, columns: propColumns, pageSize = 50, searchabl
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center gap-4 mt-3">
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
+      <div className="flex items-center gap-4 mt-4">
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-low)' }}>
           {sorted.length.toLocaleString()} rows
         </span>
         <div className="flex-1" />
         {totalPages > 1 && (
           <div className="flex items-center gap-2">
-            <span
+            <button
               className="action-text"
               onClick={() => setPage((p) => Math.max(0, p - 1))}
-              style={{ opacity: page === 0 ? 0.3 : 1 }}
+              style={{
+                opacity: page === 0 ? 0.3 : 1,
+                background: 'var(--surface-raise)',
+                border: '1px solid var(--wire)',
+                padding: '4px 12px',
+                borderRadius: '8px',
+                cursor: page === 0 ? 'not-allowed' : 'pointer',
+              }}
             >
-              ← PREV
-            </span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
+              ← Prev
+            </button>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--on-low)', minWidth: '70px', textAlign: 'center' }}>
               {page + 1} / {totalPages}
             </span>
-            <span
+            <button
               className="action-text"
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              style={{ opacity: page >= totalPages - 1 ? 0.3 : 1 }}
+              style={{
+                opacity: page >= totalPages - 1 ? 0.3 : 1,
+                background: 'var(--surface-raise)',
+                border: '1px solid var(--wire)',
+                padding: '4px 12px',
+                borderRadius: '8px',
+                cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer',
+              }}
             >
-              NEXT →
-            </span>
+              Next →
+            </button>
           </div>
         )}
       </div>

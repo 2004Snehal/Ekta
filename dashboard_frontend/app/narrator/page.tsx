@@ -26,19 +26,31 @@ function SeveritySummary({ insights }: { insights: InsightCardData[] }) {
   const low    = insights.filter(i => i.severity === 'low').length;
 
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-2">
       {high > 0 && (
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+        <span style={{
+          fontSize: '0.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: '20px',
+          background: 'rgba(196, 85, 58, 0.1)', color: 'var(--signal)',
+          fontFamily: 'var(--font-sans)',
+        }}>
           {high} high
         </span>
       )}
       {medium > 0 && (
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+        <span style={{
+          fontSize: '0.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: '20px',
+          background: 'rgba(198, 139, 44, 0.1)', color: 'var(--warn)',
+          fontFamily: 'var(--font-sans)',
+        }}>
           {medium} medium
         </span>
       )}
       {low > 0 && (
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
+        <span style={{
+          fontSize: '0.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: '20px',
+          background: 'rgba(91, 126, 161, 0.1)', color: 'var(--uplink)',
+          fontFamily: 'var(--font-sans)',
+        }}>
           {low} low
         </span>
       )}
@@ -74,7 +86,6 @@ export default function NarratorPage() {
       );
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const json = await res.json();
-      // The endpoint returns either the full payload or the cached insights dict
       const payload: NarratorPayload = json.insights ? json : json;
       setData(payload);
     } catch (err) {
@@ -104,18 +115,25 @@ export default function NarratorPage() {
   const insights  = data?.insights ?? [];
 
   return (
-    <div className="min-h-screen p-8 space-y-8" style={{ background: 'var(--void)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--void)', padding: '32px' }}>
 
       {/* Page header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div className="flex items-center gap-4">
+          <div style={{
+            width: '44px', height: '44px',
+            background: 'var(--signal-dim)',
+            borderRadius: '14px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Newspaper style={{ width: '20px', height: '20px', color: 'var(--signal)' }} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Insight Narrator</h1>
-            <p className="text-muted-foreground text-sm">
-              Automatically surfaced anomalies, trends, and milestones · {profileDef.displayName}
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 700, color: 'var(--on)', marginBottom: '2px' }}>
+              Insight Narrator
+            </h1>
+            <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-mid)' }}>
+              Automatically surfaced anomalies, trends & milestones · {profileDef.displayName}
             </p>
           </div>
         </div>
@@ -124,15 +142,41 @@ export default function NarratorPage() {
           <button
             onClick={() => fetchInsights(true)}
             disabled={loadState !== 'idle'}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '8px 16px',
+              borderRadius: '10px',
+              border: '1px solid var(--wire)',
+              background: 'var(--surface)',
+              color: 'var(--on-mid)',
+              fontFamily: 'var(--font-sans)',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              opacity: loadState !== 'idle' ? 0.5 : 1,
+              transition: 'all 0.2s',
+            }}
           >
-            <RefreshCw className={`w-4 h-4 ${loadState === 'refreshing' ? 'animate-spin' : ''}`} />
+            <RefreshCw style={{ width: '14px', height: '14px', animation: loadState === 'refreshing' ? 'spin 1s linear infinite' : 'none' }} />
             Refresh
           </button>
           <button
             onClick={triggerRun}
             disabled={loadState !== 'idle'}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '8px 18px',
+              borderRadius: '10px',
+              border: 'none',
+              background: 'var(--signal)',
+              color: '#fff',
+              fontFamily: 'var(--font-sans)',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              opacity: loadState !== 'idle' ? 0.5 : 1,
+              transition: 'opacity 0.2s',
+            }}
           >
             Run Now
           </button>
@@ -140,25 +184,49 @@ export default function NarratorPage() {
       </div>
 
       {triggerMsg && (
-        <p className="text-sm text-muted-foreground bg-secondary/50 border border-border rounded-lg px-4 py-2">
+        <div style={{
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.82rem',
+          color: 'var(--on-mid)',
+          background: 'var(--surface)',
+          border: '1px solid var(--wire)',
+          borderRadius: '10px',
+          padding: '10px 16px',
+          marginBottom: '24px',
+        }}>
           {triggerMsg}
-        </p>
+        </div>
       )}
 
       {/* Loading skeleton */}
       {isLoading && (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-32 rounded-lg bg-secondary/30 animate-pulse" />
+            <div key={i} style={{
+              height: '120px',
+              borderRadius: '16px',
+              background: 'var(--surface)',
+              border: '1px solid var(--wire)',
+              opacity: 0.6,
+            }} />
           ))}
         </div>
       )}
 
       {/* Error */}
       {!isLoading && errorMsg && (
-        <div className="flex items-center gap-3 p-4 rounded-lg border border-red-500/30 bg-red-950/20 text-red-400">
-          <AlertCircle className="w-5 h-5 shrink-0" />
-          <p className="text-sm">{errorMsg}</p>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '12px',
+          padding: '16px 20px',
+          borderRadius: '12px',
+          border: '1px solid rgba(196, 85, 58, 0.3)',
+          background: 'rgba(196, 85, 58, 0.06)',
+          color: 'var(--signal)',
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.85rem',
+        }}>
+          <AlertCircle style={{ width: '18px', height: '18px', flexShrink: 0 }} />
+          <p>{errorMsg}</p>
         </div>
       )}
 
@@ -166,9 +234,17 @@ export default function NarratorPage() {
       {!isLoading && !errorMsg && data && (
         <>
           {/* Meta bar */}
-          <div className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-lg bg-secondary/30 border border-border/40">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="w-4 h-4" />
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            flexWrap: 'wrap', gap: '12px',
+            padding: '14px 18px',
+            borderRadius: '12px',
+            background: 'var(--surface)',
+            border: '1px solid var(--wire)',
+            marginBottom: '24px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--on-mid)', fontFamily: 'var(--font-sans)', fontSize: '0.82rem' }}>
+              <Clock style={{ width: '14px', height: '14px' }} />
               Generated {formatRelativeTime(data.generated_at)} · Period: {data.period}
             </div>
             <SeveritySummary insights={insights} />
@@ -176,18 +252,30 @@ export default function NarratorPage() {
 
           {/* Weekly digest card */}
           {data.digest && (
-            <div className="p-4 rounded-lg border border-primary/20 bg-primary/5 space-y-1">
-              <p className="text-xs font-semibold text-primary uppercase tracking-wide">Weekly Digest</p>
-              <p className="text-sm text-foreground leading-relaxed">{data.digest}</p>
+            <div style={{
+              padding: '16px 20px',
+              borderRadius: '12px',
+              border: '1px solid rgba(196, 85, 58, 0.2)',
+              background: 'rgba(196, 85, 58, 0.04)',
+              marginBottom: '24px',
+            }}>
+              <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', fontWeight: 700, color: 'var(--signal)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '6px' }}>
+                Weekly Digest
+              </p>
+              <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.88rem', color: 'var(--on)', lineHeight: 1.65 }}>
+                {data.digest}
+              </p>
             </div>
           )}
 
           {/* Insight cards */}
           {insights.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <Newspaper className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p className="font-medium">No new insights this period</p>
-              <p className="text-sm mt-1">Everything looks normal, or all recent anomalies were already surfaced.</p>
+            <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--on-low)' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'var(--surface)', border: '1px solid var(--wire)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <Newspaper style={{ width: '24px', height: '24px', opacity: 0.4 }} />
+              </div>
+              <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 600, color: 'var(--on)', marginBottom: '6px' }}>No new insights this period</p>
+              <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-low)' }}>Everything looks normal, or all recent anomalies were already surfaced.</p>
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

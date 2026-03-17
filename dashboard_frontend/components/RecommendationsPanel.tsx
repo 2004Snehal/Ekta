@@ -28,10 +28,10 @@ const KPI_TO_METRIC: Partial<Record<DashboardKpiId, string>> = {
   published_videos: 'published_count',
 };
 
-const PRIORITY_COLOR: Record<string, string> = {
-  high:   'var(--signal)',
-  medium: 'var(--warn)',
-  low:    'var(--ok)',
+const PRIORITY_CONFIG: Record<string, { color: string; bg: string; border: string; dot: string }> = {
+  high:   { color: 'var(--signal)', bg: 'rgba(196, 85, 58, 0.05)',   border: 'rgba(196, 85, 58, 0.2)',  dot: '#C4553A' },
+  medium: { color: 'var(--warn)',   bg: 'rgba(198, 139, 44, 0.05)',  border: 'rgba(198, 139, 44, 0.2)', dot: '#C68B2C' },
+  low:    { color: 'var(--ok)',     bg: 'rgba(91, 138, 114, 0.05)',  border: 'rgba(91, 138, 114, 0.2)', dot: '#5B8A72' },
 };
 
 function getViewFromPathname(pathname: string): string {
@@ -108,56 +108,81 @@ export function RecommendationsPanel({ apiBaseUrl, filters, kpis, selectedKpiId,
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <span className="section-id">Recommendations</span>
-        <span
-          className="action-text"
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+        <div>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--on)', lineHeight: 1.2, marginBottom: '3px' }}>
+            Recommendations
+          </h2>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.65rem', color: 'var(--on-low)', letterSpacing: '0.03em' }}>
+            Context-aware · {profileDef.displayName}
+          </p>
+        </div>
+        <button
           onClick={() => void fetchRecs(profile)}
-          style={{ color: loading ? 'var(--signal)' : undefined }}
-        >
-          {loading ? <span className="spin-anim">↻</span> : '↻'}
-        </span>
-      </div>
-
-      {/* Profile context display */}
-      <div className="flex items-center gap-2 mb-4">
-        <span
           style={{
-            fontFamily: 'var(--font-condensed)',
-            fontSize: '0.6rem',
-            fontWeight: 700,
-            letterSpacing: '0.14em',
-            color: 'var(--on)',
-            paddingBottom: '1px',
-            borderBottom: '1px solid var(--signal)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'var(--surface-raise)',
+            border: '1px solid var(--wire)',
+            borderRadius: '20px',
+            cursor: 'pointer',
+            color: loading ? 'var(--signal)' : 'var(--on-mid)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            padding: '5px 12px',
+            transition: 'all 0.2s',
           }}
         >
-          {profileDef.displayName.toUpperCase()}
-        </span>
-        {recs && !loading && (
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.55rem',
-              color: 'var(--on-low)',
-              marginLeft: 'auto',
-            }}
-          >
-            {recs.entity_name}
-          </span>
-        )}
+          <span style={{ display: 'inline-block', animation: loading ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+          {loading ? 'Loading' : 'Refresh'}
+        </button>
       </div>
 
-      <div className="wire-h" style={{ marginBottom: '12px' }} />
+      {/* Context pill + entity */}
+      {recs && !loading && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+          <span style={{
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.65rem',
+            fontWeight: 700,
+            color: 'var(--signal)',
+            background: 'var(--signal-dim)',
+            padding: '3px 10px',
+            borderRadius: '20px',
+            border: '1px solid rgba(196, 85, 58, 0.15)',
+            letterSpacing: '0.04em',
+          }}>
+            {recs.context_view.replace(/_/g, ' ')}
+          </span>
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', color: 'var(--on-low)' }}>
+            {recs.entity_name}
+          </span>
+          {recs.cached && (
+            <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.62rem', color: 'var(--on-low)', background: 'var(--surface-raise)', padding: '2px 8px', borderRadius: '10px' }}>
+              cached
+            </span>
+          )}
+        </div>
+      )}
 
-      {/* Loading skeleton — scan lines */}
+      <div style={{ height: '1px', background: 'var(--wire)', marginBottom: '14px', flexShrink: 0 }} />
+
+      {/* Loading skeleton */}
       {loading && (
-        <div className="flex flex-col gap-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {[...Array(3)].map((_, i) => (
-            <div key={i} style={{ animationDelay: `${i * 0.1}s` }}>
-              <div className="scan-loader" style={{ animationDelay: `${i * 0.15}s`, marginBottom: '8px' }} />
-              <div style={{ height: '8px', background: 'var(--surface-raise)', width: '60%', marginBottom: '4px' }} />
-              <div style={{ height: '6px', background: 'var(--surface-hi)', width: '80%' }} />
+            <div key={i} style={{
+              borderRadius: '12px',
+              border: '1px solid var(--wire)',
+              background: 'var(--surface)',
+              padding: '14px',
+              opacity: 1 - i * 0.2,
+            }}>
+              <div className="scan-loader" style={{ marginBottom: '10px' }} />
+              <div style={{ height: '9px', background: 'var(--surface-raise)', width: '55%', marginBottom: '8px', borderRadius: '4px' }} />
+              <div style={{ height: '7px', background: 'var(--surface-hi)', width: '80%', borderRadius: '4px' }} />
             </div>
           ))}
         </div>
@@ -165,106 +190,119 @@ export function RecommendationsPanel({ apiBaseUrl, filters, kpis, selectedKpiId,
 
       {/* Error */}
       {!loading && error && (
-        <div style={{ borderLeft: '2px solid var(--signal)', paddingLeft: '10px' }}>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--signal)' }}>
-            ERR: {error}
+        <div style={{
+          borderRadius: '10px',
+          border: '1px solid rgba(196, 85, 58, 0.25)',
+          background: 'rgba(196, 85, 58, 0.04)',
+          padding: '12px 14px',
+        }}>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.75rem', color: 'var(--signal)' }}>
+            {error}
           </p>
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty */}
       {!loading && !error && !recs && (
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-low)' }}>
-          — awaiting dashboard data
+        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.82rem', color: 'var(--on-low)', fontStyle: 'italic' }}>
+          Awaiting dashboard data…
         </p>
       )}
 
-      {/* Recommendation rows */}
+      {/* Recommendation cards */}
       {!loading && !error && recs && (
-        <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
-          {recs.recommendations.map((rec, i) => (
-            <div key={i} className="rec-row" style={{ animationDelay: `${i * 0.08}s` }}>
-              {/* Priority bar */}
+        <div style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'thin', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {recs.recommendations.map((rec, i) => {
+            const cfg = PRIORITY_CONFIG[rec.priority] ?? PRIORITY_CONFIG.low;
+            return (
               <div
-                className="rec-bar"
-                style={{ background: PRIORITY_COLOR[rec.priority] ?? 'var(--wire-hi)' }}
-              />
-
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {/* Priority label + title */}
-                <div className="flex items-baseline gap-2 mb-1">
-                  <span
-                    style={{
-                      fontFamily: 'var(--font-condensed)',
-                      fontSize: '0.55rem',
-                      fontWeight: 700,
-                      letterSpacing: '0.18em',
-                      color: PRIORITY_COLOR[rec.priority] ?? 'var(--on-low)',
-                    }}
-                  >
-                    {rec.priority.toUpperCase()}
+                key={i}
+                style={{
+                  borderRadius: '12px',
+                  border: `1px solid ${cfg.border}`,
+                  background: cfg.bg,
+                  padding: '14px 16px',
+                  animation: 'fade-up 0.35s ease-out both',
+                  animationDelay: `${i * 0.08}s`,
+                }}
+              >
+                {/* Priority badge + title */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
+                  <span style={{
+                    flexShrink: 0,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontFamily: 'var(--font-sans)',
+                    fontSize: '0.62rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.07em',
+                    textTransform: 'uppercase',
+                    color: cfg.color,
+                    background: 'rgba(255,255,255,0.7)',
+                    padding: '2px 8px',
+                    borderRadius: '20px',
+                    border: `1px solid ${cfg.border}`,
+                    marginTop: '2px',
+                  }}>
+                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
+                    {rec.priority}
                   </span>
-                  <span
-                    style={{
-                      fontFamily: 'var(--font-sans)',
-                      fontSize: '0.75rem',
-                      fontWeight: 500,
-                      color: 'var(--on)',
-                      lineHeight: 1.3,
-                    }}
-                  >
+                  <span style={{
+                    fontFamily: 'var(--font-sans)',
+                    fontSize: '0.84rem',
+                    fontWeight: 700,
+                    color: 'var(--on)',
+                    lineHeight: 1.3,
+                  }}>
                     {rec.title}
                   </span>
                 </div>
 
                 {/* Action */}
-                <p
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '0.65rem',
-                    color: 'var(--signal)',
-                    marginBottom: '4px',
-                    letterSpacing: '0.02em',
-                  }}
-                >
+                <p style={{
+                  fontFamily: 'var(--font-sans)',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: cfg.color,
+                  marginBottom: '6px',
+                  lineHeight: 1.4,
+                }}>
                   → {rec.action}
                 </p>
 
                 {/* Rationale */}
-                <p
-                  style={{
-                    fontSize: '0.7rem',
-                    color: 'var(--on-mid)',
-                    lineHeight: 1.45,
-                    marginBottom: '6px',
-                  }}
-                >
+                <p style={{
+                  fontFamily: 'var(--font-sans)',
+                  fontSize: '0.73rem',
+                  color: 'var(--on-mid)',
+                  lineHeight: 1.55,
+                  marginBottom: Object.keys(rec.supporting_metrics).length > 0 ? '10px' : 0,
+                }}>
                   {rec.rationale}
                 </p>
 
-                {/* Supporting metrics chips */}
+                {/* Supporting metrics */}
                 {Object.keys(rec.supporting_metrics).length > 0 && (
-                  <div className="flex flex-wrap gap-1">
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
                     {Object.entries(rec.supporting_metrics).map(([k, v]) => (
-                      <span
-                        key={k}
-                        style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: '0.55rem',
-                          background: 'var(--surface-raise)',
-                          color: 'var(--on-mid)',
-                          padding: '1px 5px',
-                          letterSpacing: '0.04em',
-                        }}
-                      >
-                        {k.replace(/_/g, ' ')}: <span style={{ color: 'var(--on)' }}>{String(v)}</span>
+                      <span key={k} style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.62rem',
+                        background: 'rgba(255,255,255,0.8)',
+                        border: '1px solid var(--wire)',
+                        color: 'var(--on-low)',
+                        padding: '2px 7px',
+                        borderRadius: '6px',
+                      }}>
+                        {k.replace(/_/g, ' ')}: <span style={{ color: 'var(--on)', fontWeight: 600 }}>{String(v)}</span>
                       </span>
                     ))}
                   </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

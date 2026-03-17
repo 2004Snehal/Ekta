@@ -245,7 +245,7 @@ export default function Dashboard() {
     <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
 
       {/* ── Filter strip (sticky) ──────────────────────── */}
-      <div className="sticky top-11 z-40" style={{ background: 'var(--void)' }}>
+      <div className="sticky top-[55px] z-40" style={{ background: 'var(--void)' }}>
         <Filters
           filters={filters}
           filterFields={filterFields}
@@ -259,16 +259,19 @@ export default function Dashboard() {
       {/* ── KPI strip ─────────────────────────────────── */}
       <div
         className="flex"
-        style={{ borderBottom: '1px solid var(--wire)' }}
+        style={{
+          borderBottom: '1px solid var(--wire)',
+          background: 'var(--void)',
+        }}
       >
         {isLoading ? (
-          <div className="flex-1 px-6 py-8">
+          <div className="flex-1 px-6 py-10">
             <div className="scan-loader" />
           </div>
         ) : (
           kpis.map((kpi, i) => (
             <div key={kpi.id} className="flex" style={{ flex: 1 }}>
-              {i > 0 && <div className="wire-v" />}
+              {i > 0 && <div style={{ width: '1px', background: 'var(--wire)', alignSelf: 'stretch', margin: '16px 0' }} />}
               <SparkKPI
                 title={kpi.title}
                 value={kpi.value}
@@ -369,7 +372,7 @@ export default function Dashboard() {
           </div>
 
           {/* Right: InsightBanner + recommendations (35%) */}
-          <div style={{ flex: '0 0 35%', padding: '24px 24px', position: 'sticky', top: '88px', alignSelf: 'flex-start', maxHeight: 'calc(100vh - 88px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: '0 0 35%', padding: '24px 24px', position: 'sticky', top: '55px', alignSelf: 'flex-start', maxHeight: 'calc(100vh - 55px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
             {/* InsightBanner at top of right column */}
             {narratorInsights.length > 0 && (

@@ -163,4 +163,24 @@ RULES:
 6. If the question asks about a client or user, filter only if there is a matching column;
    default client_id = {client_id} when a client_id column exists.
 7. Format date/timestamp columns with TO_CHAR(..., 'Mon YYYY') for human-readable x-axis labels.
+
+OUTPUT FORMAT — respond with a single JSON object (no markdown, no code fences) with these exact keys:
+{{
+  "path":       "sql",
+  "sql":        "<complete SELECT statement>",
+  "chart_type": "bar" | "line" | "pie" | "table" | "scatter",
+  "title":      "<short chart title>",
+  "x":          "<column name for x-axis / category>",
+  "y":          "<column name for y-axis / value>",
+  "description": "<optional one-sentence insight>"
+}}
+
+Choose chart_type based on the question:
+- Trends over time → "line"
+- Comparisons across categories → "bar"
+- Distribution/share → "pie"
+- Correlation between two numeric columns → "scatter"
+- Detailed row-level data → "table"
+
+Always set "path" to "sql". Always include all seven keys.
 """

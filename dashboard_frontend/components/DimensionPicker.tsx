@@ -28,14 +28,18 @@ const METRICS = [
 export function DimensionPicker({ dim1, dim2, metric, onDim1Change, onDim2Change, onMetricChange }: DimensionPickerProps) {
   return (
     <div
-      className="flex items-center gap-4 px-6 py-3 flex-wrap"
+      className="flex items-center gap-6 px-6 py-3 flex-wrap"
       style={{ borderBottom: '1px solid var(--wire)', background: 'var(--void)' }}
     >
       {/* Dim 1 */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         <span style={{
-          fontFamily: 'var(--font-condensed)', fontSize: '0.55rem', fontWeight: 700,
-          letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--on-low)',
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.65rem',
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--on-low)',
         }}>
           Dimension 1
         </span>
@@ -46,13 +50,17 @@ export function DimensionPicker({ dim1, dim2, metric, onDim1Change, onDim2Change
         </select>
       </div>
 
-      <span style={{ color: 'var(--on-low)', fontSize: '0.7rem', alignSelf: 'flex-end', paddingBottom: '4px' }}>×</span>
+      <span style={{ color: 'var(--on-low)', fontSize: '0.85rem', alignSelf: 'flex-end', paddingBottom: '5px' }}>×</span>
 
       {/* Dim 2 */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         <span style={{
-          fontFamily: 'var(--font-condensed)', fontSize: '0.55rem', fontWeight: 700,
-          letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--on-low)',
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.65rem',
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--on-low)',
         }}>
           Dimension 2
         </span>
@@ -68,13 +76,17 @@ export function DimensionPicker({ dim1, dim2, metric, onDim1Change, onDim2Change
         </select>
       </div>
 
-      <div className="wire-v" style={{ height: '28px', alignSelf: 'flex-end', marginBottom: '2px' }} />
+      <div className="wire-v" style={{ height: '32px', alignSelf: 'flex-end', marginBottom: '4px' }} />
 
       {/* Metric */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         <span style={{
-          fontFamily: 'var(--font-condensed)', fontSize: '0.55rem', fontWeight: 700,
-          letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--on-low)',
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.65rem',
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--on-low)',
         }}>
           Metric
         </span>

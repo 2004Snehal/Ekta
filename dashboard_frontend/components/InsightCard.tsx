@@ -28,22 +28,22 @@ interface InsightCardProps {
 }
 
 const SEVERITY_STYLES = {
-  high:   'border-l-4 border-l-red-500   bg-red-950/20',
-  medium: 'border-l-4 border-l-amber-500 bg-amber-950/20',
-  low:    'border-l-4 border-l-blue-500  bg-blue-950/20',
+  high:   'border-l-4 border-l-[#C4553A]',
+  medium: 'border-l-4 border-l-[#C68B2C]',
+  low:    'border-l-4 border-l-[#5B7EA1]',
 };
 
-const SEVERITY_BADGE = {
-  high:   'bg-red-500/20   text-red-400   border border-red-500/30',
-  medium: 'bg-amber-500/20 text-amber-400 border border-amber-500/30',
-  low:    'bg-blue-500/20  text-blue-400  border border-blue-500/30',
+const SEVERITY_BADGE: Record<string, string> = {
+  high:   'text-[#C4553A] bg-[rgba(196,85,58,0.08)]',
+  medium: 'text-[#C68B2C] bg-[rgba(198,139,44,0.1)]',
+  low:    'text-[#5B7EA1] bg-[rgba(91,126,161,0.1)]',
 };
 
-const CATEGORY_BADGE = {
-  anomaly:    'bg-purple-500/20 text-purple-300 border border-purple-500/30',
-  trend:      'bg-cyan-500/20   text-cyan-300   border border-cyan-500/30',
-  comparison: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
-  milestone:  'bg-green-500/20  text-green-300  border border-green-500/30',
+const CATEGORY_BADGE: Record<string, string> = {
+  anomaly:    'text-[#8B6FA3] bg-[rgba(139,111,163,0.1)]',
+  trend:      'text-[#5B7EA1] bg-[rgba(91,126,161,0.1)]',
+  comparison: 'text-[#5B8A72] bg-[rgba(91,138,114,0.1)]',
+  milestone:  'text-[#C68B2C] bg-[rgba(198,139,44,0.1)]',
 };
 
 const CATEGORY_ICON = {
@@ -58,10 +58,10 @@ function DeltaBadge({ delta_pct }: { delta_pct: number }) {
   const Icon = isUp ? TrendingUp : TrendingDown;
   return (
     <span className={cn(
-      'inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full',
+      'inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full',
       isUp
-        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-        : 'bg-red-500/20 text-red-400 border border-red-500/30'
+        ? 'text-[#5B8A72] bg-[rgba(91,138,114,0.1)]'
+        : 'text-[#C4553A] bg-[rgba(196,85,58,0.08)]'
     )}>
       <Icon className="w-3 h-3" />
       {isUp ? '+' : ''}{delta_pct.toFixed(1)}%
@@ -85,7 +85,7 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
       );
       setFeedback(value);
     } catch {
-      // silently ignore — feedback is best-effort
+      // silently ignore
     } finally {
       setSubmitting(false);
     }
@@ -93,18 +93,19 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
 
   return (
     <div className={cn(
-      'rounded-lg p-4 space-y-3 transition-all',
+      'rounded-2xl p-5 space-y-3 transition-all bg-white hover:shadow-md',
       SEVERITY_STYLES[card.severity],
-      'border border-border/40 hover:border-border/80',
-    )}>
+      'border border-[#E5DFD7]',
+    )}
+    style={{ boxShadow: '0 2px 8px rgba(43, 35, 32, 0.06)' }}>
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', CATEGORY_BADGE[card.category])}>
+          <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full', CATEGORY_BADGE[card.category])}>
             <CategoryIcon className="w-3 h-3" />
             {card.category}
           </span>
-          <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide', SEVERITY_BADGE[card.severity])}>
+          <span className={cn('text-xs font-semibold px-2.5 py-1 rounded-full uppercase tracking-wide', SEVERITY_BADGE[card.severity])}>
             {card.severity}
           </span>
         </div>
@@ -112,38 +113,42 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
       </div>
 
       {/* Title */}
-      <p className="font-semibold text-foreground text-sm leading-snug">{card.title}</p>
+      <p className="font-semibold text-sm leading-snug" style={{ color: 'var(--on)', fontFamily: 'var(--font-sans)' }}>
+        {card.title}
+      </p>
 
       {/* Body */}
-      <p className="text-muted-foreground text-sm leading-relaxed">{card.body}</p>
+      <p className="text-sm leading-relaxed" style={{ color: 'var(--on-mid)', fontFamily: 'var(--font-sans)' }}>
+        {card.body}
+      </p>
 
       {/* Metrics row */}
-      <div className="flex gap-4 text-xs text-muted-foreground">
+      <div className="flex gap-4 text-xs" style={{ color: 'var(--on-low)', fontFamily: 'var(--font-mono)' }}>
         <span>
-          <span className="text-foreground font-medium">
+          <span style={{ color: 'var(--on)', fontWeight: 600 }}>
             {typeof card.current_value === 'number' ? card.current_value.toFixed(2) : card.current_value}
           </span>{' '}current
         </span>
         <span>
-          <span className="text-foreground font-medium">
+          <span style={{ color: 'var(--on)', fontWeight: 600 }}>
             {typeof card.reference_value === 'number' ? card.reference_value.toFixed(2) : card.reference_value}
           </span>{' '}3m avg
         </span>
-        <span className="ml-auto capitalize text-muted-foreground/60">
+        <span className="ml-auto capitalize" style={{ color: 'var(--on-low)' }}>
           {card.entity_type}: {card.entity_id}
         </span>
       </div>
 
       {/* Root cause hint */}
       {card.root_cause_hint && (
-        <p className="text-xs text-muted-foreground/80 italic border-t border-border/30 pt-2">
+        <p className="text-xs italic pt-2" style={{ color: 'var(--on-low)', borderTop: '1px solid var(--wire)', paddingTop: '8px', fontFamily: 'var(--font-sans)' }}>
           Possible cause: {card.root_cause_hint}
         </p>
       )}
 
-      {/* Footer: confidence + feedback */}
+      {/* Footer */}
       <div className="flex items-center justify-between pt-1">
-        <span className="text-xs text-muted-foreground/60">
+        <span className="text-xs" style={{ color: 'var(--on-low)', fontFamily: 'var(--font-sans)' }}>
           {card.confidence === 'statistical' ? 'Statistically detected' : 'Pattern-inferred'}
           {' · '}{card.period}
         </span>
@@ -152,12 +157,8 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
             <button
               onClick={() => submitFeedback(1)}
               disabled={submitting || feedback !== null}
-              className={cn(
-                'p-1 rounded transition-colors',
-                feedback === 1
-                  ? 'text-emerald-400'
-                  : 'text-muted-foreground/40 hover:text-emerald-400',
-              )}
+              className="p-1.5 rounded-lg transition-colors hover:bg-[rgba(91,138,114,0.1)]"
+              style={{ color: feedback === 1 ? '#5B8A72' : 'var(--on-low)' }}
               aria-label="Helpful"
             >
               <ThumbsUp className="w-3.5 h-3.5" />
@@ -165,12 +166,8 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
             <button
               onClick={() => submitFeedback(-1)}
               disabled={submitting || feedback !== null}
-              className={cn(
-                'p-1 rounded transition-colors',
-                feedback === -1
-                  ? 'text-red-400'
-                  : 'text-muted-foreground/40 hover:text-red-400',
-              )}
+              className="p-1.5 rounded-lg transition-colors hover:bg-[rgba(196,85,58,0.08)]"
+              style={{ color: feedback === -1 ? '#C4553A' : 'var(--on-low)' }}
               aria-label="Not helpful"
             >
               <ThumbsDown className="w-3.5 h-3.5" />

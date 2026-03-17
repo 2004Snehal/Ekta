@@ -10,8 +10,6 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 const BASE = `${API_URL}/kpi-lab`;
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 type DataSource = 'csv' | 'postgres';
 
 interface ColumnInfo { name: string; type: string; }
@@ -64,10 +62,8 @@ interface DiscoverResult {
 type PipelineMode = 'discover' | 'generate' | 'compute' | 'evaluate';
 type PageState = 'idle' | 'loading_sources' | 'uploading' | 'loading_schema' | 'running' | 'done' | 'error';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function fmt(val: number | string | undefined | null): string {
-  if (val === undefined || val === null) return '—';
+  if (val === undefined || val === null) return '\u2014';
   const n = typeof val === 'string' ? parseFloat(val) : val;
   if (isNaN(n)) return String(val);
   if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
@@ -88,60 +84,71 @@ const PIPELINE_STEPS: { id: PipelineMode; label: string; icon: React.ElementType
 ];
 
 const AGENT_LABELS = [
-  'Reading schema',
-  'Discovering relationships',
-  'Grouping tables',
-  'Extracting statistics',
-  'Generating KPI candidates',
-  'Building SQL',
-  'Executing queries',
-  'Evaluating KPIs',
-  'Generating insights',
+  'Reading schema', 'Discovering relationships', 'Grouping tables',
+  'Extracting statistics', 'Generating KPI candidates', 'Building SQL',
+  'Executing queries', 'Evaluating KPIs', 'Generating insights',
 ];
-
-// ── Sub-components ────────────────────────────────────────────────────────────
 
 function SchemaCard({ name, schema }: { name: string; schema: TableSchema }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div style={{ border: '1px solid var(--wire)', borderRadius: '14px', overflow: 'hidden' }}>
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/30 transition-colors text-left"
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 16px', background: 'var(--surface)', cursor: 'pointer',
+          border: 'none', transition: 'background 0.15s', textAlign: 'left',
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--surface-hi)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--surface)'; }}
       >
-        <div className="flex items-center gap-2.5">
-          <Database className="w-4 h-4 text-primary" />
-          <span className="font-mono text-sm font-semibold text-foreground">{name}</span>
-          <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Database style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', fontWeight: 700, color: 'var(--on)' }}>{name}</span>
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', color: 'var(--on-low)', background: 'var(--surface-raise)', padding: '2px 8px', borderRadius: '20px' }}>
             {schema.row_count.toLocaleString()} rows · {schema.columns.length} cols
           </span>
         </div>
-        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+        {open
+          ? <ChevronDown style={{ width: '14px', height: '14px', color: 'var(--on-low)' }} />
+          : <ChevronRight style={{ width: '14px', height: '14px', color: 'var(--on-low)' }} />}
       </button>
       {open && (
-        <div className="px-4 pb-4 bg-card/50 border-t border-border">
-          <div className="mt-3 flex flex-wrap gap-2">
+        <div style={{ padding: '14px 16px', background: 'var(--surface-hi)', borderTop: '1px solid var(--wire)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: schema.sample_rows.length ? '12px' : 0 }}>
             {schema.columns.map(col => (
-              <span key={col.name} className="inline-flex items-center gap-1.5 text-xs bg-secondary rounded-lg px-2.5 py-1 font-mono">
-                <span className="text-foreground">{col.name}</span>
-                <span className="text-muted-foreground">·</span>
-                <span className="text-primary/80">{col.type}</span>
+              <span key={col.name} style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                fontFamily: 'var(--font-mono)', fontSize: '0.72rem',
+                background: 'var(--surface)', border: '1px solid var(--wire)',
+                borderRadius: '8px', padding: '3px 10px',
+              }}>
+                <span style={{ color: 'var(--on)' }}>{col.name}</span>
+                <span style={{ color: 'var(--on-low)' }}>·</span>
+                <span style={{ color: 'var(--signal)' }}>{col.type}</span>
               </span>
             ))}
           </div>
           {schema.sample_rows.length > 0 && (
-            <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-              <table className="text-xs w-full">
-                <thead className="bg-secondary/50">
-                  <tr>{schema.columns.slice(0, 6).map(c => (
-                    <th key={c.name} className="px-3 py-2 text-left text-muted-foreground font-medium truncate max-w-[120px]">{c.name}</th>
-                  ))}</tr>
+            <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid var(--wire)' }}>
+              <table style={{ fontSize: '0.72rem', width: '100%', borderCollapse: 'collapse' }}>
+                <thead style={{ background: 'var(--surface-raise)' }}>
+                  <tr>
+                    {schema.columns.slice(0, 6).map(c => (
+                      <th key={c.name} style={{ padding: '8px 12px', textAlign: 'left', fontFamily: 'var(--font-sans)', fontWeight: 700, color: 'var(--on-low)', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.name}
+                      </th>
+                    ))}
+                  </tr>
                 </thead>
                 <tbody>
                   {schema.sample_rows.slice(0, 3).map((row, i) => (
-                    <tr key={i} className="border-t border-border/50">
+                    <tr key={i} style={{ borderTop: '1px solid var(--wire)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface-hi)' }}>
                       {schema.columns.slice(0, 6).map(c => (
-                        <td key={c.name} className="px-3 py-2 text-muted-foreground truncate max-w-[120px]">{String(row[c.name] ?? '—')}</td>
+                        <td key={c.name} style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', color: 'var(--on-mid)', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {String(row[c.name] ?? '\u2014')}
+                        </td>
                       ))}
                     </tr>
                   ))}
@@ -157,33 +164,58 @@ function SchemaCard({ name, schema }: { name: string; schema: TableSchema }) {
 
 function KPIResultCard({ kpi, index }: { kpi: GoodKPI; index: number }) {
   const score = kpi.usefulness_score ?? 0;
-  const scoreColor = score >= 8 ? 'text-green-400' : score >= 6 ? 'text-yellow-400' : 'text-muted-foreground';
+  const scoreColor = score >= 8 ? 'var(--ok)' : score >= 6 ? 'var(--warn)' : 'var(--on-low)';
   const [sqlOpen, setSqlOpen] = useState(false);
   return (
-    <div className="bg-card border border-border rounded-xl p-4 flex flex-col gap-3 hover:border-primary/30 transition-colors">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs text-muted-foreground font-mono">#{index + 1}</span>
-            {kpi.category && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{kpi.category}</span>}
+    <div style={{
+      background: 'var(--surface)', border: '1px solid var(--wire)',
+      borderRadius: '16px', padding: '16px 18px',
+      display: 'flex', flexDirection: 'column', gap: '10px',
+      transition: 'border-color 0.2s, box-shadow 0.2s',
+      boxShadow: '0 2px 8px rgba(43, 35, 32, 0.05)',
+    }}
+    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(196, 85, 58, 0.3)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 16px rgba(43, 35, 32, 0.1)'; }}
+    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wire)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 2px 8px rgba(43, 35, 32, 0.05)'; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--on-low)' }}>#{index + 1}</span>
+            {kpi.category && (
+              <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', fontWeight: 600, color: 'var(--signal)', background: 'var(--signal-dim)', padding: '2px 8px', borderRadius: '20px' }}>
+                {kpi.category}
+              </span>
+            )}
           </div>
-          <h3 className="font-semibold text-foreground text-sm leading-tight">{kpi.name}</h3>
+          <h3 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)', lineHeight: 1.35 }}>{kpi.name}</h3>
         </div>
-        <div className="text-right flex-shrink-0">
-          <div className="text-2xl font-bold text-foreground tabular-nums">
-            {fmt(kpi.value)}{kpi.unit && <span className="text-sm text-muted-foreground ml-1">{kpi.unit}</span>}
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.5rem', fontWeight: 700, color: 'var(--on)' }}>
+            {fmt(kpi.value)}{kpi.unit && <span style={{ fontSize: '0.85rem', color: 'var(--on-low)', marginLeft: '4px' }}>{kpi.unit}</span>}
           </div>
-          {kpi.usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
+          {kpi.usefulness_score !== undefined && (
+            <div style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', fontWeight: 600, color: scoreColor }}>
+              score {score.toFixed(1)}
+            </div>
+          )}
         </div>
       </div>
-      {kpi.description && <p className="text-xs text-muted-foreground leading-relaxed">{kpi.description}</p>}
+      {kpi.description && (
+        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)', lineHeight: 1.55 }}>{kpi.description}</p>
+      )}
       {kpi.sql && (
         <div>
-          <button onClick={() => setSqlOpen(o => !o)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            {sqlOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}View SQL
+          <button
+            onClick={() => setSqlOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: '0.75rem', color: 'var(--on-low)', transition: 'color 0.2s', padding: '2px 0' }}
+          >
+            {sqlOpen ? <ChevronDown style={{ width: '12px', height: '12px' }} /> : <ChevronRight style={{ width: '12px', height: '12px' }} />}
+            View SQL
           </button>
           {sqlOpen && (
-            <pre className="mt-2 text-xs bg-secondary/50 rounded-lg p-3 overflow-x-auto text-muted-foreground font-mono leading-relaxed whitespace-pre-wrap">{kpi.sql}</pre>
+            <pre style={{ marginTop: '8px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', background: 'var(--surface-hi)', borderRadius: '10px', padding: '10px 14px', overflowX: 'auto', color: 'var(--on-mid)', lineHeight: 1.6, whiteSpace: 'pre-wrap', border: '1px solid var(--wire)' }}>
+              {kpi.sql}
+            </pre>
           )}
         </div>
       )}
@@ -195,13 +227,26 @@ function InsightCard({ insight }: { insight: KPIInsight }) {
   const text = insightText(insight);
   if (!text) return null;
   return (
-    <div className="flex gap-3 bg-card border border-border rounded-xl p-4">
-      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <Lightbulb className="w-4 h-4 text-primary" />
+    <div style={{
+      display: 'flex', gap: '14px',
+      background: 'var(--surface)', border: '1px solid var(--wire)',
+      borderRadius: '14px', padding: '16px 18px',
+      boxShadow: '0 2px 8px rgba(43, 35, 32, 0.05)',
+    }}>
+      <div style={{
+        width: '32px', height: '32px', borderRadius: '10px',
+        background: 'var(--signal-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0, marginTop: '2px',
+      }}>
+        <Lightbulb style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
       </div>
-      <div className="flex-1 min-w-0">
-        {insight.kpi_name && <p className="text-xs font-semibold text-primary mb-1">{insight.kpi_name}</p>}
-        <p className="text-sm text-muted-foreground leading-relaxed">{text}</p>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {insight.kpi_name && (
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', fontWeight: 700, color: 'var(--signal)', marginBottom: '4px' }}>
+            {insight.kpi_name}
+          </p>
+        )}
+        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-mid)', lineHeight: 1.6 }}>{text}</p>
       </div>
     </div>
   );
@@ -210,29 +255,39 @@ function InsightCard({ insight }: { insight: KPIInsight }) {
 function AgentProgress({ active, agentIndex }: { active: boolean; agentIndex: number }) {
   if (!active) return null;
   return (
-    <div className="mt-4 space-y-2">
-      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Pipeline agents</p>
-      <div className="space-y-1.5">
+    <div style={{ marginTop: '16px' }}>
+      <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', fontWeight: 700, color: 'var(--on-low)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '10px' }}>
+        Pipeline agents
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {AGENT_LABELS.map((label, i) => (
-          <div key={label} className="flex items-center gap-3">
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
-              i < agentIndex ? 'bg-green-500/20 text-green-400' :
-              i === agentIndex ? 'bg-primary/20 text-primary' :
-              'bg-secondary text-muted-foreground/40'
-            }`}>
-              {i < agentIndex ? <CheckCircle2 className="w-3 h-3" /> :
-               i === agentIndex ? <Loader2 className="w-3 h-3 animate-spin" /> :
-               <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '22px', height: '22px', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              background: i < agentIndex ? 'rgba(91, 138, 114, 0.12)' : i === agentIndex ? 'var(--signal-dim)' : 'var(--surface-raise)',
+              color: i < agentIndex ? 'var(--ok)' : i === agentIndex ? 'var(--signal)' : 'var(--on-low)',
+              transition: 'all 0.3s',
+            }}>
+              {i < agentIndex
+                ? <CheckCircle2 style={{ width: '12px', height: '12px' }} />
+                : i === agentIndex
+                  ? <Loader2 style={{ width: '12px', height: '12px', animation: 'spin 1s linear infinite' }} />
+                  : <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor', display: 'block' }} />}
             </div>
-            <span className={`text-xs ${i < agentIndex ? 'text-green-400' : i === agentIndex ? 'text-foreground font-medium' : 'text-muted-foreground/50'}`}>{label}</span>
+            <span style={{
+              fontFamily: 'var(--font-sans)', fontSize: '0.78rem',
+              color: i < agentIndex ? 'var(--ok)' : i === agentIndex ? 'var(--on)' : 'var(--on-low)',
+              fontWeight: i === agentIndex ? 600 : 400,
+            }}>
+              {label}
+            </span>
           </div>
         ))}
       </div>
     </div>
   );
 }
-
-// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function KPILabPage() {
   const [pageState, setPageState]     = useState<PageState>('idle');
@@ -248,8 +303,6 @@ export default function KPILabPage() {
   const fileInputRef  = useRef<HTMLInputElement>(null);
   const agentTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── API helpers ──────────────────────────────────────────────────
-
   const loadSources = useCallback(async () => {
     setPageState('loading_sources');
     try {
@@ -257,9 +310,7 @@ export default function KPILabPage() {
       const data = await res.json();
       setSources(data.sources ?? []);
       setPageState('idle');
-    } catch {
-      setPageState('idle');
-    }
+    } catch { setPageState('idle'); }
   }, []);
 
   const loadSchema = useCallback(async (src: DataSource, forceRefresh = false) => {
@@ -347,13 +398,11 @@ export default function KPILabPage() {
     setPageState('idle');
   }, [dataSource]);
 
-  // ── Init: load sources + default postgres schema ──────────────────────────
   useEffect(() => {
     loadSources();
     loadSchema('postgres');
   }, []);
 
-  // ── Drag & drop ──────────────────────────────────────────────────
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
@@ -363,7 +412,6 @@ export default function KPILabPage() {
     }
   }, [uploadFiles]);
 
-  // ── Computed ─────────────────────────────────────────────────────
   const hasSchema  = !!schema && Object.keys(schema.tables).length > 0;
   const isRunning  = pageState === 'running';
   const isBusy     = pageState === 'uploading' || pageState === 'loading_schema' || pageState === 'loading_sources';
@@ -373,166 +421,195 @@ export default function KPILabPage() {
   const csvSource  = sources?.find(s => s.id === 'csv');
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+    <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 24px' }}>
 
-        {/* ── Header ─────────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Zap className="w-5 h-5 text-primary" />
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '14px', background: 'var(--signal-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Zap style={{ width: '20px', height: '20px', color: 'var(--signal)' }} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">KPI Lab</h1>
-              <p className="text-sm text-muted-foreground">Agentic KPI discovery — choose a data source and run the pipeline</p>
+              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 700, color: 'var(--on)', marginBottom: '3px' }}>KPI Lab</h1>
+              <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-mid)' }}>Agentic KPI discovery — choose a data source and run the pipeline</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {(hasSchema || result) && (
-              <button onClick={resetAll} className="flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/50 transition-colors">
-                <Trash2 className="w-3.5 h-3.5" />Reset
+          {(hasSchema || result) && (
+            <button
+              onClick={resetAll}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '7px 14px', borderRadius: '10px',
+                border: '1px solid var(--wire)', background: 'var(--surface)',
+                fontFamily: 'var(--font-sans)', fontSize: '0.78rem', fontWeight: 600,
+                color: 'var(--on-mid)', cursor: 'pointer', transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--signal)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(196, 85, 58, 0.3)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--on-mid)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--wire)'; }}
+            >
+              <Trash2 style={{ width: '13px', height: '13px' }} />Reset
+            </button>
+          )}
+        </div>
+
+        {/* Data Source Selector */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+          {[
+            { src: 'postgres' as DataSource, Icon: Server, label: 'Frammer Database', badge: pgSource ? `${pgSource.table_count} tables` : null, badgeColor: 'var(--ok)', desc: 'Discover KPIs directly from your live Supabase PostgreSQL tables — no upload needed' },
+            { src: 'csv' as DataSource, Icon: Upload, label: 'Upload CSV', badge: csvSource && csvSource.table_count > 0 ? `${csvSource.table_count} loaded` : null, badgeColor: 'var(--uplink)', desc: 'Upload your own CSV files and discover KPIs from any dataset in memory' },
+          ].map(({ src, Icon, label, badge, badgeColor, desc }) => {
+            const active = dataSource === src;
+            return (
+              <button
+                key={src}
+                onClick={() => handleSourceChange(src)}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '16px',
+                  padding: '16px 18px', borderRadius: '16px', textAlign: 'left',
+                  border: `2px solid ${active ? 'rgba(196, 85, 58, 0.4)' : 'var(--wire)'}`,
+                  background: active ? 'rgba(196, 85, 58, 0.04)' : 'var(--surface)',
+                  cursor: 'pointer', transition: 'all 0.2s',
+                  boxShadow: active ? '0 4px 16px rgba(196, 85, 58, 0.1)' : 'none',
+                }}
+              >
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: active ? 'var(--signal-dim)' : 'var(--surface-raise)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Icon style={{ width: '18px', height: '18px', color: active ? 'var(--signal)' : 'var(--on-low)' }} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.88rem', fontWeight: 700, color: active ? 'var(--signal)' : 'var(--on)' }}>{label}</span>
+                    {badge && (
+                      <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', fontWeight: 600, color: badgeColor, background: active ? 'rgba(91, 138, 114, 0.1)' : 'rgba(91, 138, 114, 0.08)', padding: '2px 8px', borderRadius: '20px' }}>
+                        {badge}
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)', lineHeight: 1.5 }}>{desc}</p>
+                </div>
+                {active && <CheckCircle2 style={{ width: '16px', height: '16px', color: 'var(--signal)', flexShrink: 0, marginTop: '2px' }} />}
               </button>
-            )}
-          </div>
+            );
+          })}
         </div>
 
-        {/* ── Data Source Selector ────────────────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-
-          {/* Postgres */}
-          <button
-            onClick={() => handleSourceChange('postgres')}
-            className={`flex items-start gap-4 p-4 rounded-2xl border-2 text-left transition-all duration-150 ${
-              dataSource === 'postgres'
-                ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
-                : 'border-border hover:border-primary/30 bg-card'
-            }`}
-          >
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${dataSource === 'postgres' ? 'bg-primary/20' : 'bg-secondary'}`}>
-              <Server className={`w-5 h-5 ${dataSource === 'postgres' ? 'text-primary' : 'text-muted-foreground'}`} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className={`text-sm font-semibold ${dataSource === 'postgres' ? 'text-primary' : 'text-foreground'}`}>Frammer Database</span>
-                {pgSource && (
-                  <span className="text-xs bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full">
-                    {pgSource.table_count} tables
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground leading-snug">Discover KPIs directly from your live Supabase PostgreSQL tables — no upload needed</p>
-            </div>
-            {dataSource === 'postgres' && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0 mt-1" />}
-          </button>
-
-          {/* CSV Upload */}
-          <button
-            onClick={() => handleSourceChange('csv')}
-            className={`flex items-start gap-4 p-4 rounded-2xl border-2 text-left transition-all duration-150 ${
-              dataSource === 'csv'
-                ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
-                : 'border-border hover:border-primary/30 bg-card'
-            }`}
-          >
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${dataSource === 'csv' ? 'bg-primary/20' : 'bg-secondary'}`}>
-              <Upload className={`w-5 h-5 ${dataSource === 'csv' ? 'text-primary' : 'text-muted-foreground'}`} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className={`text-sm font-semibold ${dataSource === 'csv' ? 'text-primary' : 'text-foreground'}`}>Upload CSV</span>
-                {csvSource && csvSource.table_count > 0 && (
-                  <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
-                    {csvSource.table_count} loaded
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground leading-snug">Upload your own CSV files and discover KPIs from any dataset in memory</p>
-            </div>
-            {dataSource === 'csv' && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0 mt-1" />}
-          </button>
-        </div>
-
-        {/* ── CSV upload zone (only shown when csv selected) ─────────── */}
+        {/* CSV upload zone */}
         {dataSource === 'csv' && (
           <div
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-200 ${
-              dragOver ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-border hover:border-primary/40 hover:bg-secondary/10 bg-card'
-            }`}
+            style={{
+              border: `2px dashed ${dragOver ? 'var(--signal)' : 'var(--wire)'}`,
+              borderRadius: '16px', padding: '32px',
+              textAlign: 'center', cursor: 'pointer',
+              background: dragOver ? 'rgba(196, 85, 58, 0.04)' : 'var(--surface)',
+              transition: 'all 0.2s', marginBottom: '16px',
+              transform: dragOver ? 'scale(1.01)' : 'none',
+            }}
           >
-            <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt" multiple className="hidden"
+            <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt" multiple style={{ display: 'none' }}
               onChange={e => { if (e.target.files?.length) uploadFiles(e.target.files); }} />
             {pageState === 'uploading' ? (
-              <div className="flex flex-col items-center gap-2">
-                <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                <p className="text-sm text-muted-foreground">Uploading and loading into DuckDB…</p>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                <Loader2 style={{ width: '28px', height: '28px', color: 'var(--signal)', animation: 'spin 1s linear infinite' }} />
+                <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-mid)' }}>Uploading and loading into DuckDB…</p>
               </div>
             ) : (
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center">
-                  <FileText className="w-6 h-6 text-muted-foreground" />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'var(--surface-raise)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <FileText style={{ width: '22px', height: '22px', color: 'var(--on-low)' }} />
                 </div>
-                <p className="text-sm font-medium text-foreground">Drop CSV files here or click to browse</p>
-                <p className="text-xs text-muted-foreground">.csv · .tsv · .txt · multiple files supported</p>
+                <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.88rem', fontWeight: 600, color: 'var(--on)' }}>Drop CSV files here or click to browse</p>
+                <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-low)' }}>.csv · .tsv · .txt · multiple files supported</p>
               </div>
             )}
           </div>
         )}
 
-        {/* ── Uploaded tables chips ───────────────────────────────────── */}
+        {/* Uploaded table chips */}
         {dataSource === 'csv' && uploadedTables.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
             {uploadedTables.map(t => (
-              <span key={t} className="inline-flex items-center gap-1.5 text-xs text-green-400 bg-green-400/5 border border-green-400/20 rounded-lg px-3 py-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /><span className="font-mono">{t}</span>
+              <span key={t} style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                fontFamily: 'var(--font-mono)', fontSize: '0.75rem',
+                color: 'var(--ok)', background: 'rgba(91, 138, 114, 0.1)',
+                border: '1px solid rgba(91, 138, 114, 0.25)',
+                borderRadius: '8px', padding: '4px 12px',
+              }}>
+                <CheckCircle2 style={{ width: '13px', height: '13px' }} />{t}
               </span>
             ))}
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
 
-          {/* ── Left: Pipeline config ─────────────────────────────────── */}
-          <div className="lg:col-span-1 space-y-4">
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <Play className="w-4 h-4 text-primary" />
-                <h2 className="font-semibold text-sm text-foreground">Pipeline Mode</h2>
+          {/* Left: Pipeline config */}
+          <div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--wire)', borderRadius: '18px', padding: '20px', boxShadow: '0 2px 12px rgba(43, 35, 32, 0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                <Play style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>Pipeline Mode</h2>
               </div>
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {PIPELINE_STEPS.map(step => {
                   const Icon = step.icon;
                   const active = mode === step.id;
                   return (
-                    <button key={step.id} onClick={() => setMode(step.id)}
-                      className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all duration-150 ${
-                        active ? 'border-primary bg-primary/5' : 'border-border hover:bg-secondary/20'
-                      }`}>
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${active ? 'bg-primary/20' : 'bg-secondary'}`}>
-                        <Icon className={`w-4 h-4 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <button
+                      key={step.id}
+                      onClick={() => setMode(step.id)}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'flex-start', gap: '10px',
+                        padding: '10px 12px', borderRadius: '12px', textAlign: 'left',
+                        border: `1.5px solid ${active ? 'rgba(196, 85, 58, 0.35)' : 'var(--wire)'}`,
+                        background: active ? 'rgba(196, 85, 58, 0.05)' : 'transparent',
+                        cursor: 'pointer', transition: 'all 0.2s',
+                      }}
+                    >
+                      <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: active ? 'var(--signal-dim)' : 'var(--surface-raise)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: '1px' }}>
+                        <Icon style={{ width: '14px', height: '14px', color: active ? 'var(--signal)' : 'var(--on-low)' }} />
                       </div>
                       <div>
-                        <p className={`text-xs font-semibold ${active ? 'text-primary' : 'text-foreground'}`}>{step.label}</p>
-                        <p className="text-xs text-muted-foreground leading-snug mt-0.5">{step.description}</p>
+                        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.8rem', fontWeight: 700, color: active ? 'var(--signal)' : 'var(--on)', marginBottom: '2px' }}>{step.label}</p>
+                        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: 'var(--on-low)', lineHeight: 1.4 }}>{step.description}</p>
                       </div>
                     </button>
                   );
                 })}
               </div>
 
-              <button onClick={runPipeline} disabled={!canRun}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
+              <button
+                onClick={runPipeline}
+                disabled={!canRun}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  padding: '12px', marginTop: '16px', borderRadius: '12px',
+                  border: 'none', background: canRun ? 'var(--signal)' : 'var(--surface-raise)',
+                  color: canRun ? '#fff' : 'var(--on-low)',
+                  fontFamily: 'var(--font-sans)', fontSize: '0.88rem', fontWeight: 700,
+                  cursor: canRun ? 'pointer' : 'not-allowed',
+                  boxShadow: canRun ? '0 4px 14px rgba(196, 85, 58, 0.25)' : 'none',
+                  transition: 'all 0.2s', opacity: canRun ? 1 : 0.6,
+                }}
+              >
                 {isRunning
-                  ? <><Loader2 className="w-4 h-4 animate-spin" />Running…</>
-                  : <><Zap className="w-4 h-4" />Run on {dataSource === 'postgres' ? 'Frammer DB' : 'Uploaded CSV'}</>}
+                  ? <><Loader2 style={{ width: '15px', height: '15px', animation: 'spin 1s linear infinite' }} />Running…</>
+                  : <><Zap style={{ width: '15px', height: '15px' }} />Run on {dataSource === 'postgres' ? 'Frammer DB' : 'CSV'}</>}
               </button>
 
-              {/* Source badge */}
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${dataSource === 'postgres' ? 'bg-green-500/5 border border-green-500/20 text-green-400' : 'bg-blue-500/5 border border-blue-500/20 text-blue-400'}`}>
-                {dataSource === 'postgres' ? <Server className="w-3.5 h-3.5" /> : <Upload className="w-3.5 h-3.5" />}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '8px 12px', borderRadius: '10px', marginTop: '12px',
+                fontFamily: 'var(--font-sans)', fontSize: '0.75rem',
+                color: dataSource === 'postgres' ? 'var(--ok)' : 'var(--uplink)',
+                background: dataSource === 'postgres' ? 'rgba(91, 138, 114, 0.08)' : 'rgba(91, 126, 161, 0.08)',
+                border: `1px solid ${dataSource === 'postgres' ? 'rgba(91, 138, 114, 0.2)' : 'rgba(91, 126, 161, 0.2)'}`,
+              }}>
+                {dataSource === 'postgres' ? <Server style={{ width: '13px', height: '13px' }} /> : <Upload style={{ width: '13px', height: '13px' }} />}
                 <span>{dataSource === 'postgres' ? 'Using Frammer PostgreSQL' : 'Using uploaded CSV tables'}</span>
               </div>
 
@@ -540,44 +617,45 @@ export default function KPILabPage() {
             </div>
           </div>
 
-          {/* ── Right: Schema + Results ───────────────────────────────── */}
-          <div className="lg:col-span-2 space-y-6">
+          {/* Right: Schema + Results */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-            {/* Loading state */}
             {isBusy && !isRunning && (
-              <div className="flex items-center justify-center py-12">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                  <p className="text-sm text-muted-foreground">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                  <Loader2 style={{ width: '28px', height: '28px', color: 'var(--signal)', animation: 'spin 1s linear infinite' }} />
+                  <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-mid)' }}>
                     {pageState === 'loading_schema' ? `Loading ${dataSource === 'postgres' ? 'Frammer database' : 'CSV'} schema…` : 'Loading sources…'}
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Schema */}
             {hasSchema && !isBusy && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {dataSource === 'postgres' ? <Server className="w-4 h-4 text-primary" /> : <Database className="w-4 h-4 text-primary" />}
-                    <h2 className="font-semibold text-sm text-foreground">
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {dataSource === 'postgres' ? <Server style={{ width: '15px', height: '15px', color: 'var(--signal)' }} /> : <Database style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />}
+                    <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>
                       {dataSource === 'postgres' ? 'Frammer Database Schema' : 'Uploaded CSV Schema'}
-                      <span className="ml-2 text-xs text-muted-foreground font-normal">{Object.keys(schema!.tables).length} tables</span>
+                      <span style={{ marginLeft: '8px', fontWeight: 400, fontSize: '0.78rem', color: 'var(--on-low)' }}>
+                        {Object.keys(schema!.tables).length} tables
+                      </span>
                     </h2>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     {schema?.cached && dataSource === 'postgres' && (
-                      <span className="text-xs text-muted-foreground/60 bg-secondary px-2 py-0.5 rounded-full">cached</span>
+                      <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', color: 'var(--on-low)', background: 'var(--surface-raise)', padding: '2px 8px', borderRadius: '20px' }}>cached</span>
                     )}
-                    <button onClick={() => loadSchema(dataSource, true)}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      title={dataSource === 'postgres' ? 'Force re-fetch from database' : 'Reload schema'}>
-                      <RefreshCw className="w-3 h-3" />Refresh
+                    <button
+                      onClick={() => loadSchema(dataSource, true)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-low)', transition: 'color 0.2s', padding: '4px 0' }}
+                    >
+                      <RefreshCw style={{ width: '12px', height: '12px' }} />Refresh
                     </button>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '380px', overflowY: 'auto', paddingRight: '4px' }}>
                   {Object.entries(schema!.tables).map(([name, tbl]) => (
                     <SchemaCard key={name} name={name} schema={tbl} />
                   ))}
@@ -585,28 +663,24 @@ export default function KPILabPage() {
               </div>
             )}
 
-            {/* Empty idle state */}
             {!hasSchema && !isBusy && pageState !== 'error' && (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center mb-4">
-                  <FlaskConical className="w-8 h-8 text-muted-foreground/50" />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 0', textAlign: 'center' }}>
+                <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'var(--surface)', border: '1px solid var(--wire)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
+                  <FlaskConical style={{ width: '24px', height: '24px', color: 'var(--on-low)', opacity: 0.5 }} />
                 </div>
-                <h3 className="font-semibold text-foreground mb-2">
+                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 700, color: 'var(--on)', marginBottom: '8px' }}>
                   {dataSource === 'csv' ? 'No CSV files uploaded yet' : 'Could not load database schema'}
                 </h3>
-                <p className="text-sm text-muted-foreground max-w-xs">
-                  {dataSource === 'csv'
-                    ? 'Upload one or more CSV files above to get started.'
-                    : 'Make sure the backend is running and DATABASE_URL is configured correctly.'}
+                <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: 'var(--on-mid)', maxWidth: '300px', lineHeight: 1.6 }}>
+                  {dataSource === 'csv' ? 'Upload one or more CSV files above to get started.' : 'Make sure the backend is running and DATABASE_URL is configured correctly.'}
                 </p>
               </div>
             )}
 
-            {/* Results */}
             {result && (
-              <div className="space-y-6">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 {/* Summary row */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
                   {[
                     { label: 'Table Groups', value: result.table_groups.length, icon: Database },
                     { label: 'Candidates',   value: result.candidate_kpis.length, icon: FlaskConical },
@@ -615,12 +689,12 @@ export default function KPILabPage() {
                   ].map(s => {
                     const Icon = s.icon;
                     return (
-                      <div key={s.label} className="bg-card border border-border rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Icon className="w-4 h-4 text-primary" />
-                          <span className="text-xs text-muted-foreground">{s.label}</span>
+                      <div key={s.label} style={{ background: 'var(--surface)', border: '1px solid var(--wire)', borderRadius: '14px', padding: '16px', boxShadow: '0 2px 8px rgba(43, 35, 32, 0.05)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                          <Icon style={{ width: '14px', height: '14px', color: 'var(--signal)' }} />
+                          <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: 'var(--on-low)' }}>{s.label}</span>
                         </div>
-                        <span className="text-2xl font-bold text-foreground tabular-nums">{s.value}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '1.5rem', fontWeight: 700, color: 'var(--on)' }}>{s.value}</span>
                       </div>
                     );
                   })}
@@ -628,34 +702,34 @@ export default function KPILabPage() {
 
                 {/* Good KPIs */}
                 {result.good_kpis.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <BarChart3 style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                      <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>
                         Discovered KPIs
-                        <span className="ml-2 text-xs text-muted-foreground font-normal">{result.good_kpis.length} passed all filters</span>
+                        <span style={{ marginLeft: '8px', fontWeight: 400, fontSize: '0.78rem', color: 'var(--on-low)' }}>{result.good_kpis.length} passed all filters</span>
                       </h2>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                       {result.good_kpis.map((kpi, i) => <KPIResultCard key={kpi.name ?? i} kpi={kpi} index={i} />)}
                     </div>
                   </div>
                 )}
 
-                {/* Candidate KPIs (generate mode only) */}
+                {/* Candidate KPIs */}
                 {result.candidate_kpis.length > 0 && result.good_kpis.length === 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <FlaskConical className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">Candidate KPIs</h2>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <FlaskConical style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                      <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>Candidate KPIs</h2>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                       {result.candidate_kpis.map((kpi, i) => (
-                        <div key={kpi.name ?? i} className="bg-card border border-border rounded-xl p-4 space-y-1.5">
-                          {kpi.category && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{kpi.category}</span>}
-                          <h3 className="font-semibold text-sm text-foreground">{kpi.name}</h3>
-                          {kpi.description && <p className="text-xs text-muted-foreground">{kpi.description}</p>}
-                          {kpi.formula && <p className="text-xs font-mono text-muted-foreground/70 bg-secondary/50 rounded px-2 py-1">{kpi.formula}</p>}
+                        <div key={kpi.name ?? i} style={{ background: 'var(--surface)', border: '1px solid var(--wire)', borderRadius: '14px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {kpi.category && <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', fontWeight: 600, color: 'var(--signal)', background: 'var(--signal-dim)', padding: '2px 8px', borderRadius: '20px', alignSelf: 'flex-start' }}>{kpi.category}</span>}
+                          <h3 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>{kpi.name}</h3>
+                          {kpi.description && <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)' }}>{kpi.description}</p>}
+                          {kpi.formula && <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-low)', background: 'var(--surface-hi)', borderRadius: '6px', padding: '4px 10px' }}>{kpi.formula}</p>}
                         </div>
                       ))}
                     </div>
@@ -664,16 +738,16 @@ export default function KPILabPage() {
 
                 {/* Table groups */}
                 {result.table_groups.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Database className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">Table Groups</h2>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                      <Database style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                      <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>Table Groups</h2>
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                       {result.table_groups.map((group, i) => (
-                        <div key={i} className="flex items-center gap-1.5 bg-secondary border border-border rounded-lg px-3 py-1.5">
-                          <span className="text-xs text-muted-foreground">Group {i + 1}:</span>
-                          <span className="text-xs font-mono text-foreground">{group.join(' · ')}</span>
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--surface)', border: '1px solid var(--wire)', borderRadius: '10px', padding: '6px 14px' }}>
+                          <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: 'var(--on-low)' }}>Group {i + 1}:</span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on)' }}>{group.join(' · ')}</span>
                         </div>
                       ))}
                     </div>
@@ -682,14 +756,14 @@ export default function KPILabPage() {
 
                 {/* Insights */}
                 {result.insights.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Lightbulb className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">
-                        AI Insights <span className="ml-1 text-xs text-muted-foreground font-normal">{result.insights.length} generated</span>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <Lightbulb style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                      <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>
+                        AI Insights <span style={{ fontWeight: 400, fontSize: '0.78rem', color: 'var(--on-low)', marginLeft: '6px' }}>{result.insights.length} generated</span>
                       </h2>
                     </div>
-                    <div className="space-y-2">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {result.insights.map((ins, i) => <InsightCard key={i} insight={ins} />)}
                     </div>
                   </div>
@@ -697,15 +771,15 @@ export default function KPILabPage() {
 
                 {/* Errors */}
                 {errors.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-destructive" />
-                      <h2 className="font-semibold text-sm text-foreground">Errors / Warnings</h2>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                      <AlertCircle style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                      <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>Errors / Warnings</h2>
                     </div>
                     {errors.map((err, i) => (
-                      <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-                        <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                        <p className="text-xs text-muted-foreground">{err}</p>
+                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', background: 'rgba(196, 85, 58, 0.05)', border: '1px solid rgba(196, 85, 58, 0.2)', borderRadius: '12px', padding: '12px 14px', marginBottom: '8px' }}>
+                        <X style={{ width: '14px', height: '14px', color: 'var(--signal)', flexShrink: 0, marginTop: '2px' }} />
+                        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)' }}>{err}</p>
                       </div>
                     ))}
                   </div>
@@ -713,17 +787,16 @@ export default function KPILabPage() {
               </div>
             )}
 
-            {/* Top-level error (no results) */}
             {pageState === 'error' && !result && errors.length > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-destructive" />
-                  <h2 className="font-semibold text-sm">Something went wrong</h2>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                  <AlertCircle style={{ width: '15px', height: '15px', color: 'var(--signal)' }} />
+                  <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: '0.88rem', color: 'var(--on)' }}>Something went wrong</h2>
                 </div>
                 {errors.map((err, i) => (
-                  <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-                    <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-muted-foreground">{err}</p>
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', background: 'rgba(196, 85, 58, 0.05)', border: '1px solid rgba(196, 85, 58, 0.2)', borderRadius: '12px', padding: '12px 14px', marginBottom: '8px' }}>
+                    <X style={{ width: '14px', height: '14px', color: 'var(--signal)', flexShrink: 0, marginTop: '2px' }} />
+                    <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)' }}>{err}</p>
                   </div>
                 ))}
               </div>

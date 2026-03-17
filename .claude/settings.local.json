@@ -6,7 +6,8 @@
       "mcp__plugin_supabase_supabase__execute_sql",
       "Bash(cd:*)",
       "Bash(find:*)",
-      "mcp__plugin_supabase_supabase__list_projects"
+      "mcp__plugin_supabase_supabase__list_projects",
+      "WebSearch"
     ]
   },
   "enabledPlugins": {

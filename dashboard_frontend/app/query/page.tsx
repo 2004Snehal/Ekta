@@ -14,8 +14,6 @@ const API_URL   = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 const CLIENT_ID = 1;
 const USER_ID   = 'default-user';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 interface NLQResult {
   question:    string;
   sql:         string | null;
@@ -36,7 +34,7 @@ interface Message {
   question?: string;
   result?:   NLQResult;
   loading?:  boolean;
-  ts:        string; // ISO string for serialisation
+  ts:        string;
 }
 
 interface SessionSummary {
@@ -45,8 +43,6 @@ interface SessionSummary {
   messageCount: number;
   updatedAt:    string | null;
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function nlqToChartSpec(r: NLQResult): UniversalChartSpec {
   return { chart_type: r.chart_type as UniversalChartSpec['chart_type'], title: r.title, description: r.description, x: r.x, y: r.y, data: r.data };
@@ -67,8 +63,6 @@ function formatDate(iso: string | null) {
 }
 
 function uid() { return Math.random().toString(36).slice(2); }
-
-// ── API helpers ───────────────────────────────────────────────────────────────
 
 async function apiSaveSession(sessionId: string | null, messages: Message[], title?: string) {
   const res = await fetch(`${API_URL}/nlq/sessions`, {
@@ -96,11 +90,20 @@ async function apiDeleteSession(sessionId: string) {
   await fetch(`${API_URL}/nlq/sessions/${sessionId}`, { method: 'DELETE' });
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-
 function SqlBlock({ sql }: { sql: string }) {
   return (
-    <pre className="text-xs font-mono text-green-400 bg-[#0d1117] rounded-lg p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-border">
+    <pre style={{
+      fontFamily: 'var(--font-mono)',
+      fontSize: '0.72rem',
+      color: '#5B8A72',
+      background: 'var(--surface-hi)',
+      borderRadius: '10px',
+      padding: '14px 16px',
+      overflowX: 'auto',
+      whiteSpace: 'pre-wrap',
+      lineHeight: 1.6,
+      border: '1px solid var(--wire)',
+    }}>
       {sql}
     </pre>
   );
@@ -117,24 +120,44 @@ function SessionItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors group relative ${
-        active ? 'bg-primary/20 border border-primary/40' : 'hover:bg-sidebar-accent border border-transparent'
-      }`}
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        borderRadius: '10px',
+        padding: '10px 12px',
+        transition: 'background 0.15s',
+        position: 'relative',
+        background: active ? 'rgba(196, 85, 58, 0.08)' : 'transparent',
+        border: active ? '1px solid rgba(196, 85, 58, 0.25)' : '1px solid transparent',
+        cursor: 'pointer',
+      }}
     >
-      <div className="flex items-start gap-2 pr-6">
-        <div className={`mt-1 shrink-0 w-1.5 h-1.5 rounded-full ${active ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-foreground truncate leading-snug">{session.title}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', paddingRight: '24px' }}>
+        <div style={{
+          marginTop: '4px', flexShrink: 0, width: '7px', height: '7px', borderRadius: '50%',
+          background: active ? 'var(--signal)' : 'var(--wire-mid)',
+        }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.82rem', color: 'var(--on)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '2px' }}>
+            {session.title}
+          </p>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', color: 'var(--on-low)' }}>
             {formatDate(session.updatedAt)} · {session.messageCount} msgs
           </p>
         </div>
       </div>
       <button
         onClick={onDelete}
-        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 rounded hover:text-destructive transition-all"
+        style={{
+          position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)',
+          opacity: 0, background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--on-low)', padding: '4px', borderRadius: '6px',
+          transition: 'all 0.15s',
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '1'; (e.currentTarget as HTMLElement).style.color = 'var(--signal)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
       >
-        <Trash2 className="w-3 h-3" />
+        <Trash2 style={{ width: '12px', height: '12px' }} />
       </button>
     </button>
   );
@@ -142,9 +165,16 @@ function SessionItem({
 
 function UserBubble({ text }: { text: string }) {
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[70%] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5">
-        <p className="text-sm text-primary-foreground leading-relaxed">{text}</p>
+    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{
+        maxWidth: '70%',
+        borderRadius: '18px 18px 4px 18px',
+        background: 'var(--signal)',
+        padding: '10px 16px',
+      }}>
+        <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', color: '#fff', lineHeight: 1.5 }}>
+          {text}
+        </p>
       </div>
     </div>
   );
@@ -155,9 +185,9 @@ function AssistantBubble({ msg }: { msg: Message }) {
 
   if (msg.loading) {
     return (
-      <div className="flex items-center gap-3 text-muted-foreground py-2">
-        <Loader2 className="w-4 h-4 animate-spin text-primary" />
-        <span className="text-sm">Thinking…</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--on-low)', padding: '8px 0' }}>
+        <Loader2 style={{ width: '16px', height: '16px', animation: 'spin 1s linear infinite', color: 'var(--signal)' }} />
+        <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem' }}>Thinking…</span>
       </div>
     );
   }
@@ -166,47 +196,73 @@ function AssistantBubble({ msg }: { msg: Message }) {
 
   if (r.error) {
     return (
-      <div className="flex gap-3 max-w-[85%]">
-        <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full bg-destructive/20 flex items-center justify-center">
-          <AlertCircle className="w-4 h-4 text-destructive" />
+      <div style={{ display: 'flex', gap: '12px', maxWidth: '85%' }}>
+        <div style={{
+          flexShrink: 0, marginTop: '2px', width: '28px', height: '28px',
+          borderRadius: '50%', background: 'rgba(196, 85, 58, 0.1)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <AlertCircle style={{ width: '14px', height: '14px', color: 'var(--signal)' }} />
         </div>
-        <div className="bg-destructive/10 border border-destructive/30 rounded-2xl rounded-tl-sm px-4 py-3">
-          <p className="text-sm text-destructive font-medium">Query failed</p>
-          <p className="text-xs text-muted-foreground mt-1">{r.error}</p>
+        <div style={{
+          background: 'rgba(196, 85, 58, 0.06)',
+          border: '1px solid rgba(196, 85, 58, 0.2)',
+          borderRadius: '18px 18px 18px 4px',
+          padding: '12px 16px',
+        }}>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', fontWeight: 600, color: 'var(--signal)', marginBottom: '4px' }}>Query failed</p>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)' }}>{r.error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex gap-3 max-w-[90%]">
-      <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
-        <Sparkles className="w-3.5 h-3.5 text-primary" />
+    <div style={{ display: 'flex', gap: '12px', maxWidth: '90%' }}>
+      <div style={{
+        flexShrink: 0, marginTop: '2px', width: '28px', height: '28px',
+        borderRadius: '50%', background: 'var(--signal-dim)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Sparkles style={{ width: '13px', height: '13px', color: 'var(--signal)' }} />
       </div>
-      <div className="flex-1 space-y-3">
-        <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
-          <p className="text-sm font-medium text-foreground">{r.title || 'Result'}</p>
-          {r.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{r.description}</p>}
-          <p className="text-xs text-muted-foreground mt-1">{r.row_count.toLocaleString()} rows</p>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--wire)',
+          borderRadius: '18px 18px 18px 4px',
+          padding: '12px 16px',
+          boxShadow: '0 2px 8px rgba(43, 35, 32, 0.06)',
+        }}>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.88rem', fontWeight: 600, color: 'var(--on)', marginBottom: '4px' }}>{r.title || 'Result'}</p>
+          {r.description && <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-mid)', lineHeight: 1.5, marginBottom: '4px' }}>{r.description}</p>}
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-low)' }}>{r.row_count.toLocaleString()} rows</p>
         </div>
 
         {r.data.length > 0 && (
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--wire)', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(43, 35, 32, 0.06)' }}>
             <ChartRenderer chart={nlqToChartSpec(r)} />
           </div>
         )}
 
         {r.sql && (
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--wire)', borderRadius: '14px', overflow: 'hidden' }}>
             <button
               onClick={() => setSqlOpen((v) => !v)}
-              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer',
+                fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-low)',
+                transition: 'color 0.2s',
+              }}
             >
-              <Code2 className="w-3.5 h-3.5" />
-              <span>SQL</span>
-              {sqlOpen ? <ChevronDown className="w-3 h-3 ml-auto" /> : <ChevronRight className="w-3 h-3 ml-auto" />}
+              <Code2 style={{ width: '13px', height: '13px' }} />
+              <span>View SQL</span>
+              {sqlOpen
+                ? <ChevronDown style={{ width: '12px', height: '12px', marginLeft: 'auto' }} />
+                : <ChevronRight style={{ width: '12px', height: '12px', marginLeft: 'auto' }} />}
             </button>
-            {sqlOpen && <div className="px-4 pb-4"><SqlBlock sql={r.sql} /></div>}
+            {sqlOpen && <div style={{ padding: '0 14px 14px' }}><SqlBlock sql={r.sql} /></div>}
           </div>
         )}
       </div>
@@ -214,11 +270,13 @@ function AssistantBubble({ msg }: { msg: Message }) {
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
-
 export default function QueryPage() {
   return (
-    <Suspense fallback={<div style={{ height: 'calc(100vh - 44px)', background: 'var(--void)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="scan-loader" style={{ width: '200px' }} /></div>}>
+    <Suspense fallback={
+      <div style={{ height: 'calc(100vh - 56px)', background: 'var(--void)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="scan-loader" style={{ width: '200px' }} />
+      </div>
+    }>
       <QueryPageInner />
     </Suspense>
   );
@@ -241,8 +299,6 @@ function QueryPageInner() {
   const bottomRef   = useRef<HTMLDivElement>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Load sessions list ───────────────────────────────────────────────────
-
   const refreshSessions = useCallback(async () => {
     try {
       const list = await apiListSessions();
@@ -252,8 +308,6 @@ function QueryPageInner() {
     }
   }, []);
 
-  // ── Hydrate from URL ?session= param ────────────────────────────────────
-
   useEffect(() => {
     const urlSession = searchParams.get('session');
     if (urlSession) {
@@ -262,18 +316,14 @@ function QueryPageInner() {
           setSessionId(data.session_id);
           setMessages(data.messages.filter((m) => !m.loading));
         })
-        .catch(() => { /* session not found, start fresh */ });
+        .catch(() => {});
     }
     void refreshSessions();
   }, [searchParams, refreshSessions]);
 
-  // ── Scroll to bottom on new messages ────────────────────────────────────
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  // ── Auto-save session after each message ────────────────────────────────
 
   const persistSession = useCallback((msgs: Message[], sid: string | null) => {
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
@@ -283,19 +333,15 @@ function QueryPageInner() {
         if (persistable.length === 0) return;
         const { session_id } = await apiSaveSession(sid, persistable);
         if (!sid) {
-          // New session created — update URL without full navigation
           setSessionId(session_id);
           window.history.replaceState({}, '', `/query?session=${session_id}`);
           void refreshSessions();
         } else {
-          // Update title in sidebar
           void refreshSessions();
         }
       } catch { /* non-critical */ }
     }, 600);
   }, [refreshSessions]);
-
-  // ── Send question ────────────────────────────────────────────────────────
 
   async function sendQuestion(question: string) {
     if (!question.trim() || isLoading) return;
@@ -345,16 +391,12 @@ function QueryPageInner() {
     }
   }
 
-  // ── New chat ─────────────────────────────────────────────────────────────
-
   function startNewChat() {
     setMessages([]);
     setSessionId(null);
     setActiveHistoryId(null);
     window.history.replaceState({}, '', '/query');
   }
-
-  // ── Load a session from the sidebar ─────────────────────────────────────
 
   async function openSession(sid: string) {
     if (sid === sessionId) return;
@@ -367,8 +409,6 @@ function QueryPageInner() {
     } catch { /* ignore */ }
   }
 
-  // ── Delete session ───────────────────────────────────────────────────────
-
   async function deleteSession(e: React.MouseEvent, sid: string) {
     e.stopPropagation();
     await apiDeleteSession(sid);
@@ -376,12 +416,9 @@ function QueryPageInner() {
     if (sid === sessionId) startNewChat();
   }
 
-  // ── Share ────────────────────────────────────────────────────────────────
-
   async function shareSession() {
     let sid = sessionId;
     if (!sid) {
-      // Save first if unsaved
       const persistable = messages.filter((m) => !m.loading);
       if (persistable.length === 0) return;
       const { session_id } = await apiSaveSession(null, persistable);
@@ -394,17 +431,13 @@ function QueryPageInner() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  // ── Keyboard ─────────────────────────────────────────────────────────────
-
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendQuestion(input); }
   }
 
-  // ── Derived state ────────────────────────────────────────────────────────
-
-  const history  = messages.filter((m) => m.role === 'assistant' && m.result && !m.result.error);
-  const activeMsg = activeHistoryId ? messages.find((m) => m.id === activeHistoryId) : null;
-  const sqlMsg    = activeMsg ?? [...messages].reverse().find((m) => m.role === 'assistant' && m.result?.sql);
+  const sqlMsg = activeHistoryId
+    ? messages.find((m) => m.id === activeHistoryId)
+    : [...messages].reverse().find((m) => m.role === 'assistant' && m.result?.sql);
 
   const suggestions = [
     'Which channel had the highest publish rate last month?',
@@ -414,37 +447,45 @@ function QueryPageInner() {
   ];
 
   return (
-    <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 44px)', background: 'var(--void)' }}>
+    <div style={{ display: 'flex', overflow: 'hidden', height: 'calc(100vh - 56px)', background: 'var(--void)' }}>
 
-      {/* ── LEFT PANEL ──────────────────────────────────────────────────── */}
-      <aside className="w-72 shrink-0 flex flex-col overflow-hidden" style={{ borderRight: '1px solid var(--wire)', background: 'var(--surface)' }}>
+      {/* LEFT PANEL */}
+      <aside style={{ width: '280px', flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRight: '1px solid var(--wire)', background: 'var(--surface)' }}>
 
         {/* Header */}
-        <div className="px-4 py-3 border-b border-sidebar-border">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold text-sidebar-foreground">Sessions</h2>
+        <div style={{ padding: '16px', borderBottom: '1px solid var(--wire)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Clock style={{ width: '14px', height: '14px', color: 'var(--on-low)' }} />
+              <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.85rem', fontWeight: 700, color: 'var(--on)' }}>Sessions</span>
             </div>
             <button
               onClick={startNewChat}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border hover:border-primary/50 rounded-lg px-2.5 py-1.5 transition-colors"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                fontSize: '0.72rem', fontFamily: 'var(--font-sans)', fontWeight: 600,
+                color: 'var(--on-mid)', background: 'var(--surface-hi)',
+                border: '1px solid var(--wire)', borderRadius: '8px',
+                padding: '5px 10px', cursor: 'pointer', transition: 'all 0.2s',
+              }}
             >
-              <Plus className="w-3 h-3" />
-              New Chat
+              <Plus style={{ width: '11px', height: '11px' }} />
+              New
             </button>
           </div>
-          <p className="text-xs text-muted-foreground">Click a session to restore it</p>
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: 'var(--on-low)' }}>
+            Click a session to restore it
+          </p>
         </div>
 
         {/* Session list */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
           {sessionsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0' }}>
+              <Loader2 style={{ width: '16px', height: '16px', animation: 'spin 1s linear infinite', color: 'var(--on-low)' }} />
             </div>
           ) : sessions.length === 0 ? (
-            <div className="text-center text-muted-foreground text-xs py-8 px-4 leading-relaxed">
+            <div style={{ textAlign: 'center', color: 'var(--on-low)', fontSize: '0.78rem', padding: '32px 16px', fontFamily: 'var(--font-sans)', lineHeight: 1.6 }}>
               Your chat sessions will appear here.
             </div>
           ) : (
@@ -461,32 +502,38 @@ function QueryPageInner() {
         </div>
 
         {/* SQL preview panel */}
-        <div className="border-t border-sidebar-border">
-          <div className="px-4 pt-3 pb-1 flex items-center gap-2">
-            <Code2 className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">SQL Preview</span>
+        <div style={{ borderTop: '1px solid var(--wire)' }}>
+          <div style={{ padding: '12px 16px 6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Code2 style={{ width: '13px', height: '13px', color: 'var(--on-low)' }} />
+            <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.65rem', fontWeight: 700, color: 'var(--on-low)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              SQL Preview
+            </span>
           </div>
-          <div className="px-3 pb-4 max-h-52 overflow-y-auto">
+          <div style={{ padding: '0 12px 16px', maxHeight: '200px', overflowY: 'auto' }}>
             {sqlMsg?.result?.sql ? (
               <SqlBlock sql={sqlMsg.result.sql} />
             ) : (
-              <p className="text-xs text-muted-foreground italic px-1 py-2">No query selected yet.</p>
+              <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-low)', fontStyle: 'italic', padding: '4px 4px' }}>
+                No query selected yet.
+              </p>
             )}
           </div>
         </div>
       </aside>
 
-      {/* ── RIGHT PANEL ─────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-background">
+      {/* RIGHT PANEL */}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--void)' }}>
 
         {/* Top bar */}
-        <div className="px-6 py-4 border-b border-border shrink-0 flex items-center justify-between">
+        <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--wire)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface)' }}>
           <div>
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-primary" />
-              <h1 className="text-lg font-semibold text-foreground">Natural Language Query</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2px' }}>
+              <Sparkles style={{ width: '18px', height: '18px', color: 'var(--signal)' }} />
+              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 700, color: 'var(--on)' }}>
+                Natural Language Query
+              </h1>
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.78rem', color: 'var(--on-low)' }}>
               Ask any question · {profileDef.displayName}
             </p>
           </div>
@@ -494,33 +541,66 @@ function QueryPageInner() {
           {messages.length > 0 && (
             <button
               onClick={() => void shareSession()}
-              className="flex items-center gap-2 text-xs border border-border hover:border-primary/50 rounded-lg px-3 py-2 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '7px 14px', borderRadius: '10px',
+                border: '1px solid var(--wire)', background: 'var(--surface)',
+                color: 'var(--on-mid)', fontFamily: 'var(--font-sans)',
+                fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+                transition: 'all 0.2s', flexShrink: 0,
+              }}
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Share2 className="w-3.5 h-3.5" />}
+              {copied
+                ? <Check style={{ width: '13px', height: '13px', color: 'var(--ok)' }} />
+                : <Share2 style={{ width: '13px', height: '13px' }} />}
               {copied ? 'Copied!' : 'Share'}
             </button>
           )}
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
           {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full gap-8 text-center">
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '32px', textAlign: 'center' }}>
               <div>
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                  <Sparkles className="w-8 h-8 text-primary" />
+                <div style={{
+                  width: '64px', height: '64px', borderRadius: '20px',
+                  background: 'var(--signal-dim)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 16px',
+                }}>
+                  <Sparkles style={{ width: '28px', height: '28px', color: 'var(--signal)' }} />
                 </div>
-                <h2 className="text-xl font-semibold text-foreground">Ask your data anything</h2>
-                <p className="text-sm text-muted-foreground mt-2 max-w-md">
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', fontWeight: 700, color: 'var(--on)', marginBottom: '8px' }}>
+                  Ask your data anything
+                </h2>
+                <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.88rem', color: 'var(--on-mid)', maxWidth: '420px', lineHeight: 1.6 }}>
                   Type a plain-English question. The AI generates SQL, runs it, and renders the result as a chart.
                 </p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', width: '100%', maxWidth: '560px' }}>
                 {suggestions.map((s) => (
                   <button
                     key={s}
                     onClick={() => void sendQuestion(s)}
-                    className="text-left rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground hover:text-foreground hover:border-primary/50 hover:bg-card/80 transition-all"
+                    style={{
+                      textAlign: 'left', borderRadius: '14px',
+                      border: '1.5px solid var(--wire)', background: 'var(--surface)',
+                      padding: '14px 16px',
+                      fontFamily: 'var(--font-sans)', fontSize: '0.82rem',
+                      color: 'var(--on-mid)', cursor: 'pointer',
+                      transition: 'all 0.2s', lineHeight: 1.45,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = 'rgba(196, 85, 58, 0.4)';
+                      (e.currentTarget as HTMLElement).style.color = 'var(--on)';
+                      (e.currentTarget as HTMLElement).style.background = 'var(--surface-hi)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = 'var(--wire)';
+                      (e.currentTarget as HTMLElement).style.color = 'var(--on-mid)';
+                      (e.currentTarget as HTMLElement).style.background = 'var(--surface)';
+                    }}
                   >
                     {s}
                   </button>
@@ -540,29 +620,48 @@ function QueryPageInner() {
         </div>
 
         {/* Input bar */}
-        <div className="px-6 pb-6 shrink-0">
-          <div className="relative flex items-end gap-3 bg-card border border-border rounded-2xl px-4 py-3 focus-within:border-primary/60 transition-colors">
+        <div style={{ padding: '16px 24px', flexShrink: 0 }}>
+          <div style={{
+            position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '12px',
+            background: 'var(--surface)', border: '1.5px solid var(--wire)',
+            borderRadius: '16px', padding: '12px 14px',
+            boxShadow: '0 2px 12px rgba(43, 35, 32, 0.06)',
+            transition: 'border-color 0.2s',
+          }}
+          onFocusCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(196, 85, 58, 0.5)'; }}
+          onBlurCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wire)'; }}
+          >
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Ask a question about your data… (Enter to send, Shift+Enter for new line)"
               rows={1}
-              className="flex-1 bg-transparent resize-none text-sm text-foreground placeholder:text-muted-foreground outline-none leading-relaxed max-h-40 overflow-y-auto"
-              style={{ fieldSizing: 'content' } as React.CSSProperties}
+              style={{
+                flex: 1, background: 'transparent', resize: 'none',
+                fontFamily: 'var(--font-sans)', fontSize: '0.88rem', color: 'var(--on)',
+                border: 'none', outline: 'none', lineHeight: 1.5,
+                maxHeight: '160px', overflowY: 'auto',
+              }}
               disabled={isLoading}
             />
             <button
               onClick={() => void sendQuestion(input)}
               disabled={!input.trim() || isLoading}
-              className="shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
+              style={{
+                flexShrink: 0, width: '36px', height: '36px', borderRadius: '10px',
+                background: input.trim() && !isLoading ? 'var(--signal)' : 'var(--surface-raise)',
+                border: 'none', cursor: input.trim() && !isLoading ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'all 0.2s', opacity: !input.trim() || isLoading ? 0.5 : 1,
+              }}
             >
               {isLoading
-                ? <Loader2 className="w-4 h-4 text-primary-foreground animate-spin" />
-                : <Send className="w-4 h-4 text-primary-foreground" />}
+                ? <Loader2 style={{ width: '14px', height: '14px', color: '#fff', animation: 'spin 1s linear infinite' }} />
+                : <Send style={{ width: '14px', height: '14px', color: input.trim() ? '#fff' : 'var(--on-low)' }} />}
             </button>
           </div>
-          <p className="text-xs text-muted-foreground text-center mt-2">
+          <p style={{ fontFamily: 'var(--font-sans)', fontSize: '0.7rem', color: 'var(--on-low)', textAlign: 'center', marginTop: '8px' }}>
             Queries are executed read-only against your Frammer database.
           </p>
         </div>

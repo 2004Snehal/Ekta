@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -7,25 +8,26 @@ import {
 } from 'recharts';
 import type { UniversalChartSpec } from '@/types/chart';
 
-const COLORS = ['#E5001A', '#2D9CDB', '#F2A11A', '#1DB954', '#9B59B6', '#E67E22'];
+const COLORS = ['#C4553A', '#5B7EA1', '#C68B2C', '#5B8A72', '#8B6FA3', '#D4864B'];
 
 const TOOLTIP_STYLE = {
-  backgroundColor: '#141414',
-  border: '1px solid #2C2C2C',
-  borderRadius: '0',
-  color: '#F0EDE8',
+  backgroundColor: '#FFFFFF',
+  border: '1px solid #E5DFD7',
+  borderRadius: '10px',
+  color: '#2B2320',
   fontFamily: 'var(--font-mono)',
-  fontSize: '0.7rem',
-  letterSpacing: '0.04em',
+  fontSize: '0.72rem',
+  letterSpacing: '0.02em',
+  boxShadow: '0 4px 16px rgba(43, 35, 32, 0.1)',
 };
 
 const AXIS_STYLE = {
-  tick: { fill: '#52504C', fontSize: 10, fontFamily: 'var(--font-mono)' },
-  axisLine: { stroke: '#2C2C2C' },
-  tickLine: { stroke: '#2C2C2C' },
+  tick: { fill: '#B0A99F', fontSize: 11, fontFamily: 'var(--font-mono)' },
+  axisLine: { stroke: '#E5DFD7' },
+  tickLine: { stroke: '#E5DFD7' },
 };
 
-const GRID_STYLE = { stroke: '#1E1E1E', strokeDasharray: '1 4' };
+const GRID_STYLE = { stroke: '#E5DFD7', strokeDasharray: '2 4' };
 
 function resolveFields(chart: UniversalChartSpec): { xField: string; yField: string } {
   return {
@@ -66,12 +68,12 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
       case 'line':
         return (
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chart.data} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
+            <LineChart data={chart.data} margin={{ top: 4, right: 12, left: -16, bottom: 4 }}>
               <CartesianGrid {...GRID_STYLE} />
               <XAxis dataKey={xField} {...AXIS_STYLE} />
               <YAxis {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ stroke: '#2C2C2C' }} />
-              <Line type="monotone" dataKey={yField} stroke={colors[0]} strokeWidth={1.5} dot={false} activeDot={{ r: 3, fill: colors[0] }} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ stroke: '#E5DFD7' }} />
+              <Line type="monotone" dataKey={yField} stroke={colors[0]} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: colors[0], stroke: '#fff', strokeWidth: 2 }} />
             </LineChart>
           </ResponsiveContainer>
         );
@@ -79,12 +81,12 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
       case 'bar':
         return (
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chart.data} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
+            <BarChart data={chart.data} margin={{ top: 4, right: 12, left: -16, bottom: 4 }}>
               <CartesianGrid {...GRID_STYLE} />
               <XAxis dataKey={xField} {...AXIS_STYLE} />
               <YAxis {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-              <Bar dataKey={yField} fill={colors[0]} radius={[0, 0, 0, 0]} maxBarSize={32} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(196, 85, 58, 0.04)' }} />
+              <Bar dataKey={yField} fill={colors[0]} radius={[4, 4, 0, 0]} maxBarSize={36} />
             </BarChart>
           </ResponsiveContainer>
         );
@@ -101,7 +103,8 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
                 outerRadius={85}
                 dataKey={valueField}
                 nameKey={categoryField}
-                strokeWidth={0}
+                strokeWidth={2}
+                stroke="#F5F1EB"
               >
                 {chart.data.map((_, i) => (
                   <Cell key={i} fill={colors[i % colors.length]} />
@@ -109,9 +112,9 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               <Legend
-                iconSize={6}
-                iconType="square"
-                wrapperStyle={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: '#9A9590', letterSpacing: '0.06em' }}
+                iconSize={8}
+                iconType="circle"
+                wrapperStyle={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: '#7A7067' }}
               />
             </PieChart>
           </ResponsiveContainer>
@@ -121,11 +124,11 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
       case 'scatter':
         return (
           <ResponsiveContainer width="100%" height={220}>
-            <ScatterChart margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
+            <ScatterChart margin={{ top: 4, right: 12, left: -16, bottom: 4 }}>
               <CartesianGrid {...GRID_STYLE} />
               <XAxis type="number" dataKey={xField} {...AXIS_STYLE} />
               <YAxis type="number" dataKey={yField} {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ stroke: '#2C2C2C' }} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ stroke: '#E5DFD7' }} />
               <Scatter data={chart.data} fill={colors[0]} />
             </ScatterChart>
           </ResponsiveContainer>
@@ -143,14 +146,14 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
         }
         return (
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={renderData} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
+            <BarChart data={renderData} margin={{ top: 4, right: 12, left: -16, bottom: 4 }}>
               <CartesianGrid {...GRID_STYLE} />
               <XAxis dataKey={xField} {...AXIS_STYLE} />
               <YAxis {...AXIS_STYLE} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-              <Legend wrapperStyle={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: '#9A9590' }} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(196, 85, 58, 0.04)' }} />
+              <Legend wrapperStyle={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: '#7A7067' }} />
               {seriesKeys.map((key, idx) => (
-                <Bar key={key} dataKey={key} stackId="a" fill={colors[idx % colors.length]} radius={[0,0,0,0]} maxBarSize={32} />
+                <Bar key={key} dataKey={key} stackId="a" fill={colors[idx % colors.length]} radius={idx === seriesKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} maxBarSize={36} />
               ))}
             </BarChart>
           </ResponsiveContainer>
@@ -159,15 +162,15 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
 
       case 'table':
       default: {
-        if (!chart.data?.length) return <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-low)' }}>No data</p>;
+        if (!chart.data?.length) return <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-low)' }}>No data</p>;
         const cols = Object.keys(chart.data[0]);
         return (
           <div className="overflow-x-auto">
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--wire-mid)' }}>
+                <tr style={{ borderBottom: '2px solid var(--wire)' }}>
                   {cols.map((col) => (
-                    <th key={col} style={{ padding: '6px 8px', fontFamily: 'var(--font-condensed)', fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--on-low)', textAlign: 'left' }}>
+                    <th key={col} style={{ padding: '8px 10px', fontFamily: 'var(--font-sans)', fontSize: '0.7rem', fontWeight: 700, color: 'var(--on-low)', textAlign: 'left' }}>
                       {col.replace(/_/g, ' ')}
                     </th>
                   ))}
@@ -177,8 +180,8 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
                 {chart.data.map((row, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid var(--wire)' }}>
                     {cols.map((col) => (
-                      <td key={col} style={{ padding: '5px 8px', fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-mid)' }}>
-                        {String(row[col] ?? '—')}
+                      <td key={col} style={{ padding: '7px 10px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--on-mid)' }}>
+                        {String(row[col] ?? '\u2014')}
                       </td>
                     ))}
                   </tr>
@@ -191,14 +194,34 @@ export function ChartRenderer({ chart }: { chart: UniversalChartSpec }) {
     }
   };
 
+  if (chart.chart_type === 'table') {
+    return renderChart() as React.ReactElement;
+  }
+
   return (
-    <div className="chart-panel">
+    <div style={{
+      borderRadius: '16px',
+      border: '1px solid var(--wire)',
+      background: 'var(--surface)',
+      padding: '20px 20px 16px',
+      boxShadow: '0 1px 4px rgba(43, 35, 32, 0.04)',
+      animation: 'fade-up 0.4s ease-out both',
+    }}>
       {chart.title && (
-        <div className="flex items-center gap-3 mb-4">
-          <span className="section-id">{chart.title}</span>
+        <div style={{ marginBottom: '16px' }}>
+          <h3 style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '0.95rem',
+            fontWeight: 700,
+            color: 'var(--on)',
+            lineHeight: 1.3,
+            marginBottom: chart.description ? '3px' : 0,
+          }}>
+            {chart.title}
+          </h3>
           {chart.description && (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
-              — {chart.description}
+            <span style={{ fontFamily: 'var(--font-sans)', fontSize: '0.72rem', color: 'var(--on-low)' }}>
+              {chart.description}
             </span>
           )}
         </div>

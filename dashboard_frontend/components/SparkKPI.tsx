@@ -1,13 +1,13 @@
 'use client';
 
 import { useMemo } from 'react';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
 interface SparkKPIProps {
   title: string;
   value: string | number;
-  delta?: number | null;      // percentage change vs previous period
-  sparkData?: number[];        // last 30 data points for sparkline
+  delta?: number | null;
+  sparkData?: number[];
   active?: boolean;
   onClick?: () => void;
 }
@@ -18,65 +18,140 @@ export function SparkKPI({ title, value, delta, sparkData, active, onClick }: Sp
     [sparkData]
   );
 
+  const isPositive = delta != null && delta > 0;
+  const isNegative = delta != null && delta < 0;
+
   const deltaColor = delta == null ? 'var(--on-low)'
-    : delta > 0 ? 'var(--ok)'
-    : delta < 0 ? 'var(--signal)'
+    : isPositive ? 'var(--ok)'
+    : isNegative ? 'var(--signal)'
     : 'var(--on-low)';
 
-  const deltaText = delta == null ? '—'
+  const deltaBg = isPositive ? 'rgba(91, 138, 114, 0.1)'
+    : isNegative ? 'rgba(196, 85, 58, 0.08)'
+    : 'transparent';
+
+  const deltaText = delta == null ? null
     : `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
+
+  const areaColor = isNegative ? '#C4553A' : '#5B8A72';
+  const areaFill = isNegative
+    ? 'url(#sparkFillRed)'
+    : 'url(#sparkFillGreen)';
+
+  const gradientId = isNegative ? 'sparkFillRed' : 'sparkFillGreen';
 
   return (
     <div
-      className={`kpi-cell ${active ? 'kpi-active' : ''}`}
       onClick={onClick}
-      style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}
+      style={{
+        position: 'relative',
+        flex: 1,
+        padding: '22px 24px 16px',
+        cursor: 'pointer',
+        transition: 'background 0.2s ease, box-shadow 0.2s ease',
+        background: active ? 'var(--surface)' : 'transparent',
+        boxShadow: active ? 'inset 0 -3px 0 var(--signal)' : 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        minHeight: '110px',
+      }}
+      onMouseEnter={(e) => {
+        if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--surface-hi)';
+      }}
+      onMouseLeave={(e) => {
+        if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent';
+      }}
     >
+      {/* Active indicator bar at top */}
+      {active && (
+        <div style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0,
+          height: '3px',
+          background: 'var(--signal)',
+          borderRadius: '0 0 2px 2px',
+        }} />
+      )}
+
       {/* Title */}
-      <span
-        style={{
-          fontFamily: 'var(--font-condensed)',
-          fontSize: '0.55rem',
-          fontWeight: 700,
-          letterSpacing: '0.18em',
-          textTransform: 'uppercase',
-          color: 'var(--on-low)',
-        }}
-      >
+      <span style={{
+        fontFamily: 'var(--font-sans)',
+        fontSize: '0.68rem',
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: active ? 'var(--signal)' : 'var(--on-low)',
+        transition: 'color 0.2s',
+      }}>
         {title}
       </span>
 
-      {/* Value + Delta row */}
-      <div className="flex items-end gap-3">
-        <span className="data-number" style={{ fontSize: '1.4rem', color: 'var(--on)' }}>
+      {/* Value — big Playfair number */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', marginTop: '2px' }}>
+        <span style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '2rem',
+          fontWeight: 700,
+          color: 'var(--on)',
+          lineHeight: 1,
+          letterSpacing: '-0.02em',
+          animation: 'count-up 0.5s ease-out both',
+        }}>
           {typeof value === 'number' ? value.toLocaleString() : value}
         </span>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.6rem',
-            fontWeight: 500,
+
+        {/* Delta */}
+        {deltaText && (
+          <span style={{
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.7rem',
+            fontWeight: 700,
             color: deltaColor,
-            paddingBottom: '2px',
-          }}
-        >
-          {deltaText}
-        </span>
+            background: deltaBg,
+            padding: '3px 7px',
+            borderRadius: '20px',
+            marginBottom: '4px',
+            flexShrink: 0,
+          }}>
+            {isPositive ? '↑' : isNegative ? '↓' : ''} {deltaText}
+          </span>
+        )}
       </div>
 
-      {/* Sparkline */}
+      {/* vs prev label */}
+      {deltaText && (
+        <span style={{
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.6rem',
+          color: 'var(--on-low)',
+          marginTop: '-2px',
+        }}>
+          vs prev period
+        </span>
+      )}
+
+      {/* Area sparkline */}
       {sparkPoints.length > 2 && (
-        <div style={{ width: '100%', height: '24px', marginTop: '2px' }}>
+        <div style={{ width: '100%', height: '32px', marginTop: 'auto' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={sparkPoints}>
-              <Line
+            <AreaChart data={sparkPoints} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={areaColor} stopOpacity={0.18} />
+                  <stop offset="95%" stopColor={areaColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area
                 type="monotone"
                 dataKey="v"
-                stroke="var(--on-low)"
-                strokeWidth={1}
+                stroke={areaColor}
+                strokeWidth={1.5}
+                fill={areaFill}
                 dot={false}
+                isAnimationActive={true}
               />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       )}
