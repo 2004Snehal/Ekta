@@ -26,7 +26,10 @@ from backend_config import LLM_PROVIDER, GOOGLE_API_KEY, OPENAI_API_KEY
 CHART_MODEL_GEMINI = "gemini-2.5-flash-lite"
 CHART_MODEL_OPENAI = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
-from intelligence.chart_insight_agent.schemas import ChartInsightRequest, ChartInsightResponse
+from intelligence.chart_insight_agent.schemas import (
+    ChartInsightRequest, ChartInsightResponse,
+    ChartDescriptionRequest, ChartDescriptionResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +147,94 @@ def _call_openai(user_message: str) -> dict[str, Any]:
         if isinstance(val, dict) and "insights" in val:
             return val
     return raw
+
+
+# ── Description prompt ────────────────────────────────────────────────────────
+
+_DESC_SYSTEM_PROMPT = """\
+You are describing a data visualization for a media operations dashboard.
+
+Given the chart's title, type, and axis labels, write 1–2 sentences that explain:
+1. What metric or dimension this chart tracks.
+2. What analytical question it helps answer.
+
+RULES (non-negotiable):
+1. Max 35 words total.
+2. Do not reference specific data values or time periods.
+3. Focus on purpose, not content.
+4. Return ONLY valid JSON — no markdown, no extra keys:
+{"description": string}
+"""
+
+
+def _call_gemini_description(user_message: str) -> dict:
+    try:
+        import google.genai as genai
+        import google.genai.types as genai_types
+    except ImportError:
+        raise ImportError("google-genai is not installed.")
+
+    schema = genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={"description": genai_types.Schema(type=genai_types.Type.STRING)},
+        required=["description"],
+    )
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    response = client.models.generate_content(
+        model=CHART_MODEL_GEMINI,
+        contents=user_message,
+        config={
+            "system_instruction": _DESC_SYSTEM_PROMPT,
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+        },
+    )
+    return json.loads(response.text)
+
+
+def _call_openai_description(user_message: str) -> dict:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("openai is not installed.")
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    response = client.chat.completions.create(
+        model=CHART_MODEL_OPENAI,
+        messages=[
+            {"role": "system", "content": _DESC_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return json.loads(response.choices[0].message.content)
+
+
+def generate_chart_description(req: ChartDescriptionRequest) -> ChartDescriptionResponse:
+    """
+    Generate a static 1–2 sentence description of what a chart depicts.
+    No data required — only uses chart metadata (title, type, axes).
+    """
+    parts = [
+        f"Chart title: {req.chart_title}",
+        f"Chart type: {req.chart_type}",
+    ]
+    if req.x_label:
+        parts.append(f"X axis: {req.x_label}")
+    if req.y_label:
+        parts.append(f"Y axis: {req.y_label}")
+    user_message = "\n".join(parts)
+
+    logger.info("chart_insight_agent: generating description for '%s'", req.chart_title)
+
+    if LLM_PROVIDER == "gemini":
+        raw = _call_gemini_description(user_message)
+    elif LLM_PROVIDER == "openai":
+        raw = _call_openai_description(user_message)
+    else:
+        raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'")
+
+    return ChartDescriptionResponse(description=raw.get("description", ""))
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

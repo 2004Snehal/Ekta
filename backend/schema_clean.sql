@@ -109,6 +109,19 @@ CREATE TABLE IF NOT EXISTS internal.pg_insight_history (
 CREATE INDEX IF NOT EXISTS idx_insight_history_client
     ON internal.pg_insight_history (client_id, last_seen_at DESC);
 
+-- ── Chart Description Cache ──────────────────────────────────
+-- Stores LLM-generated descriptions of what each chart depicts.
+-- Keyed by chart metadata only (no data dependency) — generated once.
+CREATE TABLE IF NOT EXISTS internal.chart_description_cache (
+    cache_key    TEXT PRIMARY KEY,  -- SHA256(title|type|x_label|y_label)
+    chart_title  TEXT,
+    chart_type   TEXT,
+    x_label      TEXT,
+    y_label      TEXT,
+    description  TEXT NOT NULL,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ── Insight Cache ────────────────────────────────────────────
 -- Stale-while-revalidate cache for the narrator pipeline output.
 CREATE TABLE IF NOT EXISTS internal.insight_cache (

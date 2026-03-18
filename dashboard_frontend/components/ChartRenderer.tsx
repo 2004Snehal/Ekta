@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -100,28 +100,71 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const [showAll, setShowAll] = useState(false);
 
   // ── Hover insight state ────────────────────────────────────────────────────
-  const [insightVisible, setInsightVisible] = useState(false);
-  const [insightLoading, setInsightLoading] = useState(false);
-  const [insightSummary, setInsightSummary] = useState('');
-  const [insightBullets, setInsightBullets] = useState<string[]>([]);
-  const [insightError, setInsightError] = useState(false);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hideTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fetched    = useRef(false);
+  const [insightVisible, setInsightVisible]       = useState(false);
+  const [descLoading,    setDescLoading]          = useState(false);
+  const [description,    setDescription]          = useState('');
+  const [dataLoading,    setDataLoading]          = useState(false);
+  const [insightSummary, setInsightSummary]       = useState('');
+  const [insightBullets, setInsightBullets]       = useState<string[]>([]);
+  const [descError,      setDescError]            = useState(false);
+  const [dataError,      setDataError]            = useState(false);
 
-  const fetchInsights = useCallback(async () => {
-    if (fetched.current || !chart.data?.length) return;
-    fetched.current = true;
-    setInsightLoading(true);
-    setInsightError(false);
+  const hoverTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // description is per-chart-mount — fetched once
+  const descFetched   = useRef(false);
+  // data insights keyed by data fingerprint — re-fetched when data changes
+  const dataCache     = useRef<Map<string, { summary: string; insights: string[] }>>(new Map());
+
+  function dataFingerprint(data: Record<string, unknown>[]): string {
+    if (!data.length) return 'empty';
+    return `${data.length}|${JSON.stringify(data[0])}|${JSON.stringify(data[data.length - 1])}`;
+  }
+
+  const chartTitle = chart.title ?? chart.chart_type;
+
+  const fetchDescription = useCallback(async () => {
+    if (descFetched.current) return;
+    descFetched.current = true;
+    setDescLoading(true);
+    setDescError(false);
     try {
-      const url = `${API_BASE}/chart/insights`;
-      console.log(`[ChartInsights] calling ${url} for chart: "${chart.title ?? chart.chart_type}" (${chart.data.length} rows)`);
-      const res = await fetch(url, {
+      const params = new URLSearchParams({ chart_title: chartTitle, chart_type: chart.chart_type });
+      if (xField) params.set('x_label', xField);
+      if (yField) params.set('y_label', yField);
+      const res = await fetch(`${API_BASE}/chart/description?${params}`);
+      if (res.ok) {
+        const json = await res.json();
+        setDescription(json.description ?? '');
+      } else {
+        setDescError(true);
+      }
+    } catch {
+      setDescError(true);
+    } finally {
+      setDescLoading(false);
+    }
+  }, [chartTitle, chart.chart_type, xField, yField]);
+
+  const fetchDataInsights = useCallback(async () => {
+    if (!chart.data?.length) return;
+    const fp = dataFingerprint(chart.data as Record<string, unknown>[]);
+    const cached = dataCache.current.get(fp);
+    if (cached) {
+      setInsightSummary(cached.summary);
+      setInsightBullets(cached.insights);
+      return;
+    }
+    setDataLoading(true);
+    setDataError(false);
+    setInsightSummary('');
+    setInsightBullets([]);
+    try {
+      const res = await fetch(`${API_BASE}/chart/data-insights`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chart_title: chart.title ?? chart.chart_type,
+          chart_title: chartTitle,
           chart_type:  chart.chart_type,
           x_label:     xField || undefined,
           y_label:     yField || undefined,
@@ -130,25 +173,34 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       });
       if (res.ok) {
         const json = await res.json();
-        setInsightSummary(json.summary ?? '');
-        setInsightBullets(json.insights ?? []);
+        const entry = { summary: json.summary ?? '', insights: json.insights ?? [] };
+        dataCache.current.set(fp, entry);
+        setInsightSummary(entry.summary);
+        setInsightBullets(entry.insights);
       } else {
-        console.error(`[ChartInsights] ${res.status} from ${url}`);
-        setInsightError(true);
+        setDataError(true);
       }
-    } catch (err) {
-      console.error('[ChartInsights] fetch failed:', err);
-      setInsightError(true);
+    } catch {
+      setDataError(true);
     } finally {
-      setInsightLoading(false);
+      setDataLoading(false);
     }
-  }, [chart, xField, yField]);
+  }, [chart.data, chart.chart_type, chartTitle, xField, yField]);
+
+  // Re-fetch data insights when data changes (e.g. timeline/filter change)
+  useEffect(() => {
+    if (insightVisible) {
+      fetchDataInsights();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart.data]);
 
   function handleMouseEnter() {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hoverTimer.current = setTimeout(() => {
       setInsightVisible(true);
-      fetchInsights();
+      fetchDescription();
+      fetchDataInsights();
     }, 400);
   }
 
@@ -393,10 +445,13 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       {chart.refLinks && chart.refLinks.length > 0 && <RefLinks links={chart.refLinks} />}
       <ChartInsightPanel
         visible={insightVisible}
-        loading={insightLoading}
+        description={description}
+        descriptionLoading={descLoading}
+        descriptionError={descError}
         summary={insightSummary}
         insights={insightBullets}
-        error={insightError}
+        dataLoading={dataLoading}
+        dataError={dataError}
       />
     </div>
   );

@@ -195,28 +195,68 @@ def record_insight_feedback(
     return {"status": "ok"}
 
 
-# ── Chart Insight Agent endpoint ─────────────────────────────────────────────
+# ── Chart Insight Agent endpoints ────────────────────────────────────────────
 
-@router.post("/chart/insights")
-def get_chart_insights(payload: dict[str, Any]):
+@router.get("/chart/description")
+def get_chart_description(
+    chart_title: str = Query(...),
+    chart_type:  str = Query(...),
+    x_label:     Optional[str] = Query(None),
+    y_label:     Optional[str] = Query(None),
+):
+    """
+    Returns a static 1–2 sentence description of what a chart depicts.
+    Checks DB cache first; generates via LLM and saves on cache miss.
+    Cache key is derived from chart metadata only — no data dependency.
+    """
+    from intelligence.chart_insight_agent.agent import generate_chart_description
+    from intelligence.chart_insight_agent.schemas import ChartDescriptionRequest
+    from intelligence.chart_insight_agent.description_service import (
+        make_cache_key, get_description, save_description,
+    )
+
+    cache_key = make_cache_key(chart_title, chart_type, x_label, y_label)
+
+    try:
+        with get_conn() as conn:
+            cached = get_description(cache_key, conn)
+            if cached:
+                logger.info("chart_description: cache hit for '%s'", chart_title)
+                return {"description": cached, "cached": True}
+
+            # Cache miss — generate via LLM
+            logger.info("chart_description: cache miss for '%s' — calling LLM", chart_title)
+            req = ChartDescriptionRequest(
+                chart_title=chart_title, chart_type=chart_type,
+                x_label=x_label, y_label=y_label,
+            )
+            result = generate_chart_description(req)
+            save_description(cache_key, chart_title, chart_type, x_label, y_label, result.description, conn)
+            return {"description": result.description, "cached": False}
+
+    except Exception as e:
+        logger.error("chart description failed: %s", e)
+        raise HTTPException(status_code=500, detail="Chart description generation failed")
+
+
+@router.post("/chart/data-insights")
+def get_chart_data_insights(payload: dict[str, Any]):
     """
     On-demand LLM analysis of a single chart's visible data.
-    Called by the frontend when a user hovers over a chart.
-    Receives the exact data rendered in the chart and returns
-    3-5 plain-English insights + a one-sentence summary.
+    Called by the frontend on hover. Always calls the LLM — no DB cache.
+    Client-side caches the result keyed by a data fingerprint.
     """
     from intelligence.chart_insight_agent.agent import generate_chart_insights
     from intelligence.chart_insight_agent.schemas import ChartInsightRequest
 
     try:
         req = ChartInsightRequest(**payload)
-        print(f"[/chart/insights] request received — chart: '{req.chart_title}', type: {req.chart_type}, rows: {len(req.data)}")
+        logger.info("[/chart/data-insights] chart: '%s', type: %s, rows: %d", req.chart_title, req.chart_type, len(req.data))
         result = generate_chart_insights(req)
-        print(f"[/chart/insights] done — summary: '{result.summary}', insights count: {len(result.insights)}")
+        logger.info("[/chart/data-insights] done — %d insight(s)", len(result.insights))
         return result.model_dump()
     except Exception as e:
-        print(f"[/chart/insights] error: {e}")
-        logger.error("chart insight agent failed: %s", e)
+        logger.error("chart data-insights failed: %s", e)
         raise HTTPException(status_code=500, detail="Chart insight generation failed")
 
 

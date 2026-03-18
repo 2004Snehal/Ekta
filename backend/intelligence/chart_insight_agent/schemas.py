@@ -25,3 +25,18 @@ class ChartInsightResponse(BaseModel):
 
     summary: str                             # one-sentence headline
     insights: list[str]                      # 3–5 plain-English bullet points
+
+
+class ChartDescriptionRequest(BaseModel):
+    """Metadata needed to describe what a chart depicts (no data required)."""
+
+    chart_title: str
+    chart_type: str
+    x_label: Optional[str] = None
+    y_label: Optional[str] = None
+
+
+class ChartDescriptionResponse(BaseModel):
+    """Static description of what a chart is and what it measures."""
+
+    description: str
