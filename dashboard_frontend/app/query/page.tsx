@@ -6,7 +6,7 @@ import { useProfile } from '@/lib/profiles';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import {
   Send, Code2, Clock, AlertCircle, Loader2,
-  ChevronDown, ChevronRight, Sparkles, Plus, Share2, Trash2, Check,
+  ChevronDown, ChevronRight, Sparkles, Plus, Share2, Trash2, Check, FlaskConical,
 } from 'lucide-react';
 import type { UniversalChartSpec } from '@/types/chart';
 
@@ -237,6 +237,7 @@ function QueryPageInner() {
   const [isLoading,       setIsLoading]       = useState(false);
   const [copied,          setCopied]          = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [exploreMode,     setExploreMode]     = useState(false);
 
   const bottomRef   = useRef<HTMLDivElement>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -314,7 +315,7 @@ function QueryPageInner() {
       const res    = await fetch(`${API_URL}/nlq/query`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID, user_role: profile }),
+        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID, user_role: profile, explore: exploreMode }),
       });
       const result: NLQResult = await res.json();
       const doneMsg: Message  = { id: pendingId, role: 'assistant', question: question.trim(), result, ts: new Date().toISOString() };
@@ -553,6 +554,17 @@ function QueryPageInner() {
               disabled={isLoading}
             />
             <button
+              onClick={() => setExploreMode((v) => !v)}
+              title={exploreMode ? 'LIDA insights ON — click to disable' : 'Enable LIDA insights'}
+              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+                exploreMode
+                  ? 'bg-violet-600 hover:bg-violet-700'
+                  : 'bg-muted hover:bg-muted/80 border border-border'
+              }`}
+            >
+              <FlaskConical className={`w-4 h-4 ${exploreMode ? 'text-white' : 'text-muted-foreground'}`} />
+            </button>
+            <button
               onClick={() => void sendQuestion(input)}
               disabled={!input.trim() || isLoading}
               className="shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
@@ -563,6 +575,7 @@ function QueryPageInner() {
             </button>
           </div>
           <p className="text-xs text-muted-foreground text-center mt-2">
+            {exploreMode && <span className="text-violet-400 font-medium">LIDA insights enabled · </span>}
             Queries are executed read-only against your Frammer database.
           </p>
         </div>

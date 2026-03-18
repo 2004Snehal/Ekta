@@ -56,6 +56,11 @@ def _build_vanna():
                     base_url="https://api.groq.com/openai/v1",
                 )
 
+            def extract_sql(self, llm_response: str) -> str:
+                # Return the full LLM response so _parse_vanna_output can
+                # extract both the SQL and our JSON metadata block.
+                return llm_response
+
         vn = VannaGroq(config={
             "api_key": GROQ_API_KEY,
             "model": LLM_MODEL,
@@ -69,7 +74,8 @@ def _build_vanna():
         from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
 
         class VannaOpenAI(ChromaDB_VectorStore, OpenAI_Chat):
-            pass
+            def extract_sql(self, llm_response: str) -> str:
+                return llm_response
 
         vn = VannaOpenAI(config={
             "api_key": OPENAI_API_KEY,
@@ -88,6 +94,9 @@ def _build_vanna():
                 def __init__(self, config=None):
                     ChromaDB_VectorStore.__init__(self, config=config)
                     GoogleGeminiChat.__init__(self, config=config)
+
+                def extract_sql(self, llm_response: str) -> str:
+                    return llm_response
 
             vn = VannaGemini(config={
                 "api_key": GOOGLE_API_KEY,
@@ -341,6 +350,7 @@ def _parse_vanna_output(raw: str) -> tuple:
     """Split Vanna's raw output into (sql_string, chart_meta_dict)."""
     chart_meta = {}
 
+    # Extract JSON block first and remove it from the string
     json_match = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
     if json_match:
         try:
@@ -349,6 +359,16 @@ def _parse_vanna_output(raw: str) -> tuple:
             logger.warning("Could not parse chart JSON: %s", exc)
         raw = raw[: json_match.start()] + raw[json_match.end():]
 
-    sql = re.sub(r"```sql\s*", "", raw)
-    sql = re.sub(r"```\s*", "", sql)
-    return sql.strip(), chart_meta
+    # Try to extract SQL from inside ```sql ... ``` fence (ignores any preamble text)
+    sql_match = re.search(r"```sql\s*(.*?)\s*```", raw, re.DOTALL | re.IGNORECASE)
+    if sql_match:
+        sql = sql_match.group(1).strip()
+    else:
+        # No fence — strip any remaining backtick blocks and take what's left
+        sql = re.sub(r"```\w*\s*", "", raw)
+        sql = re.sub(r"```\s*", "", sql)
+        # If model added preamble text, try to find the SELECT statement
+        select_match = re.search(r"(SELECT\b.*)", sql, re.DOTALL | re.IGNORECASE)
+        sql = select_match.group(1).strip() if select_match else sql.strip()
+
+    return sql, chart_meta
