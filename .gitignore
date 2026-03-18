@@ -57,7 +57,6 @@ lerna-debug.log*
 .pnp.*
 
 # Build outputs
-dist/
 dist-ssr/
 *.local
 
@@ -65,9 +64,6 @@ dist-ssr/
 .next/
 out/
 .vercel
-
-# Vite
-*.local
 
 # IDE / Editor
 .vscode/
@@ -100,6 +96,6 @@ logs/
 *.tmp
 *.temp
 
-data
+/data/
 
-claude
+.claude/
