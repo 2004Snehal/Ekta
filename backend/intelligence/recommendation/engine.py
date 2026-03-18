@@ -19,7 +19,7 @@ from intelligence.recommendation.prompts import build_recommendation_prompt
 import intelligence.recommendation.cache as rec_cache
 
 # Reuse the LLM abstraction from the NLQ module
-from intelligence.nlq.llm import call_llm
+from intelligence.nlq.llm import call_llm_text as call_llm
 
 log = logging.getLogger("recommendation.engine")
 _SEP = "─" * 52
@@ -52,7 +52,8 @@ def get_recommendations(ctx: DashboardContext, conn) -> RecommendationResponse:
     # ── 5. LLM call ───────────────────────────────────────────────────────────
     t1 = time.perf_counter()
     try:
-        llm_response = call_llm(system_prompt, user_message)
+        raw_text = call_llm(user_message, system_prompt)
+        llm_response = json.loads(raw_text.strip().removeprefix("```json").removesuffix("```").strip())
     except Exception as e:
         log.error(f"[REC] LLM call failed  ({time.perf_counter()-t1:.2f}s): {e}")
         raise

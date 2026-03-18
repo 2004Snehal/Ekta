@@ -16,7 +16,7 @@ from typing import Optional
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY, VANNA_CHROMA_PATH
+from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, VANNA_CHROMA_PATH
 
 from intelligence.nlq.context import fetch_live_schema
 
@@ -41,7 +41,30 @@ _vanna_instance = None
 def _build_vanna():
     provider = LLM_PROVIDER.lower()
 
-    if provider == "openai":
+    if provider == "groq":
+        from vanna.legacy.openai.openai_chat import OpenAI_Chat
+        from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
+        from openai import OpenAI as OpenAIClient
+
+        class VannaGroq(ChromaDB_VectorStore, OpenAI_Chat):
+            def __init__(self, config=None):
+                ChromaDB_VectorStore.__init__(self, config=config)
+                OpenAI_Chat.__init__(self, config=config)
+                # Point the OpenAI client at Groq's OpenAI-compatible endpoint
+                self.client = OpenAIClient(
+                    api_key=config.get("api_key"),
+                    base_url="https://api.groq.com/openai/v1",
+                )
+
+        vn = VannaGroq(config={
+            "api_key": GROQ_API_KEY,
+            "model": LLM_MODEL,
+            "path": VANNA_CHROMA_PATH,
+        })
+        logger.info("Vanna initialised with Groq backend (%s).", LLM_MODEL)
+        return vn
+
+    elif provider == "openai":
         from vanna.legacy.openai.openai_chat import OpenAI_Chat
         from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
 
@@ -77,7 +100,7 @@ def _build_vanna():
             raise RuntimeError("Install 'vanna[google]' and 'google-generativeai' for Gemini support.")
 
     else:
-        raise ValueError(f"Unsupported LLM_PROVIDER for Vanna: '{provider}'. Use 'openai' or 'gemini'.")
+        raise ValueError(f"Unsupported LLM_PROVIDER for Vanna: '{provider}'. Use 'groq', 'openai', or 'gemini'.")
 
 
 def get_vanna():

@@ -314,7 +314,7 @@ function QueryPageInner() {
       const res    = await fetch(`${API_URL}/nlq/query`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID, profile }),
+        body:    JSON.stringify({ question: question.trim(), client_id: CLIENT_ID, user_role: profile }),
       });
       const result: NLQResult = await res.json();
       const doneMsg: Message  = { id: pendingId, role: 'assistant', question: question.trim(), result, ts: new Date().toISOString() };

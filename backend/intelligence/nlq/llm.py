@@ -11,7 +11,7 @@ import os
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY
+from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY, GROQ_API_KEY
 
 logger = logging.getLogger("nlq.llm")
 
@@ -39,7 +39,9 @@ def call_llm_text(prompt: str, system: str = None) -> str:
     Used by self-healing (SQL correction) and answer generation.
     Automatically retries on quota errors.
     """
-    if LLM_PROVIDER == "gemini":
+    if LLM_PROVIDER == "groq":
+        fn = _call_groq_text
+    elif LLM_PROVIDER == "gemini":
         fn = _call_gemini_text
     elif LLM_PROVIDER == "openai":
         fn = _call_openai_text
@@ -180,6 +182,23 @@ def _call_gemini_text(prompt: str, system: str = None) -> str:
         config=config or None,
     )
     return response.text.strip()
+
+
+# ── Groq ──────────────────────────────────────────────────────────────────────
+
+def _call_groq_text(prompt: str, system: str = None) -> str:
+    from groq import Groq
+    client = Groq(api_key=GROQ_API_KEY)
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    response = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=messages,
+        temperature=0.2,
+    )
+    return response.choices[0].message.content.strip()
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────

@@ -71,9 +71,8 @@ def run_nlq_query(
         log.warning("[NLQ] Non-SELECT blocked")
         return _error("Generated a non-SELECT statement — blocked.", question)
 
-    sql_upper = sql.upper()
     for forbidden in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"):
-        if forbidden in sql_upper:
+        if re.search(rf"\b{forbidden}\b", sql, re.IGNORECASE):
             log.warning("[NLQ] %s statement blocked", forbidden)
             return _error(f"Generated SQL containing {forbidden} — blocked.", question)
 
@@ -82,7 +81,7 @@ def run_nlq_query(
         log.warning("[NLQ] Missing client_id filter — injecting wrapper")
         sql = f"SELECT * FROM ({sql.rstrip(';')}) _nlq WHERE client_id = {int(client_id)}"
 
-    if "LIMIT" not in sql_upper:
+    if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE):
         sql = sql.rstrip(";") + " LIMIT 500"
 
     # ── Step 3: Self-healing SQL execution ────────────────────────────────────
