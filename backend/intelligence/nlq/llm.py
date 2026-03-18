@@ -19,27 +19,16 @@ logger = logging.getLogger("nlq.llm")
 # ── Retry helper ──────────────────────────────────────────────────────────────
 
 def _is_quota_error(exc: Exception) -> bool:
+    """Check if exception is a quota/rate limit error."""
     msg = str(exc).lower()
     return "429" in msg or "quota" in msg or "rate limit" in msg or "resource_exhausted" in msg
 
 
 def _parse_retry_delay(exc: Exception, fallback: float = 5.0) -> float:
+    """Extract retry delay from exception message; fall back to exponential backoff."""
     import re
     match = re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+(?:\.\d+)?)', str(exc))
     return float(match.group(1)) + 1.0 if match else fallback
-
-
-def _retry(fn, *args, max_retries: int = 3, **kwargs):
-    for attempt in range(max_retries):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:
-            if _is_quota_error(exc) and attempt < max_retries - 1:
-                wait = _parse_retry_delay(exc, fallback=5.0 * (2 ** attempt))
-                logger.warning("LLM quota error (attempt %d/%d) — retrying in %.1fs.", attempt + 1, max_retries, wait)
-                time.sleep(wait)
-            else:
-                raise
 
 
 # ── Plain-text LLM call (used by self-healing and answer generation) ──────────
@@ -48,13 +37,30 @@ def call_llm_text(prompt: str, system: str = None) -> str:
     """
     Send a prompt to the configured LLM and return plain text.
     Used by self-healing (SQL correction) and answer generation.
+    Automatically retries on quota errors.
     """
     if LLM_PROVIDER == "gemini":
-        return _retry(_call_gemini_text, prompt, system)
+        fn = _call_gemini_text
     elif LLM_PROVIDER == "openai":
-        return _retry(_call_openai_text, prompt, system)
+        fn = _call_openai_text
     else:
         raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'.")
+
+    return _call_with_retry(fn, prompt, system)
+
+
+def _call_with_retry(fn, prompt: str, system: str = None, max_retries: int = 3) -> str:
+    """Wrapper for LLM calls with quota-aware retry logic."""
+    for attempt in range(max_retries):
+        try:
+            return fn(prompt, system)
+        except Exception as exc:
+            if _is_quota_error(exc) and attempt < max_retries - 1:
+                wait = _parse_retry_delay(exc, fallback=5.0 * (2 ** attempt))
+                logger.warning("LLM quota error (attempt %d/%d) — retrying in %.1fs.", attempt + 1, max_retries, wait)
+                time.sleep(wait)
+            else:
+                raise
 
 
 # ── Statistical pre-summarization (Python, no LLM) ───────────────────────────

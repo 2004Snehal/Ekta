@@ -235,15 +235,15 @@ Answer strategy rules:
 
 
 def _with_retry(vn, question: str, max_retries: int = 3) -> str:
+    """Call vn.generate_sql with automatic quota-aware retry logic."""
+    from intelligence.nlq.llm import _is_quota_error, _parse_retry_delay
+
     for attempt in range(max_retries):
         try:
             return vn.generate_sql(question)
         except Exception as exc:
-            msg = str(exc)
-            is_quota = "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower() or "resource_exhausted" in msg.lower()
-            if is_quota and attempt < max_retries - 1:
-                delay_match = re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+(?:\.\d+)?)', msg)
-                wait = float(delay_match.group(1)) + 1.0 if delay_match else 5.0 * (2 ** attempt)
+            if _is_quota_error(exc) and attempt < max_retries - 1:
+                wait = _parse_retry_delay(exc, fallback=5.0 * (2 ** attempt))
                 logger.warning("Vanna quota error (attempt %d/%d) — retrying in %.1fs.", attempt + 1, max_retries, wait)
                 time.sleep(wait)
             else:

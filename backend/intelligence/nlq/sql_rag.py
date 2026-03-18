@@ -11,7 +11,6 @@ Step 7: Update session context
 """
 
 import logging
-import numbers as _numbers
 import re
 import time
 from datetime import datetime
@@ -32,14 +31,12 @@ def run_nlq_query(
     session_id: str = "default",
     explore: bool = False,
     user_role: str = None,
-    profile: str = None,          # kept for backwards-compat; maps to user_role if set
 ) -> dict:
     """
     Execute the full NLQ pipeline.
     Returns a structured dict ready to send as an API response.
     """
-    # profile is the old arg name; user_role takes precedence
-    effective_role = user_role or profile
+    effective_role = user_role
 
     t_start = time.perf_counter()
     log.info(_SEP)
@@ -169,7 +166,7 @@ def _fill_chart_meta(vr, rows: list, question: str) -> None:
 
     first = rows[0]
     cols = list(first.keys())
-    numeric_cols = [c for c in cols if isinstance(first.get(c), _numbers.Number)]
+    numeric_cols = [c for c in cols if isinstance(first.get(c), (int, float))]
     text_cols = [c for c in cols if c not in numeric_cols]
 
     if not vr.x_column:

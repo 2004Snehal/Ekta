@@ -52,12 +52,12 @@ No SQL knowledge is required from the user.
 | Layer | Technology | Role |
 |---|---|---|
 | API | FastAPI (Python) | HTTP interface, request validation, pipeline orchestration |
-| LLM Provider | OpenAI / Gemini / Groq | SQL generation, self-healing, answer generation |
+| LLM Provider | OpenAI / Gemini | SQL generation, self-healing, answer generation |
 | RAG Engine | Vanna.AI + ChromaDB | Text-to-SQL with a persistent knowledge base |
 | Database | PostgreSQL (psycopg2) | SQL execution, data storage |
 | Data Processing | Pandas | DataFrame handling, LIDA input preparation |
 | Visualization AI | LIDA + Altair | Optional AI-generated Vega-Lite chart specifications |
-| Config | Pydantic Settings | Centralised, environment-driven configuration |
+| Config | `backend_config.py` (os.getenv) | Centralised, environment-driven configuration |
 
 ### 1.4 High-Level Architecture
 
@@ -187,11 +187,12 @@ user_role      = "founder"
 **Output:** A `VannaResult` dataclass:
 ```python
 VannaResult(
-    sql        = "SELECT client_id, COUNT(*) AS output_count ...",
-    chart_type = "bar",
-    x_column   = "client_id",
-    y_column   = "output_count",
-    title      = "Top 5 Clients by Output Volume"
+    sql             = "SELECT client_id, COUNT(*) AS output_count ...",
+    chart_type      = "bar",
+    x_column        = "client_id",
+    y_column        = "output_count",
+    title           = "Top 5 Clients by Output Volume",
+    answer_strategy = {"type": "top_n_ranked", "focus": ["winner", "spread", "total"]}
 )
 ```
 
@@ -200,7 +201,7 @@ Raw LLM prompting without RAG would require sending the entire schema on every c
 
 **What could go wrong:**
 - The LLM may hallucinate table or column names not in the schema. This is caught by Step 3 (self-healing).
-- The chart JSON block may be malformed or missing. The `_parse_vanna_output` parser handles this gracefully: it extracts what it can and leaves fields as `None`, which Step 3's `_fill_chart_meta` then infers from actual result data.
+- The chart JSON block may be malformed or missing. The `_parse_vanna_output` parser handles this gracefully: it extracts what it can and leaves fields as `None`, which `_fill_chart_meta` in `sql_rag.py` then infers from actual result data.
 - Quota/rate-limit errors (HTTP 429) are handled by a retry loop with exponential backoff.
 
 ---
@@ -218,10 +219,10 @@ question       = "Top 5 clients by output volume"
 
 **Output:**
 ```python
-(final_sql, rows, df)
+(final_sql, rows)
 # final_sql  = corrected (or original) SQL string
 # rows       = list[dict]  — raw query results
-# df         = pandas.DataFrame of rows
+# DataFrame is built from rows in sql_rag.py for LIDA
 ```
 
 **Why it is needed:**
@@ -318,7 +319,7 @@ If the LLM call fails (network error, quota), the system falls back gracefully t
 ### Step 6 — Knowledge Base Update
 
 **What happens:**
-After a successful SQL execution, the verified `(question → sql)` pair is stored back into Vanna's ChromaDB knowledge base via `vn.train(question=..., sql=...)`. This happens asynchronously in the background and does not block the response.
+After a successful SQL execution, the verified `(question → sql)` pair is stored back into Vanna's ChromaDB knowledge base via `vn.train(question=..., sql=...)`. This is a synchronous call in `store_successful_query()` — any ChromaDB write failure is caught and logged as a warning without affecting the response.
 
 **Why it is needed:**
 Every successful query teaches the system. The next time a similar question is asked, the verified SQL appears in the RAG retrieval results, increasing the probability of correct SQL generation without an LLM re-deriving the logic from scratch.
@@ -384,35 +385,54 @@ The key insight is that **only the most relevant context is retrieved**, not the
 
 Vanna organises its ChromaDB into separate collections for each training data type:
 
-**DDL (Schema):**
-```sql
-CREATE TABLE data.shortened_filtered_data (
-    video_id      BIGINT,
-    published     TEXT,
-    language      TEXT,
-    channel       TEXT,
-    ...
-);
-```
-These tell the LLM what tables and columns exist and what data types they hold.
+**Live Schema (as Documentation):**
 
-**Documentation:**
-```
-The PRIMARY table for all video analytics queries is: data.shortened_filtered_data
+Rather than splitting DDL into individual `CREATE TABLE` blocks, we train Vanna with the full schema as a single documentation string produced by `fetch_live_schema(conn)` at startup. This function introspects `information_schema` and `pg_matviews` to produce a human-readable description of every table, view, and materialized view in the `data` schema — including column names, types, and sample distinct values for low-cardinality text columns (up to 12 values per column, max 5 columns per table):
 
-Key columns:
-- published: TEXT — indicates whether a video was published. Use: LOWER(published) = 'yes'
-- language: TEXT — language name (e.g. 'English', 'Spanish'). No join needed.
 ```
-These tell the LLM *how* to use the schema correctly (e.g., the `published` column is a TEXT field, not a boolean — never use `WHERE published = TRUE`).
+DATABASE: PostgreSQL — live schema (all tables are in the 'data' schema)
+
+=== TABLE: data.fact_created_videos ===
+  video_id        (bigint)
+  client_id       (integer)
+  channel_id      (integer)
+  language_id     (integer)
+  published_flag  (boolean)
+  created_at      (timestamp without time zone)
+
+=== MATERIALIZED VIEW: data.mv_monthly_kpis ===
+  client_id         (integer)
+  channel_id        (integer)
+  month             (date)
+  created_count     (bigint)
+  published_count   (bigint)
+  publish_rate_pct  (numeric)
+...
+```
+
+The schema string is cached in-process for 5 minutes (`_CACHE_TTL = 300`). On server restart, if ChromaDB already has training data, the training step is skipped entirely — no retrain is needed.
+
+**Business Semantics Documentation:**
+```
+Business rules for Frammer AI analytics queries:
+
+- "published" means published_flag = TRUE (boolean column on fact_created_videos).
+- "publish rate" = published_count / created_count * 100 (available in mv_monthly_kpis as publish_rate_pct).
+- Always filter by client_id unless the question explicitly asks to compare clients.
+- Prefer materialized views for aggregate queries:
+    mv_monthly_kpis    → time-series / monthly trends
+    mv_channel_health  → per-channel comparisons
+    mv_user_performance → per-user stats
+- All tables and views live in the 'data' schema — always prefix with data.
+```
+These tell the LLM *how* to use the schema correctly — e.g., that `published_flag` is a boolean (not a TEXT field), which materialized views to prefer for aggregates, and to always include a `client_id` filter.
 
 **Question → SQL Pairs:**
 ```
 Q: "how many videos have been published"
-A: SELECT COUNT(*) AS published_count FROM data.shortened_filtered_data
-   WHERE LOWER(published) = 'yes';
+A: SELECT COUNT(*) AS published_count FROM data.fact_created_videos WHERE published_flag = TRUE;
 ```
-These act as few-shot examples: when a similar question is asked, the LLM sees a concrete correct example and mimics its pattern.
+These act as few-shot examples: when a similar question is asked, the LLM sees a concrete correct example and mimics its pattern. Six star-schema examples covering the main query patterns are loaded at startup and added to ChromaDB only if the KB is empty.
 
 ### 3.4 How Retrieval Works
 
@@ -443,18 +463,30 @@ We extend Vanna's standard SQL generation by appending a chart inference suffix 
 ```
 After writing the SQL, also output a JSON block (fenced with ```json```) with:
 {
-  "chart_type": "line|bar|pie|table|scatter",
-  "x_column": "<column name for x-axis or category>",
-  "y_column": "<column name for y-axis or value>",
-  "title": "<short descriptive chart title>"
+  "chart_type": "line|bar|pie|table|stacked_bar",
+  "x": "<exact column alias from SELECT list for x-axis>",
+  "y": "<exact column alias from SELECT list for y-axis>",
+  "title": "<short descriptive chart title>",
+  "description": "<one sentence describing what the chart shows>",
+  "answer_strategy": {
+    "type": "time_series_trend|top_n_ranked|distribution|single_aggregate|detail_sample",
+    "focus": ["<aspect1>", "<aspect2>"]
+  }
 }
 
-Rules:
-- Time series (month/date/year trend) → line
-- Category vs numeric value → bar
-- Part-of-whole (percentage/share) → pie
-- Two continuous numeric columns → scatter
-- Otherwise → table
+Chart type rules:
+- line        → time series / trends over months
+- bar         → comparisons across categories (channels, users, types)
+- pie         → distributions / proportions (use only when ≤ 10 categories)
+- stacked_bar → multi-series category comparisons
+- table       → detailed row-level data or queries with many columns
+
+Answer strategy rules:
+- time_series_trend  → any over-time trend. focus: peak, trough, direction, change_pct
+- top_n_ranked       → ranking questions. focus: winner, spread, total
+- distribution       → share/proportion questions. focus: dominant_slice, total
+- single_aggregate   → COUNT/SUM returning one row. focus: exact_value
+- detail_sample      → row-level table queries. focus: top_rows, row_count
 ```
 
 The `_parse_vanna_output` function then splits the raw LLM output into the SQL portion and the JSON portion:
@@ -496,19 +528,26 @@ After writing the SQL, also output a JSON block...  ← chart inference suffix
 **What we receive from Vanna:**
 ```
 SELECT
-  client_id,
-  COUNT(*) AS output_count
-FROM data.shortened_filtered_data
-GROUP BY client_id
-ORDER BY output_count DESC
-LIMIT 5;
+  dc.channel_name AS channel,
+  SUM(ch.total_created) AS total_created,
+  ROUND(ch.publish_rate_pct, 2) AS publish_rate_pct
+FROM data.mv_channel_health ch
+JOIN data.dim_channel dc ON ch.channel_id = dc.channel_id
+WHERE ch.client_id = 1
+GROUP BY dc.channel_name, ch.publish_rate_pct
+ORDER BY publish_rate_pct DESC;
 
 ```json
 {
   "chart_type": "bar",
-  "x_column": "client_id",
-  "y_column": "output_count",
-  "title": "Top 5 Clients by Output Volume"
+  "x": "channel",
+  "y": "publish_rate_pct",
+  "title": "Top 5 Clients by Output Volume",
+  "description": "Publish rate percentage per channel, ranked highest to lowest",
+  "answer_strategy": {
+    "type": "top_n_ranked",
+    "focus": ["winner", "spread", "total"]
+  }
 }
 ```
 
@@ -559,36 +598,40 @@ The `heal_sql` function sends the LLM this structured prompt:
 You are a PostgreSQL expert. The following SQL query produced an error.
 
 ## Available Tables (ONLY use these)
-data.shortened_filtered_data, ...
+data.fact_created_videos, data.dim_channel, data.dim_language, data.dim_user,
+data.mv_monthly_kpis, data.mv_channel_health, data.mv_user_performance, ...
 
 ## Full Database Schema
-CREATE TABLE data.shortened_filtered_data (
-  video_id BIGINT,
-  published TEXT,
+DATABASE: PostgreSQL — live schema (all tables are in the 'data' schema)
+
+=== TABLE: data.fact_created_videos ===
+  video_id        (bigint)
+  client_id       (integer)
+  published_flag  (boolean)
   ...
-);
 
 ## Original User Question
-Top 5 clients by output volume
+Top 5 channels by publish rate
 
 ## Broken SQL
-SELECT client_id, COUNT(*) FROM data.fact_videos ...
+SELECT channel_name, COUNT(*) FROM data.fact_videos ...
 
 ## Error
 ERROR: relation "data.fact_videos" does not exist
 
 Fix the SQL so it runs without errors using ONLY the tables listed above.
 IMPORTANT: Do NOT generate placeholder/dummy SQL like SELECT 0 or SELECT 'data not available'.
+If the data genuinely does not exist, use WHERE 1=0.
 Return ONLY the corrected SQL with no explanation, no markdown fences, no extra text.
 ```
+
+The schema passed to the heal prompt comes from `fetch_live_schema(conn)` — the same live introspection used at training time, so the LLM corrects to tables and columns that actually exist in the current database.
 
 The PostgreSQL error message is the key ingredient. It tells the LLM **exactly** what went wrong:
 - `relation "X" does not exist` → wrong table
 - `column "Y" does not exist` → wrong column
 - `operator does not exist: text = boolean` → type mismatch
 - `syntax error at or near "Z"` → malformed SQL
-
-The live schema (fetched fresh from the database, not cached) ensures the LLM corrects to an actually existing table/column.
 
 ### 4.4 Limitations
 
@@ -636,8 +679,8 @@ PostgreSQL rows
       ▼  RealDictCursor → list[dict]
 [{"language": "English", "count": 4200}, ...]
       │
-      ▼  _flatten_rows() in routes.py
-Nested dicts/lists (JSONB columns) → JSON strings
+      ▼  _serialize() in sql_rag.py
+datetime/Decimal/nested dict values → JSON-safe types
       │
       ├──▶  rows  (list[dict])  → JSON response body
       │
@@ -730,7 +773,7 @@ The LIDA `persona` is customised per user role:
 | `client_success` | Per-client delivery rates, publish performance, clients needing attention |
 | `operations` | Workflow throughput, upload durations, processing efficiency |
 | `editorial` | Content type distribution, language performance, team contributions |
-| `tech` | System usage patterns, data quality distributions, technical anomalies |
+| `tech_product` | System usage patterns, data quality distributions, technical anomalies |
 
 This ensures that when a founder and an operations engineer see insights from the same query, those insights are framed differently and highlight different aspects of the data.
 
@@ -932,7 +975,7 @@ The API accepts an optional `user_role` field. Five roles are defined, each with
 | `client_success` | Client Success | Per-client delivery metrics, publish rates, SLA indicators |
 | `operations` | Operations Team | Throughput, upload durations, bottlenecks, workflow efficiency |
 | `editorial` | Editorial / Production | Content by language/channel/type, team contributions |
-| `tech` | Tech / Product | System metrics, data quality, usage patterns, anomalies |
+| `tech_product` | Tech / Product | System metrics, data quality, usage patterns, anomalies |
 
 ### 10.3 Example: Same Question, Different Roles
 
@@ -985,22 +1028,21 @@ After writing the SQL, also output a JSON block...
 ```
 
 Vanna retrieves from ChromaDB:
-- DDL for `data.shortened_filtered_data`
-- Documentation: *"Use LOWER(published) = 'yes' for published filter"*
+- Live schema documentation for `data.mv_channel_health`, `data.dim_channel`
+- Business semantics: *"published_flag = TRUE; prefer materialized views for aggregates"*
 - Q→SQL example: *"which channel has the highest publish rate"* (from initial training)
 
 LLM generates:
 ```sql
 SELECT
-  channel,
-  COUNT(*) AS total_videos,
-  COUNT(CASE WHEN LOWER(published) = 'yes' THEN 1 END) AS published_videos,
-  ROUND(
-    100.0 * COUNT(CASE WHEN LOWER(published) = 'yes' THEN 1 END) / NULLIF(COUNT(*), 0),
-    2
-  ) AS publish_rate_pct
-FROM data.shortened_filtered_data
-GROUP BY channel
+  dc.channel_name AS channel,
+  SUM(ch.total_created) AS total_created,
+  SUM(ch.total_published) AS total_published,
+  ROUND(ch.publish_rate_pct, 2) AS publish_rate_pct
+FROM data.mv_channel_health ch
+JOIN data.dim_channel dc ON ch.channel_id = dc.channel_id
+WHERE ch.client_id = 1
+GROUP BY dc.channel_name, ch.publish_rate_pct
 ORDER BY publish_rate_pct DESC
 LIMIT 1;
 ```
@@ -1024,8 +1066,8 @@ LIMIT 1;
 SQL executes successfully on first attempt.
 
 ```python
-rows = [{"channel": "Alpha Studio", "total_videos": 3200, "published_videos": 2784, "publish_rate_pct": 87.0}]
-df   = pd.DataFrame(rows)
+rows = [{"channel": "Alpha Studio", "total_created": 3200, "total_published": 2784, "publish_rate_pct": 87.0}]
+# DataFrame is built from rows in sql_rag.py for LIDA
 ```
 
 ### Step 4 — LIDA
@@ -1038,7 +1080,7 @@ Skipped (`explore: false`).
 ```python
 summary = {
     "total_rows": 1,
-    "top_5": [{"channel": "Alpha Studio", "total_videos": 3200, "published_videos": 2784, "publish_rate_pct": 87.0}],
+    "top_5": [{"channel": "Alpha Studio", "total_created": 3200, "total_published": 2784, "publish_rate_pct": 87.0}],
     "bottom_3": [],
     "total": 87.0,
     "top1_share_pct": 100.0,
@@ -1091,8 +1133,8 @@ session["user_alice_session"] = {
   "x": "channel",
   "y": "publish_rate_pct",
   "title": "Channel with Highest Publish Rate",
-  "data": [{"channel": "Alpha Studio", "total_videos": 3200, "published_videos": 2784, "publish_rate_pct": 87.0}],
-  "columns": ["channel", "total_videos", "published_videos", "publish_rate_pct"],
+  "data": [{"channel": "Alpha Studio", "total_created": 3200, "total_published": 2784, "publish_rate_pct": 87.0}],
+  "columns": ["channel", "total_created", "total_published", "publish_rate_pct"],
   "row_count": 1,
   "insights": [],
   "processing_time_ms": 1843.2
@@ -1147,16 +1189,16 @@ Multi-part questions like *"Show me the top 5 channels, and for each, the top 3 
 **LIDA is stateless relative to the main query:**
 LIDA's goal generation does not know what the user originally asked — it only sees the DataFrame. Its generated insights may not always be contextually relevant to the user's intent.
 
-**Single-table bias:**
-The training documentation explicitly directs the LLM to use `data.shortened_filtered_data` for all queries. Multi-table joins for complex dimension lookups are currently discouraged and may fail.
+**Join complexity:**
+The training examples cover the core star-schema joins (`fact_created_videos` + dim tables, materialized views). Complex multi-hop joins or queries that span tables not covered by training examples may generate incorrect SQL and require more self-healing rounds.
 
 **In-memory session store:**
 Sessions are lost on server restart. There is no persistent session storage (Redis, database) — sessions are Python dicts in the process memory.
 
 ### 13.2 Future Improvements
 
-**Semantic layer (MetricFlow / Cube.js):**
-A semantic layer sits between the LLM and PostgreSQL, pre-defining metrics (`publish_rate`, `output_volume`), dimensions, and relationships. The LLM generates against a controlled metric vocabulary rather than raw SQL, dramatically reducing the surface area for errors.
+**Semantic layer (Cube.js / dbt Semantic Layer):**
+A semantic layer sitting between the LLM and PostgreSQL can pre-define metrics (`publish_rate`, `output_volume`), dimensions, and relationships. The LLM would generate against a controlled metric vocabulary rather than raw SQL, dramatically reducing the surface area for errors.
 
 **Query decomposition / planning:**
 For complex questions, an initial LLM step breaks the question into sub-questions, executes each independently, and combines results. This is similar to the "chain-of-thought" approach applied to SQL.
