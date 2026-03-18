@@ -44,38 +44,31 @@ _DIM_LABELS = {
 
 _SQL = """
     SELECT
-        f.uploaded_at::date                                               AS date,
-        dc_cl.client_name                                                 AS client,
-        dc.channel_name                                                   AS channel,
-        du.user_name                                                      AS "user",
-        COALESCE(dl.language_code,  'unknown')                           AS language,
-        COALESCE(dit.type_name,     'unknown')                           AS type,
-        COALESCE(dp.platform_name,  'none')                              AS platform,
-        COALESCE(dot.type_name,     'unknown')                           AS workflow,
-        CASE WHEN du.is_bot THEN 'Auto' ELSE 'Manual' END               AS publisher,
-        COALESCE(dit.category,      'uncategorized')                     AS content_bucket,
-        CASE WHEN f.published_flag
-             THEN 'published' ELSE 'processed' END                       AS status,
+        uploaded_at::date                                                          AS date,
+        client_id::text                                                            AS client,
+        COALESCE(channel,            'unknown')                                   AS channel,
+        COALESCE(uploaded_by,        'unknown')                                   AS "user",
+        COALESCE(language,           'unknown')                                   AS language,
+        COALESCE(type,               'unknown')                                   AS type,
+        COALESCE(published_platform, 'none')                                      AS platform,
+        COALESCE(output_type,        'unknown')                                   AS workflow,
+        'Manual'                                                                  AS publisher,
+        'uncategorized'                                                           AS content_bucket,
+        CASE WHEN LOWER(published) = 'yes'
+             THEN 'published' ELSE 'processed' END                               AS status,
 
         -- metrics (aggregated per date+dimension row)
-        COUNT(DISTINCT f.video_id)                                        AS uploaded_videos,
-        COUNT(*)                                                          AS processed_videos,
-        COUNT(*) FILTER (WHERE f.published_flag)                         AS published_videos,
-        COUNT(*) FILTER (WHERE f.published_flag)                         AS promoted_videos,
-        0                                                                 AS engagement,
-        COALESCE(ROUND(AVG(f.created_duration_secs)::numeric, 0), 0)    AS avg_duration_seconds
+        COUNT(DISTINCT video_id)                                                  AS uploaded_videos,
+        COUNT(*)                                                                  AS processed_videos,
+        COUNT(*) FILTER (WHERE LOWER(published) = 'yes')                        AS published_videos,
+        COUNT(*) FILTER (WHERE LOWER(published) = 'yes')                        AS promoted_videos,
+        0                                                                         AS engagement,
+        COALESCE(ROUND(AVG(uploaded_hours * 3600)::numeric, 0), 0)             AS avg_duration_seconds
 
-    FROM  fact_created_videos f
-    JOIN  dim_client    dc_cl ON dc_cl.client_id   = f.client_id
-    JOIN  dim_channel   dc    ON dc.channel_id     = f.channel_id
-    JOIN  dim_user      du    ON du.user_id        = f.user_id
-    LEFT JOIN dim_language   dl  ON dl.language_id    = f.language_id
-    LEFT JOIN dim_input_type dit ON dit.input_type_id = f.input_type_id
-    LEFT JOIN dim_output_type dot ON dot.output_type_id = f.output_type_id
-    LEFT JOIN dim_platform   dp  ON dp.platform_id    = f.published_platform_id
+    FROM  data.shortened_filtered_data
 
-    WHERE f.client_id = %s
-      AND f.uploaded_at::date >= %s
+    WHERE client_id = %s
+      AND uploaded_at::date >= %s
 
     GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
     ORDER BY 1 DESC
@@ -102,7 +95,7 @@ def get_dashboard_data(
 
         # Data window metadata
         cur.execute(
-            "SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM fact_created_videos WHERE client_id = %s",
+            "SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM data.shortened_filtered_data WHERE client_id = %s",
             (client_id,),
         )
         bounds = cur.fetchone()

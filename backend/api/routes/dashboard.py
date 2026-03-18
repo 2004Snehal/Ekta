@@ -12,28 +12,30 @@ router = APIRouter()
 
 @router.get("/filters/options")
 def get_filter_options(client_id: int = Query(1)):
-    """Return dropdown options: channels, input types, languages, date range."""
+    """Return dropdown options derived directly from data.shortened_filtered_data."""
     with get_conn() as conn:
         cur = conn.cursor()
 
         cur.execute(
-            "SELECT channel_id, channel_name, channel_code FROM dim_channel WHERE client_id = %s AND is_active ORDER BY channel_name",
+            "SELECT DISTINCT channel FROM data.shortened_filtered_data WHERE client_id = %s AND channel IS NOT NULL ORDER BY channel",
             (client_id,),
         )
-        channels = [{"id": r[0], "name": r[1], "code": r[2]} for r in cur.fetchall()]
+        channels = [{"id": r[0], "name": r[0], "code": r[0]} for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT input_type_id, type_name, category FROM dim_input_type ORDER BY type_name"
+            "SELECT DISTINCT type FROM data.shortened_filtered_data WHERE client_id = %s AND type IS NOT NULL ORDER BY type",
+            (client_id,),
         )
-        input_types = [{"id": r[0], "name": r[1], "category": r[2]} for r in cur.fetchall()]
+        input_types = [{"id": r[0], "name": r[0], "category": r[0]} for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT language_id, language_code, language_name FROM dim_language ORDER BY language_name"
+            "SELECT DISTINCT language FROM data.shortened_filtered_data WHERE client_id = %s AND language IS NOT NULL ORDER BY language",
+            (client_id,),
         )
-        languages = [{"id": r[0], "code": r[1], "name": r[2]} for r in cur.fetchall()]
+        languages = [{"id": r[0], "code": r[0], "name": r[0]} for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT MIN(uploaded_at), MAX(uploaded_at) FROM fact_created_videos WHERE client_id = %s",
+            "SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM data.shortened_filtered_data WHERE client_id = %s",
             (client_id,),
         )
         row = cur.fetchone()
@@ -50,64 +52,51 @@ def get_filter_options(client_id: int = Query(1)):
 @router.get("/kpis/summary")
 def get_kpis_summary(
     client_id: int = Query(1),
-    channel_id: Optional[int] = Query(None),
-    input_type_id: Optional[int] = Query(None),
-    language_id: Optional[int] = Query(None),
+    channel: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
 ):
-    """Monthly KPI rollup from mv_monthly_kpis with optional filters."""
-    filters = ["m.client_id = %s"]
+    """Monthly KPI rollup from data.shortened_filtered_data with optional filters."""
+    filters = ["client_id = %s"]
     params = [client_id]
 
-    if channel_id:
-        filters.append("m.channel_id = %s")
-        params.append(channel_id)
-    if input_type_id:
-        filters.append("m.input_type_id = %s")
-        params.append(input_type_id)
-    if language_id:
-        filters.append("m.language_id = %s")
-        params.append(language_id)
+    if channel:
+        filters.append("channel = %s")
+        params.append(channel)
+    if type:
+        filters.append("type = %s")
+        params.append(type)
+    if language:
+        filters.append("language = %s")
+        params.append(language)
     if date_from:
-        filters.append("m.month >= %s")
+        filters.append("uploaded_at::date >= %s")
         params.append(date_from)
     if date_to:
-        filters.append("m.month <= %s")
+        filters.append("uploaded_at::date <= %s")
         params.append(date_to)
 
     where = " AND ".join(filters)
     sql = f"""
         SELECT
-            m.month,
-            m.channel_id,
-            dc.channel_code,
-            dc.channel_name,
-            m.input_type_id,
-            di.type_name AS input_type,
-            m.output_type_id,
-            dot.type_name AS output_type,
-            m.language_id,
-            dl.language_code,
-            SUM(m.created_count)                    AS created_count,
-            SUM(m.published_count)                  AS published_count,
-            SUM(m.total_uploaded_duration_secs)     AS total_uploaded_secs,
-            SUM(m.total_created_duration_secs)      AS total_created_secs,
-            SUM(m.total_published_duration_secs)    AS total_published_secs,
+            DATE_TRUNC('month', uploaded_at::date)::date     AS month,
+            COALESCE(channel, 'unknown')                     AS channel_name,
+            COALESCE(type, 'unknown')                        AS input_type,
+            COALESCE(output_type, 'unknown')                 AS output_type,
+            COALESCE(language, 'unknown')                    AS language_code,
+            COUNT(*)                                         AS created_count,
+            COUNT(*) FILTER (WHERE LOWER(published) = 'yes') AS published_count,
             ROUND(
-                SUM(m.published_count)::NUMERIC / NULLIF(SUM(m.created_count), 0) * 100, 2
-            ) AS publish_rate_pct
-        FROM mv_monthly_kpis m
-        JOIN dim_channel  dc ON dc.channel_id  = m.channel_id
-        LEFT JOIN dim_input_type  di  ON di.input_type_id   = m.input_type_id
-        LEFT JOIN dim_output_type dot ON dot.output_type_id = m.output_type_id
-        LEFT JOIN dim_language    dl  ON dl.language_id     = m.language_id
+                COUNT(*) FILTER (WHERE LOWER(published) = 'yes')::NUMERIC
+                / NULLIF(COUNT(*), 0) * 100, 2
+            )                                                AS publish_rate_pct,
+            COALESCE(SUM(uploaded_hours * 3600), 0)         AS total_uploaded_secs
+        FROM data.shortened_filtered_data
         WHERE {where}
-        GROUP BY m.month, m.channel_id, dc.channel_code, dc.channel_name,
-                 m.input_type_id, di.type_name,
-                 m.output_type_id, dot.type_name,
-                 m.language_id, dl.language_code
-        ORDER BY m.month DESC, dc.channel_code
+        GROUP BY 1, 2, 3, 4, 5
+        ORDER BY month DESC, channel_name
     """
 
     with get_conn() as conn:
@@ -124,25 +113,25 @@ def get_kpis_summary(
 
 @router.get("/channels/health")
 def get_channels_health(client_id: int = Query(1)):
-    """Channel health summary from mv_channel_health."""
+    """Channel health summary from data.shortened_filtered_data."""
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
             SELECT
-                dc.channel_id,
-                dc.channel_name,
-                dc.channel_code,
-                dc.primary_language,
-                ch.total_created,
-                ch.total_published,
-                ch.publish_rate_pct,
-                ch.active_users,
-                ch.last_activity
-            FROM mv_channel_health ch
-            JOIN dim_channel dc ON dc.channel_id = ch.channel_id
-            WHERE ch.client_id = %s
-            ORDER BY dc.channel_code
+                COALESCE(channel, 'unknown')                                    AS channel_name,
+                COUNT(*)                                                        AS total_created,
+                COUNT(*) FILTER (WHERE LOWER(published) = 'yes')              AS total_published,
+                ROUND(
+                    COUNT(*) FILTER (WHERE LOWER(published) = 'yes')::NUMERIC
+                    / NULLIF(COUNT(*), 0) * 100, 2
+                )                                                               AS publish_rate_pct,
+                COUNT(DISTINCT uploaded_by)                                     AS active_users,
+                MAX(uploaded_at::date)                                          AS last_activity
+            FROM data.shortened_filtered_data
+            WHERE client_id = %s
+            GROUP BY channel
+            ORDER BY channel
             """,
             (client_id,),
         )
@@ -158,35 +147,31 @@ def get_channels_health(client_id: int = Query(1)):
 @router.get("/users/performance")
 def get_users_performance(
     client_id: int = Query(1),
-    channel_id: Optional[int] = Query(None),
+    channel: Optional[str] = Query(None),
 ):
-    """User performance from mv_user_performance."""
-    filters = ["up.client_id = %s"]
+    """User performance from data.shortened_filtered_data."""
+    filters = ["client_id = %s"]
     params = [client_id]
-    if channel_id:
-        filters.append("up.channel_id = %s")
-        params.append(channel_id)
+    if channel:
+        filters.append("channel = %s")
+        params.append(channel)
 
     where = " AND ".join(filters)
     sql = f"""
         SELECT
-            du.user_id,
-            du.user_name,
-            du.role,
-            du.is_bot,
-            dc.channel_id,
-            dc.channel_name,
-            dc.channel_code,
-            up.created_count,
-            up.published_count,
-            up.publish_rate_pct,
-            up.total_uploaded_duration_secs,
-            up.total_created_duration_secs
-        FROM mv_user_performance up
-        JOIN dim_user    du ON du.user_id    = up.user_id
-        JOIN dim_channel dc ON dc.channel_id = up.channel_id
+            COALESCE(uploaded_by, 'unknown')                                AS user_name,
+            COALESCE(channel, 'unknown')                                    AS channel_name,
+            COUNT(*)                                                        AS created_count,
+            COUNT(*) FILTER (WHERE LOWER(published) = 'yes')              AS published_count,
+            ROUND(
+                COUNT(*) FILTER (WHERE LOWER(published) = 'yes')::NUMERIC
+                / NULLIF(COUNT(*), 0) * 100, 2
+            )                                                               AS publish_rate_pct,
+            COALESCE(SUM(uploaded_hours * 3600), 0)                       AS total_uploaded_duration_secs
+        FROM data.shortened_filtered_data
         WHERE {where}
-        ORDER BY up.created_count DESC
+        GROUP BY uploaded_by, channel
+        ORDER BY created_count DESC
     """
 
     with get_conn() as conn:
@@ -201,21 +186,17 @@ def get_users_performance(
 @router.get("/kpis/totals")
 def get_kpi_totals(
     client_id: int = Query(1),
-    channel_id: Optional[int] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
 ):
-    """Aggregate KPI totals for the summary cards. Queries fact table directly."""
+    """Aggregate KPI totals for the summary cards."""
     filters = ["client_id = %s"]
     params = [client_id]
-    if channel_id:
-        filters.append("channel_id = %s")
-        params.append(channel_id)
     if date_from:
-        filters.append("uploaded_at >= %s")
+        filters.append("uploaded_at::date >= %s")
         params.append(date_from)
     if date_to:
-        filters.append("uploaded_at <= %s")
+        filters.append("uploaded_at::date <= %s")
         params.append(date_to)
 
     where = " AND ".join(filters)
@@ -226,12 +207,12 @@ def get_kpi_totals(
             SELECT
                 COUNT(DISTINCT video_id)                                            AS total_uploads,
                 COUNT(*)                                                            AS total_outputs,
-                COUNT(*) FILTER (WHERE published_flag)                             AS total_published,
+                COUNT(*) FILTER (WHERE LOWER(published) = 'yes')                  AS total_published,
                 ROUND(
-                    COUNT(*) FILTER (WHERE published_flag)::NUMERIC
+                    COUNT(*) FILTER (WHERE LOWER(published) = 'yes')::NUMERIC
                     / NULLIF(COUNT(*), 0) * 100, 2
                 )                                                                   AS publish_rate_pct
-            FROM fact_created_videos
+            FROM data.shortened_filtered_data
             WHERE {where}
             """,
             params,
