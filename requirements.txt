@@ -16,6 +16,7 @@ pandas>=2.0.0
 numpy
 apscheduler>=3.10.0
 vanna[chromadb]>=0.7.0
+
 chromadb>=0.5.0
 lida>=0.0.10
 altair>=5.0.0
