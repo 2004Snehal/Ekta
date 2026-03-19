@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
-import { Sidebar } from '@/components/Sidebar'
+import { AppShell } from '@/components/AppShell'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -37,13 +37,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="font-sans antialiased bg-background text-foreground">
-        <div className="flex">
-          <Sidebar />
-          <main className="ml-64 w-full">
-            {children}
-          </main>
-        </div>
+      <body className="font-sans antialiased bg-background text-foreground" suppressHydrationWarning>
+        <AppShell>{children}</AppShell>
         <Analytics />
       </body>
     </html>

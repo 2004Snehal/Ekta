@@ -90,6 +90,26 @@ CREATE TRIGGER trg_kpi_registry_updated
     BEFORE UPDATE ON internal.kpi_registry
     FOR EACH ROW EXECUTE FUNCTION internal.touch_updated_at();
 
+-- ── Users ────────────────────────────────────────────────────
+-- All signups land here with role='user'. role='admin' must be set
+-- directly in the database (never via the API).
+CREATE TABLE IF NOT EXISTS internal.users (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    user_profile  TEXT NOT NULL DEFAULT 'basic',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON internal.users (email);
+
+DROP TRIGGER IF EXISTS trg_users_updated ON internal.users;
+CREATE TRIGGER trg_users_updated
+    BEFORE UPDATE ON internal.users
+    FOR EACH ROW EXECUTE FUNCTION internal.touch_updated_at();
+
 -- ── Insight Dedup History ────────────────────────────────────
 -- Suppresses repeated insights within a rolling window.
 CREATE TABLE IF NOT EXISTS internal.pg_insight_history (
@@ -266,7 +286,7 @@ CREATE TABLE IF NOT EXISTS data.dim_team (
 
 -- ============================================================
 -- DATA SCHEMA — source table
--- (created by ingest_data.py --raw; do not define columns here)
+-- (created by ingest_data.py --raw -- do not define columns here)
 -- ============================================================
 
 -- data.shortened_filtered_data is created dynamically by ingest_data.py --raw

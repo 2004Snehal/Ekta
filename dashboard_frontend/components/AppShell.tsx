@@ -1,15 +1,15 @@
-'use client';
+1'use client';
 
 import { usePathname } from 'next/navigation';
-import { Sidebar } from '@/components/Sidebar';
+import { Sidebar } from './Sidebar';
 
-const AUTH_PATHS = ['/login', '/register'];
+const NO_SIDEBAR_PATHS = ['/login', '/signup'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthPage = AUTH_PATHS.some((p) => pathname.startsWith(p));
+  const hideSidebar = NO_SIDEBAR_PATHS.some((p) => pathname.startsWith(p));
 
-  if (isAuthPage) {
+  if (hideSidebar) {
     return <>{children}</>;
   }
 

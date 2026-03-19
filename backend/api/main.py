@@ -16,6 +16,8 @@ from api.routes import dashboard_data
 from api.routes import nlq_session
 from api.routes import kpi_lab
 from api.routes import data_manager
+from api.routes import auth as auth_route
+from api.routes import admin as admin_route
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,8 @@ app.include_router(nlq.router,            tags=["NLQ"])
 app.include_router(nlq_session.router,    tags=["NLQ"])
 app.include_router(kpi_lab.router,        tags=["KPI Lab"])     # Auto-KPI Discovery Engine
 app.include_router(data_manager.router,   tags=["Data Manager"]) # CSV append + row deletion
+app.include_router(auth_route.router,     tags=["Auth"])          # signup / login
+app.include_router(admin_route.router,    tags=["Admin"])         # admin console
 
 
 @app.get("/health")
