@@ -115,9 +115,12 @@ function SessionItem({
   onDelete: (e: React.MouseEvent) => void;
 }) {
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors group relative ${
+      onKeyDown={(e) => e.key === 'Enter' && onClick()}
+      className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors group relative cursor-pointer ${
         active ? 'bg-primary/20 border border-primary/40' : 'hover:bg-sidebar-accent border border-transparent'
       }`}
     >
@@ -136,7 +139,7 @@ function SessionItem({
       >
         <Trash2 className="w-3 h-3" />
       </button>
-    </button>
+    </div>
   );
 }
 
