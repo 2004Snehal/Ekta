@@ -608,10 +608,10 @@ export default function KPILabPage() {
                 {/* Summary row */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
-                    { label: 'Table Groups', value: result.table_groups.length, icon: Database },
-                    { label: 'Candidates',   value: result.candidate_kpis.length, icon: FlaskConical },
-                    { label: 'Good KPIs',    value: result.good_kpis.length, icon: CheckCircle2 },
-                    { label: 'Insights',     value: result.insights.length, icon: Lightbulb },
+                    { label: 'Table Groups', value: (result.table_groups   ?? []).length, icon: Database },
+                    { label: 'Candidates',   value: (result.candidate_kpis ?? []).length, icon: FlaskConical },
+                    { label: 'Good KPIs',    value: (result.good_kpis      ?? []).length, icon: CheckCircle2 },
+                    { label: 'Insights',     value: (result.insights        ?? []).length, icon: Lightbulb },
                   ].map(s => {
                     const Icon = s.icon;
                     return (
@@ -627,30 +627,30 @@ export default function KPILabPage() {
                 </div>
 
                 {/* Good KPIs */}
-                {result.good_kpis.length > 0 && (
+                {(result.good_kpis ?? []).length > 0 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <BarChart3 className="w-4 h-4 text-primary" />
                       <h2 className="font-semibold text-sm text-foreground">
                         Discovered KPIs
-                        <span className="ml-2 text-xs text-muted-foreground font-normal">{result.good_kpis.length} passed all filters</span>
+                        <span className="ml-2 text-xs text-muted-foreground font-normal">{(result.good_kpis ?? []).length} passed all filters</span>
                       </h2>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {result.good_kpis.map((kpi, i) => <KPIResultCard key={kpi.name ?? i} kpi={kpi} index={i} />)}
+                      {(result.good_kpis ?? []).map((kpi, i) => <KPIResultCard key={kpi.name ?? i} kpi={kpi} index={i} />)}
                     </div>
                   </div>
                 )}
 
                 {/* Candidate KPIs (generate mode only) */}
-                {result.candidate_kpis.length > 0 && result.good_kpis.length === 0 && (
+                {(result.candidate_kpis ?? []).length > 0 && (result.good_kpis ?? []).length === 0 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <FlaskConical className="w-4 h-4 text-primary" />
                       <h2 className="font-semibold text-sm text-foreground">Candidate KPIs</h2>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {result.candidate_kpis.map((kpi, i) => (
+                      {(result.candidate_kpis ?? []).map((kpi, i) => (
                         <div key={kpi.name ?? i} className="bg-card border border-border rounded-xl p-4 space-y-1.5">
                           {kpi.category && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{kpi.category}</span>}
                           <h3 className="font-semibold text-sm text-foreground">{kpi.name}</h3>
@@ -663,14 +663,14 @@ export default function KPILabPage() {
                 )}
 
                 {/* Table groups */}
-                {result.table_groups.length > 0 && (
+                {(result.table_groups ?? []).length > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Database className="w-4 h-4 text-primary" />
                       <h2 className="font-semibold text-sm text-foreground">Table Groups</h2>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {result.table_groups.map((group, i) => (
+                      {(result.table_groups ?? []).map((group, i) => (
                         <div key={i} className="flex items-center gap-1.5 bg-secondary border border-border rounded-lg px-3 py-1.5">
                           <span className="text-xs text-muted-foreground">Group {i + 1}:</span>
                           <span className="text-xs font-mono text-foreground">{group.join(' · ')}</span>
@@ -681,16 +681,16 @@ export default function KPILabPage() {
                 )}
 
                 {/* Insights */}
-                {result.insights.length > 0 && (
+                {(result.insights ?? []).length > 0 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <Lightbulb className="w-4 h-4 text-primary" />
                       <h2 className="font-semibold text-sm text-foreground">
-                        AI Insights <span className="ml-1 text-xs text-muted-foreground font-normal">{result.insights.length} generated</span>
+                        AI Insights <span className="ml-1 text-xs text-muted-foreground font-normal">{(result.insights ?? []).length} generated</span>
                       </h2>
                     </div>
                     <div className="space-y-2">
-                      {result.insights.map((ins, i) => <InsightCard key={i} insight={ins} />)}
+                      {(result.insights ?? []).map((ins, i) => <InsightCard key={i} insight={ins} />)}
                     </div>
                   </div>
                 )}
