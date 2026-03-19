@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import psycopg2.extras
@@ -452,3 +453,432 @@ def drop_table(
         conn.commit()
 
     return {"dropped": table_name}
+
+
+# ── Data Lab: allowed PostgreSQL types ────────────────────────────────────────
+
+_ALLOWED_PG_TYPES = {
+    "TEXT", "VARCHAR", "INTEGER", "BIGINT", "NUMERIC", "BOOLEAN",
+    "TIMESTAMPTZ", "TIMESTAMP", "DATE", "UUID", "JSONB",
+    "FLOAT", "REAL", "SMALLINT", "SERIAL", "BIGSERIAL",
+}
+
+_IDENT_RE = re.compile(r'^[A-Za-z0-9_]+$')
+
+
+def _valid_ident(name: str) -> bool:
+    return bool(name and _IDENT_RE.match(name))
+
+
+# ── Data Lab: schema relationships ────────────────────────────────────────────
+
+_LINKS_DDL = """
+CREATE TABLE IF NOT EXISTS internal.data_lab_links (
+    id          BIGSERIAL PRIMARY KEY,
+    from_table  TEXT NOT NULL,
+    from_column TEXT NOT NULL,
+    to_table    TEXT NOT NULL,
+    to_column   TEXT NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+
+def _ensure_links_table(cur) -> None:
+    cur.execute(_LINKS_DDL)
+
+
+@router.get("/schema/relationships")
+def list_relationships(_admin=Depends(require_admin)) -> Dict:
+    """Return FK constraints + logical links in the data schema."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+
+        # FK constraints from information_schema
+        cur.execute(
+            """
+            SELECT
+                tc.constraint_name,
+                kcu.table_name  AS from_table,
+                kcu.column_name AS from_column,
+                ccu.table_name  AS to_table,
+                ccu.column_name AS to_column,
+                'fk'            AS link_type
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema    = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+              ON tc.constraint_name = ccu.constraint_name
+             AND tc.table_schema    = ccu.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema    = %s
+            ORDER BY kcu.table_name, kcu.column_name
+            """,
+            (_DATA_SCHEMA,),
+        )
+        fk_rows = cur.fetchall()
+
+        # Logical (soft) links stored in internal.data_lab_links
+        _ensure_links_table(cur)
+        cur.execute(
+            "SELECT id, from_table, from_column, to_table, to_column FROM internal.data_lab_links ORDER BY id"
+        )
+        soft_rows = cur.fetchall()
+
+    relationships = [
+        {
+            "constraint_name": r[0],
+            "from_table": r[1],
+            "from_column": r[2],
+            "to_table": r[3],
+            "to_column": r[4],
+            "link_type": r[5],
+        }
+        for r in fk_rows
+    ] + [
+        {
+            "constraint_name": f"soft_{r[0]}",
+            "from_table": r[1],
+            "from_column": r[2],
+            "to_table": r[3],
+            "to_column": r[4],
+            "link_type": "logical",
+        }
+        for r in soft_rows
+    ]
+    return {"relationships": relationships}
+
+
+class CreateRelationshipRequest(BaseModel):
+    from_table: str
+    from_column: str
+    to_table: str
+    to_column: str
+    link_type: str = "logical"   # "fk" or "logical"
+
+
+@router.post("/schema/relationships")
+def create_relationship(
+    body: CreateRelationshipRequest,
+    _admin=Depends(require_admin),
+) -> Dict:
+    """
+    Define a link between two columns.
+
+    link_type='fk'      — real FK constraint (requires referential integrity).
+    link_type='logical' — soft link stored in metadata (no FK constraint).
+    """
+    for name in [body.from_table, body.to_table, body.from_column, body.to_column]:
+        if not _valid_ident(name):
+            raise HTTPException(status_code=400, detail=f"Invalid identifier: '{name}'")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        _assert_table_exists(cur, body.from_table)
+        _assert_table_exists(cur, body.to_table)
+
+        if body.link_type == "fk":
+            constraint = f"fk_{body.from_table}_{body.from_column}_{body.to_table}"
+            try:
+                cur.execute(
+                    f'ALTER TABLE {_DATA_SCHEMA}."{body.from_table}" '
+                    f'ADD CONSTRAINT "{constraint}" '
+                    f'FOREIGN KEY ("{body.from_column}") '
+                    f'REFERENCES {_DATA_SCHEMA}."{body.to_table}" ("{body.to_column}")'
+                )
+                conn.commit()
+            except Exception as exc:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {"created": constraint, "link_type": "fk"}
+        else:
+            _ensure_links_table(cur)
+            cur.execute(
+                """
+                INSERT INTO internal.data_lab_links (from_table, from_column, to_table, to_column)
+                VALUES (%s, %s, %s, %s) RETURNING id
+                """,
+                (body.from_table, body.from_column, body.to_table, body.to_column),
+            )
+            link_id = cur.fetchone()[0]
+            conn.commit()
+            return {"created": f"soft_{link_id}", "link_type": "logical"}
+
+
+@router.delete("/schema/relationships/{constraint_name}")
+def delete_relationship(
+    constraint_name: str,
+    from_table: str = Query(...),
+    _admin=Depends(require_admin),
+) -> Dict:
+    """Remove a FK constraint or a logical link."""
+    if not _valid_ident(from_table):
+        raise HTTPException(status_code=400, detail="Invalid table name.")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+
+        if constraint_name.startswith("soft_"):
+            link_id_str = constraint_name[5:]
+            if not link_id_str.isdigit():
+                raise HTTPException(status_code=400, detail="Invalid link id.")
+            _ensure_links_table(cur)
+            cur.execute("DELETE FROM internal.data_lab_links WHERE id = %s", (int(link_id_str),))
+        else:
+            if not _valid_ident(constraint_name):
+                raise HTTPException(status_code=400, detail="Invalid constraint name.")
+            cur.execute(
+                f'ALTER TABLE {_DATA_SCHEMA}."{from_table}" '
+                f'DROP CONSTRAINT IF EXISTS "{constraint_name}"'
+            )
+        conn.commit()
+
+    return {"dropped": constraint_name}
+
+
+# ── Data Lab: create table from manual column definitions ─────────────────────
+
+class ColumnDefModel(BaseModel):
+    name: str
+    type: str = "TEXT"
+    nullable: bool = True
+    is_pk: bool = False
+
+
+class CreateTableManualRequest(BaseModel):
+    table_name: str
+    columns: List[ColumnDefModel]
+
+
+@router.post("/table/create-manual")
+def create_table_manual(
+    body: CreateTableManualRequest,
+    _admin=Depends(require_admin),
+) -> Dict:
+    """Create a new table from manual column definitions (no CSV needed)."""
+    table_name = body.table_name.strip()
+    if not _valid_ident(table_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Table name may only contain letters, numbers, and underscores.",
+        )
+    if not body.columns:
+        raise HTTPException(status_code=400, detail="At least one column is required.")
+
+    col_defs: List[str] = []
+    pk_cols: List[str] = []
+    for col in body.columns:
+        name = col.name.strip()
+        if not _valid_ident(name):
+            raise HTTPException(status_code=400, detail=f"Invalid column name: '{name}'")
+        base_type = col.type.upper().split("(")[0]
+        if base_type not in _ALLOWED_PG_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unsupported type: '{col.type}'")
+        null_clause = "" if col.nullable else " NOT NULL"
+        col_defs.append(f'"{name}" {col.type}{null_clause}')
+        if col.is_pk:
+            pk_cols.append(f'"{name}"')
+
+    if pk_cols:
+        col_defs.append(f'PRIMARY KEY ({", ".join(pk_cols)})')
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema=%s AND table_name=%s",
+            (_DATA_SCHEMA, table_name),
+        )
+        if cur.fetchone():
+            raise HTTPException(status_code=409, detail=f"Table '{table_name}' already exists.")
+
+        cur.execute(
+            f'CREATE TABLE {_DATA_SCHEMA}."{table_name}" ({", ".join(col_defs)})'
+        )
+        conn.commit()
+
+    return {"created": table_name, "columns": [c.name for c in body.columns]}
+
+
+# ── Data Lab: add columns to existing table ───────────────────────────────────
+
+class AddColumnsRequest(BaseModel):
+    columns: List[ColumnDefModel]
+
+
+@router.post("/table/{table_name}/add-columns")
+def add_columns_to_table(
+    table_name: str,
+    body: AddColumnsRequest,
+    _admin=Depends(require_admin),
+) -> Dict:
+    """Add one or more new columns to an existing data schema table."""
+    if not body.columns:
+        raise HTTPException(status_code=400, detail="No columns provided.")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        _assert_table_exists(cur, table_name)
+
+        added: List[str] = []
+        for col in body.columns:
+            name = col.name.strip()
+            if not _valid_ident(name):
+                continue
+            base_type = col.type.upper().split("(")[0]
+            if base_type not in _ALLOWED_PG_TYPES:
+                continue
+            null_clause = "" if col.nullable else " NOT NULL DEFAULT ''"
+            cur.execute(
+                f'ALTER TABLE {_DATA_SCHEMA}."{table_name}" '
+                f'ADD COLUMN IF NOT EXISTS "{name}" {col.type}{null_clause}'
+            )
+            added.append(name)
+
+        conn.commit()
+
+    if not added:
+        raise HTTPException(status_code=400, detail="No valid columns to add.")
+
+    return {"altered": table_name, "columns_added": added}
+
+
+# ── Data Lab: update cell with cascade ────────────────────────────────────────
+
+class UpdateCellRequest(BaseModel):
+    join_column: str    # Column used to identify matching rows (PK or FK/link column)
+    join_value: Any     # Value of join_column for the target row(s)
+    target_column: str  # Column whose value is being changed
+    new_value: Any      # New value to set
+    cascade: bool = True
+
+
+def _get_all_links(cur, table_name: str, join_column: str) -> List[Dict]:
+    """Return all (related_table, related_col) pairs linked to (table_name, join_column)
+    via FK constraints OR logical links in data_lab_links."""
+    links: List[Dict] = []
+
+    # FK constraints
+    cur.execute(
+        """
+        SELECT
+            kcu.table_name  AS from_table,
+            kcu.column_name AS from_column,
+            ccu.table_name  AS to_table,
+            ccu.column_name AS to_column
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema    = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name = ccu.constraint_name
+         AND tc.table_schema    = ccu.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema    = %s
+          AND (
+                (kcu.table_name = %s AND kcu.column_name = %s)
+             OR (ccu.table_name = %s AND ccu.column_name = %s)
+          )
+        """,
+        (_DATA_SCHEMA, table_name, join_column, table_name, join_column),
+    )
+    for from_t, from_c, to_t, to_c in cur.fetchall():
+        if from_t == table_name and from_c == join_column:
+            related_table, related_col = to_t, to_c
+        else:
+            related_table, related_col = from_t, from_c
+        if related_table != table_name:
+            links.append({"table": related_table, "col": related_col})
+
+    # Logical links
+    try:
+        cur.execute(
+            """
+            SELECT from_table, from_column, to_table, to_column
+            FROM internal.data_lab_links
+            WHERE (from_table = %s AND from_column = %s)
+               OR (to_table   = %s AND to_column   = %s)
+            """,
+            (table_name, join_column, table_name, join_column),
+        )
+        for from_t, from_c, to_t, to_c in cur.fetchall():
+            if from_t == table_name and from_c == join_column:
+                related_table, related_col = to_t, to_c
+            else:
+                related_table, related_col = from_t, from_c
+            if related_table != table_name:
+                links.append({"table": related_table, "col": related_col})
+    except Exception:
+        pass  # data_lab_links may not exist yet
+
+    return links
+
+
+@router.patch("/table/{table_name}/update-cell")
+def update_cell(
+    table_name: str,
+    body: UpdateCellRequest,
+    _admin=Depends(require_admin),
+) -> Dict:
+    """
+    Update target_column to new_value for all rows where join_column = join_value.
+
+    If cascade=True, propagates the same target_column change to every table
+    linked via FK constraint or logical link on join_column — matching rows
+    by their own join column value (even if row order differs).
+    """
+    for col in [body.join_column, body.target_column]:
+        if not _valid_ident(col):
+            raise HTTPException(status_code=400, detail=f"Invalid column name: '{col}'")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        _assert_table_exists(cur, table_name)
+
+        # Update source table
+        cur.execute(
+            f'UPDATE {_DATA_SCHEMA}."{table_name}" '
+            f'SET "{body.target_column}" = %s '
+            f'WHERE "{body.join_column}" = %s',
+            (body.new_value, body.join_value),
+        )
+        rows_updated = cur.rowcount
+        cascaded: List[Dict] = []
+
+        if body.cascade:
+            links = _get_all_links(cur, table_name, body.join_column)
+            for link in links:
+                related_table = link["table"]
+                related_join_col = link["col"]
+
+                # Only cascade if the related table actually has the target column
+                cur.execute(
+                    """
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                    """,
+                    (_DATA_SCHEMA, related_table, body.target_column),
+                )
+                if not cur.fetchone():
+                    continue
+
+                cur.execute(
+                    f'UPDATE {_DATA_SCHEMA}."{related_table}" '
+                    f'SET "{body.target_column}" = %s '
+                    f'WHERE "{related_join_col}" = %s',
+                    (body.new_value, body.join_value),
+                )
+                if cur.rowcount > 0:
+                    cascaded.append({
+                        "table": related_table,
+                        "join_column": related_join_col,
+                        "rows_updated": cur.rowcount,
+                    })
+
+        conn.commit()
+
+    return {
+        "table": table_name,
+        "rows_updated": rows_updated,
+        "cascaded": cascaded,
+    }
