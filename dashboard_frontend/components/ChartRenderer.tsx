@@ -1,12 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ScatterChart, Scatter, Brush,
 } from 'recharts';
 import type { UniversalChartSpec } from '@/types/chart';
+import { ChartInsightPanel } from '@/components/ChartInsightPanel';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 const COLORS = ['#E5001A', '#2D9CDB', '#F2A11A', '#1DB954', '#9B59B6', '#E67E22'];
 
@@ -95,6 +98,116 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const hasDrill = Boolean(chart.drillDown);
   const cursorStyle = hasDrill ? 'pointer' : 'default';
   const [showAll, setShowAll] = useState(false);
+
+  // ── Hover insight state ────────────────────────────────────────────────────
+  const [insightVisible, setInsightVisible]       = useState(false);
+  const [descLoading,    setDescLoading]          = useState(false);
+  const [description,    setDescription]          = useState('');
+  const [dataLoading,    setDataLoading]          = useState(false);
+  const [insightSummary, setInsightSummary]       = useState('');
+  const [insightBullets, setInsightBullets]       = useState<string[]>([]);
+  const [descError,      setDescError]            = useState(false);
+  const [dataError,      setDataError]            = useState(false);
+
+  const hoverTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // description is per-chart-mount — fetched once
+  const descFetched   = useRef(false);
+  // data insights keyed by data fingerprint — re-fetched when data changes
+  const dataCache     = useRef<Map<string, { summary: string; insights: string[] }>>(new Map());
+
+  function dataFingerprint(data: Record<string, unknown>[]): string {
+    if (!data.length) return 'empty';
+    return `${data.length}|${JSON.stringify(data[0])}|${JSON.stringify(data[data.length - 1])}`;
+  }
+
+  const chartTitle = chart.title ?? chart.chart_type;
+
+  const fetchDescription = useCallback(async () => {
+    if (descFetched.current) return;
+    descFetched.current = true;
+    setDescLoading(true);
+    setDescError(false);
+    try {
+      const params = new URLSearchParams({ chart_title: chartTitle, chart_type: chart.chart_type });
+      if (xField) params.set('x_label', xField);
+      if (yField) params.set('y_label', yField);
+      const res = await fetch(`${API_BASE}/chart/description?${params}`);
+      if (res.ok) {
+        const json = await res.json();
+        setDescription(json.description ?? '');
+      } else {
+        setDescError(true);
+      }
+    } catch {
+      setDescError(true);
+    } finally {
+      setDescLoading(false);
+    }
+  }, [chartTitle, chart.chart_type, xField, yField]);
+
+  const fetchDataInsights = useCallback(async () => {
+    if (!chart.data?.length) return;
+    const fp = dataFingerprint(chart.data as Record<string, unknown>[]);
+    const cached = dataCache.current.get(fp);
+    if (cached) {
+      setInsightSummary(cached.summary);
+      setInsightBullets(cached.insights);
+      return;
+    }
+    setDataLoading(true);
+    setDataError(false);
+    setInsightSummary('');
+    setInsightBullets([]);
+    try {
+      const res = await fetch(`${API_BASE}/chart/data-insights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chart_title: chartTitle,
+          chart_type:  chart.chart_type,
+          x_label:     xField || undefined,
+          y_label:     yField || undefined,
+          data:        chart.data,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const entry = { summary: json.summary ?? '', insights: json.insights ?? [] };
+        dataCache.current.set(fp, entry);
+        setInsightSummary(entry.summary);
+        setInsightBullets(entry.insights);
+      } else {
+        setDataError(true);
+      }
+    } catch {
+      setDataError(true);
+    } finally {
+      setDataLoading(false);
+    }
+  }, [chart.data, chart.chart_type, chartTitle, xField, yField]);
+
+  // Re-fetch data insights when data changes (e.g. timeline/filter change)
+  useEffect(() => {
+    if (insightVisible) {
+      fetchDataInsights();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart.data]);
+
+  function handleMouseEnter() {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      setInsightVisible(true);
+      fetchDescription();
+      fetchDataInsights();
+    }, 400);
+  }
+
+  function handleMouseLeave() {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hideTimer.current = setTimeout(() => setInsightVisible(false), 300);
+  }
 
   function handleClick(dimensionKey: string, value: unknown) {
     if (onElementClick && value != null) {
@@ -312,7 +425,12 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   };
 
   return (
-    <div className="chart-panel">
+    <div
+      className="chart-panel"
+      style={{ position: 'relative' }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {chart.title && (
         <div className="flex items-center gap-3 mb-4">
           <span className="section-id">{chart.title}</span>
@@ -325,6 +443,16 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       )}
       {renderChart()}
       {chart.refLinks && chart.refLinks.length > 0 && <RefLinks links={chart.refLinks} />}
+      <ChartInsightPanel
+        visible={insightVisible}
+        description={description}
+        descriptionLoading={descLoading}
+        descriptionError={descError}
+        summary={insightSummary}
+        insights={insightBullets}
+        dataLoading={dataLoading}
+        dataError={dataError}
+      />
     </div>
   );
 }

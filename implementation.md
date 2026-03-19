@@ -9,8 +9,9 @@ TopNav + ProfileProvider    /profiles                   data.fact_created_videos
   5 Dashboard Sections      /analytics/*                data.dim_channel
   NLQ Chat                  /recommendations/*          data.dim_user
   Insight Narrator          /nlq/*                      data.dim_input_type
-                            /narrator/*                 data.mv_channel_health
-                            /dashboard                  data.mv_monthly_kpis
+  Chart Hover Insights      /narrator/*                 data.mv_channel_health
+                            /chart/insights             data.mv_monthly_kpis
+                            /dashboard
 ```
 
 ---
@@ -136,6 +137,7 @@ Automatically surfaced anomalies and trends.
 | `POST` | `/nlq/query` | Natural language to SQL with profile preamble |
 | `GET` | `/narrator/insights` | Cached insight cards from anomaly detection pipeline |
 | `POST` | `/narrator/run` | Trigger narrator pipeline manually |
+| `POST` | `/chart/insights` | On-demand LLM analysis of a single chart's visible data |
 
 ### Dashboard
 | Method | Path | Purpose |
@@ -160,6 +162,7 @@ Automatically surfaced anomalies and trends.
 | `InsightBanner` | Executive Summary | Inline severity-colored alert strips |
 | `RecommendationsPanel` | All dashboard sections | Collapsible LLM recommendations, context-aware by page |
 | `ChartRenderer` | All pages | Universal chart renderer (line, bar, pie, scatter, stacked, table) |
+| `ChartInsightPanel` | All pages (via ChartRenderer) | Floating hover panel showing LLM-generated insights for a chart |
 
 ---
 
@@ -170,6 +173,65 @@ Automatically surfaced anomalies and trends.
 **NLQ** — The system prompt includes a profile preamble that biases the LLM toward relevant query patterns. An editorial user asking "show me trends" gets content type breakdowns by default; an operations user gets throughput metrics.
 
 **Narrator** — Insight cards are framed for the audience. The same anomaly might be described as "revenue risk" for founders or "QC bottleneck" for operations.
+
+---
+
+## Chart Hover Insights
+
+When a user hovers over any chart on the dashboard, a floating panel slides in showing LLM-generated insights about the data visible in that specific chart.
+
+### How It Works
+
+```
+User hovers over chart (400ms debounce)
+    |
+    v
+ChartRenderer fires POST /chart/insights
+    { chart_title, chart_type, x_label, y_label, data[] }
+    |
+    v
+Chart Insight Agent (gemini-2.5-flash-lite)
+    - Formats chart data into compact text
+    - Calls LLM with strict system prompt
+    - LLM returns JSON: { summary, insights[] }
+    |
+    v
+ChartInsightPanel renders:
+    - Summary (one-sentence headline)
+    - 3–5 bullet insights referencing actual numbers
+    - Skeleton loader while waiting
+    - Error message if backend unreachable
+```
+
+### Key Design Decisions
+
+| Decision | Detail |
+|---|---|
+| **Model** | `gemini-2.5-flash-lite` — lightweight task, low latency |
+| **Data scope** | Only the exact rows rendered in the chart — no DB access |
+| **Fetch trigger** | 400ms hover debounce — avoids firing on accidental mouse-overs |
+| **Per-mount cache** | Result stored in `useRef` — re-hovering the same chart is instant |
+| **Hide delay** | 300ms after mouse leaves — prevents flicker on small cursor movements |
+| **No global cache** | Data changes with filters/date range, so every mount fetches fresh |
+
+### Files
+
+| File | Role |
+|---|---|
+| `backend/intelligence/chart_insight_agent/agent.py` | LLM agent — formats data, calls Gemini/OpenAI, returns structured response |
+| `backend/intelligence/chart_insight_agent/schemas.py` | `ChartInsightRequest` and `ChartInsightResponse` Pydantic models |
+| `backend/api/routes/intelligence.py` | `POST /chart/insights` route |
+| `dashboard_frontend/components/ChartInsightPanel.tsx` | Floating panel UI with skeleton loader and error state |
+| `dashboard_frontend/components/ChartRenderer.tsx` | Hover detection, fetch logic, panel rendering |
+
+### LLM Rules (enforced via system prompt)
+
+- Must write exactly 3–5 bullet points
+- Every bullet must reference actual numbers from the data
+- No speculation beyond what the numbers show
+- No use of the word "significant"
+- Summary is max 15 words
+- Returns strict JSON — no markdown, no extra keys
 
 ---
 
