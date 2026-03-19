@@ -20,11 +20,7 @@ import sys
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, GOOGLE_API_KEY, OPENAI_API_KEY
-
-# Use Flash-Lite for chart insights — lightweight task, low latency needed
-CHART_MODEL_GEMINI = "gemini-2.5-flash-lite"
-CHART_MODEL_OPENAI = os.getenv("LLM_MODEL", "gpt-4o-mini")
+from llm_config import QWEN_INSIGHT_MODEL, make_openai_client
 
 from intelligence.chart_insight_agent.schemas import (
     ChartInsightRequest, ChartInsightResponse,
@@ -82,65 +78,19 @@ def _format_data(req: ChartInsightRequest) -> str:
 
 # ── LLM calls ─────────────────────────────────────────────────────────────────
 
-def _call_gemini(user_message: str) -> dict[str, Any]:
-    try:
-        import google.genai as genai
-        import google.genai.types as genai_types
-    except ImportError:
-        raise ImportError("google-genai is not installed. Run: pip install google-genai")
-
-    if not GOOGLE_API_KEY:
-        raise RuntimeError("GOOGLE_API_KEY is not set in .env")
-
-    schema = genai_types.Schema(
-        type=genai_types.Type.OBJECT,
-        properties={
-            "summary":  genai_types.Schema(type=genai_types.Type.STRING),
-            "insights": genai_types.Schema(
-                type=genai_types.Type.ARRAY,
-                items=genai_types.Schema(type=genai_types.Type.STRING),
-            ),
-        },
-        required=["summary", "insights"],
-    )
-
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    logger.debug("chart_insight_agent: calling Gemini (%s)", CHART_MODEL_GEMINI)
-    response = client.models.generate_content(
-        model=CHART_MODEL_GEMINI,
-        contents=user_message,
-        config={
-            "system_instruction":  _SYSTEM_PROMPT,
-            "response_mime_type":  "application/json",
-            "response_schema":     schema,
-        },
-    )
-    logger.debug("chart_insight_agent: Gemini responded (%d chars)", len(response.text))
-    return json.loads(response.text)
-
-
-def _call_openai(user_message: str) -> dict[str, Any]:
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("openai is not installed. Run: pip install openai")
-
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set in .env")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    logger.debug("chart_insight_agent: calling OpenAI (%s)", CHART_MODEL_OPENAI)
+def _call_openrouter(user_message: str) -> dict[str, Any]:
+    client = make_openai_client()
+    logger.debug("chart_insight_agent: calling OpenRouter (%s)", QWEN_INSIGHT_MODEL)
     response = client.chat.completions.create(
-        model=CHART_MODEL_OPENAI,
+        model=QWEN_INSIGHT_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
     )
-    logger.debug("chart_insight_agent: OpenAI responded")
+    logger.debug("chart_insight_agent: OpenRouter responded")
     raw = json.loads(response.choices[0].message.content)
-    # Normalise in case OpenAI wraps the array
     if isinstance(raw.get("insights"), list):
         return raw
     for val in raw.values():
@@ -167,40 +117,10 @@ RULES (non-negotiable):
 """
 
 
-def _call_gemini_description(user_message: str) -> dict:
-    try:
-        import google.genai as genai
-        import google.genai.types as genai_types
-    except ImportError:
-        raise ImportError("google-genai is not installed.")
-
-    schema = genai_types.Schema(
-        type=genai_types.Type.OBJECT,
-        properties={"description": genai_types.Schema(type=genai_types.Type.STRING)},
-        required=["description"],
-    )
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    response = client.models.generate_content(
-        model=CHART_MODEL_GEMINI,
-        contents=user_message,
-        config={
-            "system_instruction": _DESC_SYSTEM_PROMPT,
-            "response_mime_type": "application/json",
-            "response_schema": schema,
-        },
-    )
-    return json.loads(response.text)
-
-
-def _call_openai_description(user_message: str) -> dict:
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("openai is not installed.")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
+def _call_openrouter_description(user_message: str) -> dict:
+    client = make_openai_client()
     response = client.chat.completions.create(
-        model=CHART_MODEL_OPENAI,
+        model=QWEN_INSIGHT_MODEL,
         messages=[
             {"role": "system", "content": _DESC_SYSTEM_PROMPT},
             {"role": "user",   "content": user_message},
@@ -227,12 +147,7 @@ def generate_chart_description(req: ChartDescriptionRequest) -> ChartDescription
 
     logger.info("chart_insight_agent: generating description for '%s'", req.chart_title)
 
-    if LLM_PROVIDER == "gemini":
-        raw = _call_gemini_description(user_message)
-    elif LLM_PROVIDER == "openai":
-        raw = _call_openai_description(user_message)
-    else:
-        raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'")
+    raw = _call_openrouter_description(user_message)
 
     return ChartDescriptionResponse(description=raw.get("description", ""))
 
@@ -251,20 +166,13 @@ def generate_chart_insights(req: ChartInsightRequest) -> ChartInsightResponse:
             insights=["This chart currently has no data to analyse."],
         )
 
-    model_name = CHART_MODEL_GEMINI if LLM_PROVIDER == "gemini" else CHART_MODEL_OPENAI
     logger.info(
-        "chart_insight_agent: generating insights for '%s' (%s, %d rows) via %s/%s",
-        req.chart_title, req.chart_type, len(req.data), LLM_PROVIDER, model_name,
+        "chart_insight_agent: generating insights for '%s' (%s, %d rows) via %s",
+        req.chart_title, req.chart_type, len(req.data), QWEN_INSIGHT_MODEL,
     )
 
     user_message = _format_data(req)
-
-    if LLM_PROVIDER == "gemini":
-        raw = _call_gemini(user_message)
-    elif LLM_PROVIDER == "openai":
-        raw = _call_openai(user_message)
-    else:
-        raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'")
+    raw = _call_openrouter(user_message)
 
     n_insights = len(raw.get("insights", []))
     logger.info("chart_insight_agent: produced %d insight(s) for '%s'", n_insights, req.chart_title)

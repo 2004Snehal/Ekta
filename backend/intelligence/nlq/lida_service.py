@@ -13,7 +13,8 @@ from typing import List
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, LIDA_MAX_GOALS
+from backend_config import LIDA_MAX_GOALS
+from llm_config import QWEN_CODER_MODEL, make_openai_client
 
 logger = logging.getLogger("nlq.lida")
 
@@ -77,72 +78,39 @@ def generate_insights(df: pd.DataFrame, question: str, user_role: str = None) ->
 
 # ── LLM backend adapters ──────────────────────────────────────────────────────
 
-class _GroqTextGen:
-    """LIDA-compatible text generator backed by Groq SDK."""
+class _OpenRouterTextGen:
+    """LIDA-compatible text generator backed by OpenRouter (OpenAI-compatible)."""
 
     def __init__(self):
-        from groq import Groq
-        self._client = Groq(api_key=GROQ_API_KEY)
-        self._model = LLM_MODEL
+        self._client = make_openai_client()
+        self._model = QWEN_CODER_MODEL
         self.provider = "openai"   # LIDA expects "openai" style interface
-        self.model_name = LLM_MODEL
+        self.model_name = QWEN_CODER_MODEL
 
     def generate(self, messages, config=None, **kwargs):
         from types import SimpleNamespace
         if isinstance(messages, list):
-            groq_messages = [
+            formatted = [
                 {"role": m.get("role", "user"), "content": m.get("content", "")}
                 if isinstance(m, dict) else {"role": "user", "content": str(m)}
                 for m in messages
             ]
         else:
-            groq_messages = [{"role": "user", "content": str(messages)}]
+            formatted = [{"role": "user", "content": str(messages)}]
 
         response = self._client.chat.completions.create(
             model=self._model,
-            messages=groq_messages,
+            messages=formatted,
             temperature=getattr(config, "temperature", 0.2) if config else 0.2,
         )
         content = response.choices[0].message.content
         return SimpleNamespace(text=[{"content": content}], config=config)
 
 
-class _GeminiTextGen:
-    """LIDA-compatible text generator backed by google.genai (new SDK)."""
-
-    def __init__(self):
-        import google.genai as genai
-        self._client = genai.Client(api_key=GOOGLE_API_KEY)
-        self._model = LLM_MODEL
-        self.provider = "google"
-        self.model_name = LLM_MODEL
-
-    def generate(self, messages, config=None, **kwargs):
-        from types import SimpleNamespace
-        if isinstance(messages, list):
-            prompt = "\n".join(
-                m.get("content", "") if isinstance(m, dict) else str(m)
-                for m in messages
-            )
-        else:
-            prompt = str(messages)
-        response = self._client.models.generate_content(model=self._model, contents=prompt)
-        return SimpleNamespace(text=[{"content": response.text}], config=config)
-
-
 def _build_lida_manager():
-    from lida import Manager, llm as lida_llm
-
-    if LLM_PROVIDER == "groq":
-        text_gen = _GroqTextGen()
-        logger.info("LIDA using Groq backend (%s).", LLM_MODEL)
-    elif LLM_PROVIDER == "openai":
-        text_gen = lida_llm("openai", api_key=OPENAI_API_KEY)
-        logger.info("LIDA using OpenAI backend.")
-    else:
-        text_gen = _GeminiTextGen()
-        logger.info("LIDA using Gemini backend (%s).", LLM_MODEL)
-
+    from lida import Manager
+    text_gen = _OpenRouterTextGen()
+    logger.info("LIDA using OpenRouter backend (%s).", QWEN_CODER_MODEL)
     return Manager(text_gen=text_gen)
 
 

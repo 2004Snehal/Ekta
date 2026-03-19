@@ -1,7 +1,6 @@
 """
-LLM abstraction layer.
-Switching providers: set LLM_PROVIDER=openai (or gemini) in .env.
-Switching models:    set LLM_MODEL=<model_name> in .env.
+LLM abstraction layer — Qwen via OpenRouter.
+To switch models: edit llm_config.py.
 """
 
 import json
@@ -11,7 +10,7 @@ import os
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY, GROQ_API_KEY
+from llm_config import QWEN_CODER_MODEL, make_openai_client
 
 logger = logging.getLogger("nlq.llm")
 
@@ -19,40 +18,28 @@ logger = logging.getLogger("nlq.llm")
 # ── Retry helper ──────────────────────────────────────────────────────────────
 
 def _is_quota_error(exc: Exception) -> bool:
-    """Check if exception is a quota/rate limit error."""
     msg = str(exc).lower()
     return "429" in msg or "quota" in msg or "rate limit" in msg or "resource_exhausted" in msg
 
 
 def _parse_retry_delay(exc: Exception, fallback: float = 5.0) -> float:
-    """Extract retry delay from exception message; fall back to exponential backoff."""
     import re
     match = re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+(?:\.\d+)?)', str(exc))
     return float(match.group(1)) + 1.0 if match else fallback
 
 
-# ── Plain-text LLM call (used by self-healing and answer generation) ──────────
+# ── Plain-text LLM call ───────────────────────────────────────────────────────
 
 def call_llm_text(prompt: str, system: str = None) -> str:
     """
-    Send a prompt to the configured LLM and return plain text.
+    Send a prompt to Qwen (via OpenRouter) and return plain text.
     Used by self-healing (SQL correction) and answer generation.
     Automatically retries on quota errors.
     """
-    if LLM_PROVIDER == "groq":
-        fn = _call_groq_text
-    elif LLM_PROVIDER == "gemini":
-        fn = _call_gemini_text
-    elif LLM_PROVIDER == "openai":
-        fn = _call_openai_text
-    else:
-        raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'.")
-
-    return _call_with_retry(fn, prompt, system)
+    return _call_with_retry(_call_openrouter_text, prompt, system)
 
 
 def _call_with_retry(fn, prompt: str, system: str = None, max_retries: int = 3) -> str:
-    """Wrapper for LLM calls with quota-aware retry logic."""
     for attempt in range(max_retries):
         try:
             return fn(prompt, system)
@@ -63,6 +50,20 @@ def _call_with_retry(fn, prompt: str, system: str = None, max_retries: int = 3) 
                 time.sleep(wait)
             else:
                 raise
+
+
+def _call_openrouter_text(prompt: str, system: str = None) -> str:
+    client = make_openai_client()
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    response = client.chat.completions.create(
+        model=QWEN_CODER_MODEL,
+        messages=messages,
+        temperature=0.2,
+    )
+    return response.choices[0].message.content.strip()
 
 
 # ── Statistical pre-summarization (Python, no LLM) ───────────────────────────
@@ -166,53 +167,3 @@ def generate_answer(question: str, summary: dict, focus: list) -> str:
         return call_llm_text(user_message, system=_ANSWER_SYSTEM_PROMPT)
     except Exception:
         return ""
-
-
-# ── Gemini ────────────────────────────────────────────────────────────────────
-
-def _call_gemini_text(prompt: str, system: str = None) -> str:
-    import google.genai as genai
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    config = {}
-    if system:
-        config["system_instruction"] = system
-    response = client.models.generate_content(
-        model=LLM_MODEL,
-        contents=prompt,
-        config=config or None,
-    )
-    return response.text.strip()
-
-
-# ── Groq ──────────────────────────────────────────────────────────────────────
-
-def _call_groq_text(prompt: str, system: str = None) -> str:
-    from groq import Groq
-    client = Groq(api_key=GROQ_API_KEY)
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-    response = client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=messages,
-        temperature=0.2,
-    )
-    return response.choices[0].message.content.strip()
-
-
-# ── OpenAI ────────────────────────────────────────────────────────────────────
-
-def _call_openai_text(prompt: str, system: str = None) -> str:
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-    response = client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=messages,
-        temperature=0.2,
-    )
-    return response.choices[0].message.content.strip()

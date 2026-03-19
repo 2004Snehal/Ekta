@@ -7,15 +7,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set. Add it to your .env file.")
 
-# ── LLM settings ─────────────────────────────────────────────────────────────
-# To switch providers: set LLM_PROVIDER=openai in .env
-# To switch models:    set LLM_MODEL=gemini-1.5-pro  (or gpt-4o, etc.) in .env
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
-LLM_MODEL    = os.getenv("LLM_MODEL",    "mixtral-8x7b-32768")
+# ── LLM settings — model names and client live in llm_config.py ──────────────
+from llm_config import LLM_API_KEY, QWEN_CODER_MODEL, QWEN_INSIGHT_MODEL, make_openai_client
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GROQ_API_KEY   = os.getenv("GROQ_API_KEY")
+LLM_PROVIDER   = "openrouter"
+LLM_MODEL      = QWEN_CODER_MODEL   # default model (Vanna / LIDA / KPI)
+OPENAI_API_KEY = LLM_API_KEY        # alias used by some modules
+GOOGLE_API_KEY = ""                    # removed — Gemini no longer used
+GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 
 # ── Vanna / NLQ settings ──────────────────────────────────────────────────────
 VANNA_CHROMA_PATH = os.getenv("VANNA_CHROMA_PATH", "./vanna_chroma_db")

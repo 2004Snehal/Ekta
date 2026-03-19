@@ -16,7 +16,8 @@ from typing import Optional
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, VANNA_CHROMA_PATH
+from backend_config import VANNA_CHROMA_PATH
+from llm_config import QWEN_CODER_MODEL, LLM_API_KEY, LLM_BASE_URL
 
 from intelligence.nlq.context import fetch_live_schema
 
@@ -39,94 +40,32 @@ _vanna_instance = None
 
 
 def _build_vanna():
-    provider = LLM_PROVIDER.lower()
+    from vanna.legacy.openai.openai_chat import OpenAI_Chat
+    from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
+    from openai import OpenAI as OpenAIClient
 
-    if provider == "groq":
-        from vanna.legacy.openai.openai_chat import OpenAI_Chat
-        from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
-        from openai import OpenAI as OpenAIClient
+    class VannaOpenRouter(ChromaDB_VectorStore, OpenAI_Chat):
+        def __init__(self, config=None):
+            ChromaDB_VectorStore.__init__(self, config=config)
+            OpenAI_Chat.__init__(self, config=config)
+            self.client = OpenAIClient(
+                api_key=config.get("api_key"),
+                base_url=config.get("base_url"),
+            )
 
-        class VannaGroq(ChromaDB_VectorStore, OpenAI_Chat):
-            def __init__(self, config=None):
-                ChromaDB_VectorStore.__init__(self, config=config)
-                OpenAI_Chat.__init__(self, config=config)
-                # Point the OpenAI client at Groq's OpenAI-compatible endpoint
-                self.client = OpenAIClient(
-                    api_key=config.get("api_key"),
-                    base_url="https://api.groq.com/openai/v1",
-                )
+        def extract_sql(self, llm_response: str) -> str:
+            # Return the full LLM response so _parse_vanna_output can
+            # extract both the SQL and our JSON metadata block.
+            return llm_response
 
-            def extract_sql(self, llm_response: str) -> str:
-                # Return the full LLM response so _parse_vanna_output can
-                # extract both the SQL and our JSON metadata block.
-                return llm_response
-
-        vn = VannaGroq(config={
-            "api_key": GROQ_API_KEY,
-            "model": LLM_MODEL,
-            "path": VANNA_CHROMA_PATH,
-        })
-        logger.info("Vanna initialised with Groq backend (%s).", LLM_MODEL)
-        return vn
-
-    elif provider == "openai":
-        from vanna.legacy.openai.openai_chat import OpenAI_Chat
-        from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
-
-        class VannaOpenAI(ChromaDB_VectorStore, OpenAI_Chat):
-            def extract_sql(self, llm_response: str) -> str:
-                return llm_response
-
-        vn = VannaOpenAI(config={
-            "api_key": OPENAI_API_KEY,
-            "model": LLM_MODEL,
-            "path": VANNA_CHROMA_PATH,
-        })
-        logger.info("Vanna initialised with OpenAI backend.")
-        return vn
-
-    elif provider == "gemini":
-        import google.generativeai as genai
-        from vanna.legacy.base import VannaBase
-        from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
-
-        # Inline GoogleGeminiChat to avoid vanna.legacy.google.__init__ eagerly importing
-        # BigQuery_VectorStore, which requires vertexai/google-cloud-aiplatform (not installed).
-        class _GeminiChat(VannaBase):
-            def __init__(self, config=None):
-                VannaBase.__init__(self, config=config)
-                self.temperature = config.get("temperature", 0.7)
-                genai.configure(api_key=config["api_key"])
-                self.chat_model = genai.GenerativeModel(config.get("model_name", "gemini-1.5-pro"))
-
-            def system_message(self, message: str): return message
-            def user_message(self, message: str): return message
-            def assistant_message(self, message: str): return message
-
-            def submit_prompt(self, prompt, **kwargs) -> str:
-                return self.chat_model.generate_content(
-                    prompt,
-                    generation_config={"temperature": self.temperature},
-                ).text
-
-        class VannaGemini(ChromaDB_VectorStore, _GeminiChat):
-            def __init__(self, config=None):
-                ChromaDB_VectorStore.__init__(self, config=config)
-                _GeminiChat.__init__(self, config=config)
-
-            def extract_sql(self, llm_response: str) -> str:
-                return llm_response
-
-        vn = VannaGemini(config={
-            "api_key": GOOGLE_API_KEY,
-            "model_name": LLM_MODEL,
-            "path": VANNA_CHROMA_PATH,
-        })
-        logger.info("Vanna initialised with Gemini backend (%s).", LLM_MODEL)
-        return vn
-
-    else:
-        raise ValueError(f"Unsupported LLM_PROVIDER for Vanna: '{provider}'. Use 'groq', 'openai', or 'gemini'.")
+    vn = VannaOpenRouter(config={
+        "api_key": LLM_API_KEY,
+        "base_url": LLM_BASE_URL,
+        "model": QWEN_CODER_MODEL,
+        "path": VANNA_CHROMA_PATH,
+    })
+    logger.info("Vanna initialised with OpenRouter backend (%s).", QWEN_CODER_MODEL)
+    return vn
 
 
 def get_vanna():

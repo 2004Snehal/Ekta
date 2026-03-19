@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY
+from llm_config import QWEN_INSIGHT_MODEL, make_openai_client
 
 from intelligence.insight_narrator.schemas import FlaggedMetric, InsightCard
 
@@ -109,71 +109,21 @@ def _retry(fn, retries: int = 3, backoff: float = 5.0):
 # ── LLM call (JSON array) ─────────────────────────────────────────────────────
 
 def _call_llm_json_array(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
-    if LLM_PROVIDER == "gemini":
-        return _gemini_narrator(user_message, system_prompt=system_prompt)
-    elif LLM_PROVIDER == "openai":
-        return _openai_narrator(user_message, system_prompt=system_prompt)
-    raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'")
+    return _openrouter_narrator(user_message, system_prompt=system_prompt)
 
 
-def _gemini_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
-    try:
-        import google.genai as genai
-        import google.genai.types as genai_types
-    except ImportError:
-        raise ImportError("google-genai is not installed. Run: pip install google-genai")
-
-    if not GOOGLE_API_KEY:
-        raise RuntimeError("GOOGLE_API_KEY is not set in .env")
-
-    # Enforce JSON array schema at the API level
-    insight_schema = genai_types.Schema(
-        type=genai_types.Type.ARRAY,
-        items=genai_types.Schema(
-            type=genai_types.Type.OBJECT,
-            properties={
-                "title":            genai_types.Schema(type=genai_types.Type.STRING),
-                "body":             genai_types.Schema(type=genai_types.Type.STRING),
-                "category":         genai_types.Schema(type=genai_types.Type.STRING),
-                "root_cause_hint":  genai_types.Schema(type=genai_types.Type.STRING),
-            },
-            required=["title", "body", "category"],
-        ),
-    )
-
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    response = _retry(lambda: client.models.generate_content(
-        model=LLM_MODEL,
-        contents=user_message,
-        config={
-            "system_instruction": system_prompt,
-            "response_mime_type": "application/json",
-            "response_schema":    insight_schema,
-        },
-    ))
-    return json.loads(response.text)
-
-
-def _openai_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("openai is not installed. Run: pip install openai")
-
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set in .env")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model=LLM_MODEL,
+def _openrouter_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
+    client = make_openai_client()
+    response = _retry(lambda: client.chat.completions.create(
+        model=QWEN_INSIGHT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
-    )
+    ))
     raw = json.loads(response.choices[0].message.content)
-    # OpenAI json_object wraps in a top-level key when returning arrays
+    # json_object may wrap the array in a top-level key
     if isinstance(raw, list):
         return raw
     for val in raw.values():
@@ -211,26 +161,15 @@ def _generate_digest(metrics: list[FlaggedMetric], period: str) -> Optional[str]
     user_message = "\n".join(summary_lines)
 
     try:
-        if LLM_PROVIDER == "gemini":
-            import google.genai as genai
-            client = genai.Client(api_key=GOOGLE_API_KEY)
-            resp = _retry(lambda: client.models.generate_content(
-                model=LLM_MODEL,
-                contents=user_message,
-                config={"system_instruction": _DIGEST_SYSTEM},
-            ))
-            return resp.text.strip()
-        elif LLM_PROVIDER == "openai":
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
-            resp = client.chat.completions.create(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": _DIGEST_SYSTEM},
-                    {"role": "user",   "content": user_message},
-                ],
-            )
-            return resp.choices[0].message.content.strip()
+        client = make_openai_client()
+        resp = _retry(lambda: client.chat.completions.create(
+            model=QWEN_INSIGHT_MODEL,
+            messages=[
+                {"role": "system", "content": _DIGEST_SYSTEM},
+                {"role": "user",   "content": user_message},
+            ],
+        ))
+        return resp.choices[0].message.content.strip()
     except Exception as e:
         logger.warning("digest generation failed: %s", e)
     return None

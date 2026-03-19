@@ -40,42 +40,19 @@ if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
 
-def _load_llm_config():
-    from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY  # noqa: PLC0415
-    return LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY
-
-
 def _call_llm_json(system_prompt: str, user_message: str) -> dict:
-    """Call the configured LLM and return a parsed JSON dict."""
-    provider, model, google_key, openai_key = _load_llm_config()
-    if provider == "gemini":
-        import google.genai as genai  # noqa: PLC0415
-        if not google_key:
-            raise RuntimeError("GOOGLE_API_KEY not set")
-        client = genai.Client(api_key=google_key)
-        resp = client.models.generate_content(
-            model=model,
-            contents=user_message,
-            config={
-                "system_instruction": system_prompt,
-                "response_mime_type": "application/json",
-            },
-        )
-        return json.loads(resp.text)
-    else:
-        from openai import OpenAI  # noqa: PLC0415
-        if not openai_key:
-            raise RuntimeError("OPENAI_API_KEY not set")
-        client = OpenAI(api_key=openai_key)
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            response_format={"type": "json_object"},
-        )
-        return json.loads(resp.choices[0].message.content)
+    """Call Qwen (via OpenRouter) and return a parsed JSON dict."""
+    from llm_config import QWEN_CODER_MODEL, make_openai_client  # noqa: PLC0415
+    client = make_openai_client()
+    resp = client.chat.completions.create(
+        model=QWEN_CODER_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return json.loads(resp.choices[0].message.content)
 
 
 # ================================================================== #
