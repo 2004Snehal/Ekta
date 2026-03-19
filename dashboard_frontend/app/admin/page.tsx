@@ -737,7 +737,8 @@ function SchemaVisualizerPanel({ tables, relationships }: { tables: TableInfo[];
 }
 
 // ────────────────────────────────────────────────────────────────────────── //
-// Edit Data Panel (inline cell editing + cascade)
+// Edit Data Panel — cascade is FULLY driven by defined Schema Links
+// The join column is NEVER manually picked: it comes from the relationship.
 // ────────────────────────────────────────────────────────────────────────── //
 
 interface EditModal {
@@ -746,12 +747,23 @@ interface EditModal {
   currentValue: string;
 }
 
+/**
+ * One "cascade group" per unique join-column found in the defined relationships.
+ * E.g. if ACD.C → ABC.C then: { joinCol:'c', joinValue:'key1', targets:[{table:'abc',toCol:'c'}] }
+ */
+interface CascadeGroup {
+  joinCol: string;
+  joinValue: string | number | null;
+  targets: { table: string; toCol: string; linkType: 'fk' | 'logical' }[];
+}
+
 function EditDataPanel({
-  tables, relationships, onRefresh,
+  tables, relationships, onRefresh, onGoToLinks,
 }: {
   tables: TableInfo[];
   relationships: Relationship[];
   onRefresh: () => void;
+  onGoToLinks: () => void;
 }) {
   const [selectedTable, setSelectedTable] = useState('');
   const [tableInfo, setTableInfo] = useState<TableInfo | null>(null);
@@ -759,10 +771,12 @@ function EditDataPanel({
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loadingRows, setLoadingRows] = useState(false);
+
   const [editModal, setEditModal] = useState<EditModal | null>(null);
   const [editValue, setEditValue] = useState('');
   const [cascadeOn, setCascadeOn] = useState(true);
-  const [joinCol, setJoinCol] = useState('');
+  // Derived from defined relationships — NOT manually chosen by user
+  const [cascadeGroups, setCascadeGroups] = useState<CascadeGroup[]>([]);
   const [updateStatus, setUpdateStatus] = useState<StatusState>({ type: 'idle' });
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
@@ -790,51 +804,112 @@ function EditDataPanel({
     if (selectedTable) loadRows(selectedTable, page);
   }, [page, selectedTable, loadRows]);
 
+  /**
+   * Build cascade groups from the pre-defined relationships.
+   * Group by the join column used in THIS table so each group becomes one API call.
+   */
+  function buildCascadeGroups(row: TableRow): CascadeGroup[] {
+    const groups: Record<string, CascadeGroup> = {};
+    for (const rel of relationships) {
+      let myJoinCol: string | null = null;
+      let theirTable: string | null = null;
+      let theirCol: string | null = null;
+
+      if (rel.from_table === selectedTable) {
+        myJoinCol = rel.from_column;
+        theirTable = rel.to_table;
+        theirCol = rel.to_column;
+      } else if (rel.to_table === selectedTable) {
+        myJoinCol = rel.to_column;
+        theirTable = rel.from_table;
+        theirCol = rel.from_column;
+      }
+      if (!myJoinCol || !theirTable || !theirCol) continue;
+
+      if (!groups[myJoinCol]) {
+        groups[myJoinCol] = {
+          joinCol: myJoinCol,
+          joinValue: row[myJoinCol] ?? null,
+          targets: [],
+        };
+      }
+      groups[myJoinCol].targets.push({
+        table: theirTable,
+        toCol: theirCol,
+        linkType: rel.link_type,
+      });
+    }
+    return Object.values(groups);
+  }
+
   function openEdit(row: TableRow, col: string) {
     const val = row[col];
     setEditModal({ row, col, currentValue: val == null ? '' : String(val) });
     setEditValue(val == null ? '' : String(val));
     setCascadeOn(true);
     setUpdateStatus({ type: 'idle' });
-    // default join column: first FK/link column or PK
-    const relCols = relationships
-      .filter((r) => r.from_table === selectedTable || r.to_table === selectedTable)
-      .map((r) => r.from_table === selectedTable ? r.from_column : r.to_column);
-    const pk = tableInfo?.primary_keys[0] ?? '';
-    setJoinCol(relCols[0] ?? pk ?? col);
+    setCascadeGroups(buildCascadeGroups(row));
   }
 
   async function handleSaveEdit() {
     if (!editModal || !tableInfo) return;
     setUpdateStatus({ type: 'loading' });
-    const joinValue = editModal.row[joinCol];
+
     try {
-      const res = await fetch(`${API_BASE}/admin/table/${selectedTable}/update-cell`, {
-        method: 'PATCH',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          join_column: joinCol,
-          join_value: joinValue,
-          target_column: editModal.col,
-          new_value: editValue,
-          cascade: cascadeOn,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? 'Update failed');
-      const cascadeSummary = data.cascaded?.length
-        ? ` Cascaded to: ${(data.cascaded as { table: string; rows_updated: number }[]).map((c) => `${c.table} (${c.rows_updated} row${c.rows_updated !== 1 ? 's' : ''})`).join(', ')}.`
+      const allCascaded: { table: string; rows_updated: number }[] = [];
+      let totalUpdated = 0;
+
+      if (!cascadeOn || cascadeGroups.length === 0) {
+        // No relationships defined — update only this table, identify row by PK
+        const pkCol = tableInfo.primary_keys[0] ?? tableInfo.columns[0]?.name;
+        const res = await fetch(`${API_BASE}/admin/table/${selectedTable}/update-cell`, {
+          method: 'PATCH',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            join_column: pkCol,
+            join_value: editModal.row[pkCol],
+            target_column: editModal.col,
+            new_value: editValue,
+            cascade: false,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail ?? 'Update failed');
+        totalUpdated = data.rows_updated;
+      } else {
+        // One API call per join-column group (each group = one relationship axis)
+        for (const group of cascadeGroups) {
+          const res = await fetch(`${API_BASE}/admin/table/${selectedTable}/update-cell`, {
+            method: 'PATCH',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              join_column: group.joinCol,      // ← from Schema Links, NOT user-picked
+              join_value: group.joinValue,     // ← this row's value for that join column
+              target_column: editModal.col,
+              new_value: editValue,
+              cascade: true,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail ?? 'Update failed');
+          totalUpdated = Math.max(totalUpdated, data.rows_updated);
+          allCascaded.push(...(data.cascaded ?? []));
+        }
+      }
+
+      const cascadeSummary = allCascaded.length
+        ? ` Cascaded to: ${allCascaded.map((c) => `${c.table} (${c.rows_updated} row${c.rows_updated !== 1 ? 's' : ''})`).join(', ')}.`
         : '';
-      setUpdateStatus({ type: 'success', message: `Updated ${data.rows_updated} row(s) in ${selectedTable}.${cascadeSummary}` });
+      setUpdateStatus({ type: 'success', message: `Updated ${totalUpdated} row(s) in ${selectedTable}.${cascadeSummary}` });
       loadRows(selectedTable, page);
       onRefresh();
-      setTimeout(() => setEditModal(null), 1800);
+      setTimeout(() => setEditModal(null), 2000);
     } catch (e) {
       setUpdateStatus({ type: 'error', message: (e as Error).message });
     }
   }
 
-  // Columns linked to other tables via FK/logical links
+  // Which columns in this table are join keys (for header label)
   const linkedCols = new Set(
     relationships
       .filter((r) => r.from_table === selectedTable || r.to_table === selectedTable)
@@ -848,8 +923,8 @@ function EditDataPanel({
           <Edit3 className="w-4 h-4" /> Edit Table Data
         </h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Click any cell to edit its value. If the table is linked to others via a common key column,
-          the change can cascade to all related tables.
+          Click any cell to edit. Cascade targets are determined automatically from the relationships
+          you defined in <button onClick={onGoToLinks} className="text-primary underline hover:no-underline">Schema Links</button> — the join column is never guessed.
         </p>
         <div className="flex items-center gap-3">
           <select value={selectedTable} onChange={(e) => setSelectedTable(e.target.value)}
@@ -868,12 +943,22 @@ function EditDataPanel({
 
       {selectedTable && tableInfo && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-border">
-            <span className="text-sm text-muted-foreground">{total.toLocaleString()} row{total !== 1 ? 's' : ''} — click any cell to edit</span>
+          <div className="p-4 border-b border-border flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">
+              {total.toLocaleString()} row{total !== 1 ? 's' : ''} — click any cell to edit
+            </span>
+            {linkedCols.size > 0 && (
+              <span className="text-xs text-indigo-400 flex items-center gap-1">
+                <Link2 className="w-3 h-3" />
+                {linkedCols.size} join key{linkedCols.size !== 1 ? 's' : ''} defined
+              </span>
+            )}
           </div>
           <div className="overflow-x-auto">
             {loadingRows ? (
-              <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" />Loading…</div>
+              <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground">
+                <Loader2 className="w-5 h-5 animate-spin" />Loading…
+              </div>
             ) : rows.length === 0 ? (
               <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">No rows found.</div>
             ) : (
@@ -884,7 +969,7 @@ function EditDataPanel({
                       <th key={col.name} className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">
                         {col.name}
                         {col.is_pk && <span className="ml-1 text-xs text-yellow-400">[PK]</span>}
-                        {linkedCols.has(col.name) && !col.is_pk && <span className="ml-1 text-xs text-indigo-400">[key]</span>}
+                        {linkedCols.has(col.name) && <span className="ml-1 text-xs text-indigo-400">[join key]</span>}
                       </th>
                     ))}
                   </tr>
@@ -911,7 +996,9 @@ function EditDataPanel({
           </div>
           {total > PAGE_SIZE && (
             <div className="p-4 border-t border-border flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total.toLocaleString()}</span>
+              <span className="text-sm text-muted-foreground">
+                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total.toLocaleString()}
+              </span>
               <div className="flex items-center gap-2">
                 <button onClick={() => setPage((p) => p - 1)} disabled={page === 0} className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
                 <span className="text-sm px-2">{page + 1} / {totalPages}</span>
@@ -922,24 +1009,29 @@ function EditDataPanel({
         </div>
       )}
 
-      {/* Edit Modal */}
+      {/* ── Edit Modal ─────────────────────────────────────────────────── */}
       {editModal && tableInfo && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setEditModal(null)}>
-          <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="p-5 border-b border-border flex items-center justify-between">
               <h3 className="font-semibold text-foreground flex items-center gap-2">
                 <Edit3 className="w-4 h-4" /> Edit Cell
               </h3>
-              <button onClick={() => setEditModal(null)} className="p-1 rounded hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>
+              <button onClick={() => setEditModal(null)} className="p-1 rounded hover:bg-muted text-muted-foreground">
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             <div className="p-5 space-y-4">
+              {/* What's being edited */}
               <div>
                 <p className="text-xs text-muted-foreground mb-1">
-                  Table <span className="font-mono text-foreground">{selectedTable}</span> · Column <span className="font-mono text-primary">{editModal.col}</span>
+                  <span className="font-mono text-foreground">{selectedTable}</span>
+                  {' · '}
+                  <span className="font-mono text-primary">{editModal.col}</span>
                 </p>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Current: <span className="font-mono text-foreground">{editModal.currentValue || <em>null</em>}</span>
+                  Current value: <span className="font-mono text-foreground bg-muted px-1.5 py-0.5 rounded">{editModal.currentValue || 'null'}</span>
                 </p>
                 <label className="block text-sm font-medium text-foreground mb-1">New value</label>
                 <input
@@ -951,60 +1043,66 @@ function EditDataPanel({
                 />
               </div>
 
-              {/* Cascade options */}
-              <div className="bg-muted/20 rounded-xl p-4 border border-border">
-                <div className="flex items-center justify-between mb-3">
+              {/* ── Cascade section — fully driven by Schema Links ── */}
+              <div className="bg-muted/20 rounded-xl border border-border overflow-hidden">
+                <div className="flex items-center justify-between p-4">
                   <span className="text-sm font-medium text-foreground flex items-center gap-2">
                     <Link2 className="w-4 h-4 text-indigo-400" /> Cascade to linked tables
                   </span>
-                  <button
-                    onClick={() => setCascadeOn((v) => !v)}
+                  <button onClick={() => setCascadeOn((v) => !v)}
                     className={`relative w-10 h-5 rounded-full transition-colors ${cascadeOn ? 'bg-primary' : 'bg-muted'}`}>
                     <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${cascadeOn ? 'translate-x-5' : 'translate-x-0.5'}`} />
                   </button>
                 </div>
 
                 {cascadeOn && (
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">
-                      Join via column (identifies which rows match across tables)
-                    </label>
-                    <select value={joinCol} onChange={(e) => setJoinCol(e.target.value)}
-                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                      {tableInfo.columns.map((c) => (
-                        <option key={c.name} value={c.name}>
-                          {c.name}{linkedCols.has(c.name) ? ' [linked key]' : c.is_pk ? ' [PK]' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Join value for this row: <span className="font-mono text-foreground">{editModal.row[joinCol] != null ? String(editModal.row[joinCol]) : 'null'}</span>
-                    </p>
-                    {/* Show which tables will be affected */}
-                    {(() => {
-                      const affected = relationships.filter(
-                        (r) => (r.from_table === selectedTable && r.from_column === joinCol) ||
-                               (r.to_table === selectedTable && r.to_column === joinCol)
-                      );
-                      if (affected.length === 0) return (
-                        <p className="text-xs text-amber-500 mt-2">No linked tables found for this join column.</p>
-                      );
-                      return (
-                        <div className="mt-2">
-                          <p className="text-xs text-muted-foreground mb-1">Will cascade to:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {affected.map((r) => {
-                              const relTable = r.from_table === selectedTable ? r.to_table : r.from_table;
-                              return (
-                                <span key={r.constraint_name} className="text-xs bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-md font-mono">
-                                  {relTable}
-                                </span>
-                              );
-                            })}
-                          </div>
+                  <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
+                    {cascadeGroups.length === 0 ? (
+                      /* No relationships defined yet */
+                      <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                        <AlertCircle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-sm text-amber-300 font-medium">No relationships defined for this table</p>
+                          <p className="text-xs text-amber-400/80 mt-0.5">
+                            Without a defined relationship the system cannot know which column links this table to others.
+                          </p>
+                          <button onClick={() => { setEditModal(null); onGoToLinks(); }}
+                            className="mt-2 text-xs text-amber-300 underline hover:no-underline flex items-center gap-1">
+                            <Link2 className="w-3 h-3" /> Define a relationship in Schema Links →
+                          </button>
                         </div>
-                      );
-                    })()}
+                      </div>
+                    ) : (
+                      /* Show each relationship group — join column comes from Schema Links */
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          Join keys come from your defined relationships. Each group below will update <span className="font-mono text-primary">{editModal.col}</span> in the linked table(s) by matching on the join key value.
+                        </p>
+                        {cascadeGroups.map((group) => (
+                          <div key={group.joinCol} className="bg-background rounded-lg border border-border p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-xs text-muted-foreground">Join key:</span>
+                              <span className="font-mono text-xs bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded">
+                                {group.joinCol} = {group.joinValue ?? 'null'}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {group.targets.map((t) => (
+                                <span key={t.table}
+                                  className="text-xs px-2 py-0.5 rounded-md font-mono border bg-green-500/10 border-green-500/30 text-green-300 flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  {t.table}
+                                  <span className="opacity-50 text-[10px]">.{t.toCol}</span>
+                                  <span className={`text-[10px] ml-0.5 ${t.linkType === 'fk' ? 'text-indigo-400' : 'text-amber-400'}`}>
+                                    ({t.linkType})
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1015,9 +1113,10 @@ function EditDataPanel({
                 <button onClick={handleSaveEdit} disabled={updateStatus.type === 'loading'}
                   className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 text-sm">
                   {updateStatus.type === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {updateStatus.type === 'loading' ? 'Saving…' : 'Save & Cascade'}
+                  {updateStatus.type === 'loading' ? 'Saving…' : cascadeGroups.length > 0 && cascadeOn ? 'Save & Cascade' : 'Save'}
                 </button>
-                <button onClick={() => setEditModal(null)} className="px-5 py-2.5 rounded-lg border border-border text-muted-foreground hover:text-foreground text-sm">
+                <button onClick={() => setEditModal(null)}
+                  className="px-5 py-2.5 rounded-lg border border-border text-muted-foreground hover:text-foreground text-sm">
                   Cancel
                 </button>
               </div>
