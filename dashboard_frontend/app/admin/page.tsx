@@ -64,7 +64,7 @@ const PAGE_SIZE = 50;
 
 function authHeaders(): HeadersInit {
   const token = typeof window !== 'undefined'
-    ? localStorage.getItem('frammer_token')
+    ? localStorage.getItem('auth_token')
     : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -80,7 +80,7 @@ export default function AdminPage() {
 
   // Guard: redirect non-admins
   useEffect(() => {
-    const raw = localStorage.getItem('frammer_user');
+    const raw = localStorage.getItem('auth_user');
     if (!raw) { router.replace('/login'); return; }
     try {
       const user = JSON.parse(raw);

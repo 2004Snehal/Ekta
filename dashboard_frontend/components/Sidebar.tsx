@@ -28,13 +28,13 @@ export function Sidebar() {
   const [user, setUser] = useState<StoredUser | null>(null);
 
   useEffect(() => {
-    const raw = localStorage.getItem('frammer_user');
+    const raw = localStorage.getItem('auth_user');
     if (raw) {
       try { setUser(JSON.parse(raw)); } catch { /* ignore */ }
     }
     // Re-read on storage changes (e.g. login in another tab)
     const handler = () => {
-      const r = localStorage.getItem('frammer_user');
+      const r = localStorage.getItem('auth_user');
       try { setUser(r ? JSON.parse(r) : null); } catch { setUser(null); }
     };
     window.addEventListener('storage', handler);
@@ -42,8 +42,8 @@ export function Sidebar() {
   }, []);
 
   function handleLogout() {
-    localStorage.removeItem('frammer_token');
-    localStorage.removeItem('frammer_user');
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_user');
     setUser(null);
     router.push('/login');
   }

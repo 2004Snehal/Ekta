@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { useProfile, PROFILES, PROFILE_KEYS, type ProfileKey } from '@/lib/profiles';
+import { useAuth } from '@/context/AuthContext';
 
 const SECTION_LINKS = [
   { href: '/dashboard',          label: 'Summary' },
@@ -17,11 +18,13 @@ const SECTION_LINKS = [
 const TOOL_LINKS = [
   { href: '/query',    label: 'NLQ' },
   { href: '/narrator', label: 'Insights' },
+  { href: '/kpi-lab',  label: 'KPI Lab' },
 ];
 
 export function TopNav() {
   const pathname = usePathname();
   const { profile, profileDef, setProfile } = useProfile();
+  const { user } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -203,6 +206,19 @@ export function TopNav() {
             {link.label}
           </Link>
         ))}
+
+        {user?.role === 'admin' && (
+          <>
+            <div className="wire-v" style={{ height: '14px' }} />
+            <Link
+              href="/admin"
+              className={cn('nav-link', pathname.startsWith('/admin') && 'active')}
+              style={{ color: 'var(--signal)' }}
+            >
+              Admin
+            </Link>
+          </>
+        )}
       </nav>
 
       {/* Right: live indicator */}

@@ -12,7 +12,11 @@
       "Bash(xargs grep:*)",
       "Bash(ls -la /d/GitHub/Ekta/dashboard_frontend/.env*)",
       "Bash(grep -r \"nlq/query\\\\|/query\\\\|/nlq\" /d/GitHub/Ekta/dashboard_frontend --include=*.ts --include=*.tsx --include=*.js --include=*.jsx)",
-      "Bash(grep -l \"CREATE TABLE\\\\|CREATE VIEW\" /d/GitHub/Ekta/backend/*.sql)"
+      "Bash(grep -l \"CREATE TABLE\\\\|CREATE VIEW\" /d/GitHub/Ekta/backend/*.sql)",
+      "mcp__plugin_supabase_supabase__list_tables",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx tsc:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

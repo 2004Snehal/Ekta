@@ -38,8 +38,9 @@ export default function SignupPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? 'Signup failed');
 
-      localStorage.setItem('frammer_token', data.access_token);
-      localStorage.setItem('frammer_user', JSON.stringify(data.user));
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      document.cookie = `auth_token=${data.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
       router.push('/dashboard');
     } catch (err) {
       setError((err as Error).message);

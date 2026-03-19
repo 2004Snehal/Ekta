@@ -27,8 +27,9 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? 'Login failed');
 
-      localStorage.setItem('frammer_token', data.access_token);
-      localStorage.setItem('frammer_user', JSON.stringify(data.user));
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      document.cookie = `auth_token=${data.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 
       // Redirect admins to admin console, others to dashboard
       if (data.user.role === 'admin') {

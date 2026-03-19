@@ -3,6 +3,7 @@ import { Barlow_Condensed, IBM_Plex_Mono, Barlow } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { TopNav } from '@/components/TopNav'
 import { ProfileProvider } from '@/lib/profiles'
+import { AuthProvider } from '@/context/AuthContext'
 import './globals.css'
 
 const barlow = Barlow({
@@ -41,12 +42,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className="dark">
       <body className={`${barlow.variable} ${barlowCondensed.variable} ${ibmPlexMono.variable} antialiased`}
             style={{ background: 'var(--void)', color: 'var(--on)' }}>
-        <ProfileProvider>
-          <TopNav />
-          <main className="pt-11">
-            {children}
-          </main>
-        </ProfileProvider>
+        <AuthProvider>
+          <ProfileProvider>
+            <TopNav />
+            <main className="pt-11">
+              {children}
+            </main>
+          </ProfileProvider>
+        </AuthProvider>
         <Analytics />
       </body>
     </html>
