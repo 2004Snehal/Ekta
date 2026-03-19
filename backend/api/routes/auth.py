@@ -135,7 +135,7 @@ def signup(body: SignupRequest):
             """
             INSERT INTO internal.users (email, password_hash)
             VALUES (%s, %s)
-            RETURNING id, role, user_profile
+            RETURNING id, role, profile
             """,
             (email, password_hash),
         )
@@ -165,7 +165,7 @@ def login(body: LoginRequest):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, password_hash, role, user_profile FROM internal.users WHERE email = %s",
+            "SELECT id, password_hash, role, profile FROM internal.users WHERE email = %s",
             (email,),
         )
         row = cur.fetchone()
@@ -195,7 +195,7 @@ def me(current_user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT user_profile, role FROM internal.users WHERE id = %s",
+            "SELECT profile, role FROM internal.users WHERE id = %s",
             (current_user["user_id"],),
         )
         row = cur.fetchone()

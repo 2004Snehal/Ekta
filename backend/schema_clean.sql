@@ -66,20 +66,26 @@ CREATE TRIGGER trg_nlq_session_updated
 
 -- ── KPI Registry ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS internal.kpi_registry (
-    kpi_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_id     BIGINT,
-    kpi_name      TEXT NOT NULL,
-    description   TEXT,       -- queried as kpi_description via alias
-    sql_def       TEXT NOT NULL,  -- queried as sql_definition via alias
-    source        TEXT,
-    tags          TEXT[],
-    dimensions    TEXT[],
-    usefulness    NUMERIC(5,2),
-    created_by    TEXT,
-    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_computed TIMESTAMPTZ
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name             TEXT NOT NULL UNIQUE,
+    description      TEXT,
+    formula          TEXT,
+    sql_expression   TEXT NOT NULL,
+    columns_used     JSONB NOT NULL DEFAULT '[]',
+    tables_used      JSONB NOT NULL DEFAULT '[]',
+    category         TEXT,
+    current_value    JSONB,
+    unit             TEXT,
+    usefulness_score FLOAT8,
+    source           TEXT NOT NULL DEFAULT 'manual',
+    expand_page      JSONB,
+    client_id        BIGINT,
+    dimensions       TEXT[],
+    created_by       TEXT,
+    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ,
+    last_computed    TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_kpi_active
@@ -96,9 +102,10 @@ CREATE TRIGGER trg_kpi_registry_updated
 CREATE TABLE IF NOT EXISTS internal.users (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email         TEXT NOT NULL UNIQUE,
+    name          TEXT,
     password_hash TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    user_profile  TEXT NOT NULL DEFAULT 'basic',
+    profile       TEXT NOT NULL DEFAULT 'team_member',  -- one of the 5 dashboard personas or 'team_member'
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

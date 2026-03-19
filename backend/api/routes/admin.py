@@ -76,7 +76,7 @@ def list_users(_admin=Depends(require_admin)) -> Dict:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, email, role, user_profile, created_at
+            SELECT id, email, role, profile, created_at
             FROM internal.users
             ORDER BY created_at DESC
             """
@@ -115,9 +115,9 @@ def assign_profile(
         cur = conn.cursor()
         cur.execute(
             """
-            UPDATE internal.users SET user_profile = %s
+            UPDATE internal.users SET profile = %s
             WHERE id = %s
-            RETURNING id, email, role, user_profile
+            RETURNING id, email, role, profile
             """,
             (body.user_profile.strip(), user_id),
         )

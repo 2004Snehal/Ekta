@@ -64,59 +64,6 @@ def get_insights(
     return {"data": rows, "count": len(rows)}
 
 
-@router.get("/forecasts/")
-def get_forecasts(
-    client_id: int = Query(1),
-    channel_id: Optional[int] = Query(None),
-    metric_name: Optional[str] = Query(None),
-):
-    """3-month forward projections from forecast_log."""
-    filters = ["f.client_id = %s"]
-    params = [client_id]
-
-    if channel_id:
-        filters.append("f.channel_id = %s")
-        params.append(channel_id)
-    if metric_name:
-        filters.append("f.metric_name = %s")
-        params.append(metric_name)
-
-    where = " AND ".join(filters)
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            f"""
-            SELECT
-                f.forecast_id,
-                f.channel_id,
-                dc.channel_name,
-                dc.channel_code,
-                f.metric_name,
-                f.forecast_month,
-                f.predicted_value,
-                f.lower_bound,
-                f.upper_bound,
-                f.model_used,
-                f.generated_at
-            FROM internal.forecast_log f
-            JOIN data.dim_channel dc ON dc.channel_id = f.channel_id
-            WHERE {where}
-            ORDER BY f.channel_id, f.metric_name, f.forecast_month
-            """,
-            params,
-        )
-        cols = [d[0] for d in cur.description]
-        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        for row in rows:
-            if row.get("forecast_month"):
-                row["forecast_month"] = row["forecast_month"].isoformat()
-            if row.get("generated_at"):
-                row["generated_at"] = row["generated_at"].isoformat()
-
-    return {"data": rows, "count": len(rows)}
-
-
-
 # ── Insight Narrator endpoints ────────────────────────────────────────────────
 
 @router.get("/narrator/insights")
@@ -273,9 +220,8 @@ def get_kpi_registry(
         cur = conn.cursor()
         cur.execute(
             f"""
-            SELECT kpi_id, client_id, kpi_name,
-                   description AS kpi_description,
-                   sql_def     AS sql_definition,
+            SELECT id, client_id, name, description, sql_expression,
+                   formula, category, unit, usefulness_score,
                    dimensions, created_by, is_active,
                    created_at, last_computed
             FROM internal.kpi_registry
