@@ -86,27 +86,44 @@ def _build_vanna():
         return vn
 
     elif provider == "gemini":
-        try:
-            from vanna.legacy.google.gemini_chat import GoogleGeminiChat
-            from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
+        import google.generativeai as genai
+        from vanna.legacy.base import VannaBase
+        from vanna.legacy.chromadb.chromadb_vector import ChromaDB_VectorStore
 
-            class VannaGemini(ChromaDB_VectorStore, GoogleGeminiChat):
-                def __init__(self, config=None):
-                    ChromaDB_VectorStore.__init__(self, config=config)
-                    GoogleGeminiChat.__init__(self, config=config)
+        # Inline GoogleGeminiChat to avoid vanna.legacy.google.__init__ eagerly importing
+        # BigQuery_VectorStore, which requires vertexai/google-cloud-aiplatform (not installed).
+        class _GeminiChat(VannaBase):
+            def __init__(self, config=None):
+                VannaBase.__init__(self, config=config)
+                self.temperature = config.get("temperature", 0.7)
+                genai.configure(api_key=config["api_key"])
+                self.chat_model = genai.GenerativeModel(config.get("model_name", "gemini-1.5-pro"))
 
-                def extract_sql(self, llm_response: str) -> str:
-                    return llm_response
+            def system_message(self, message: str): return message
+            def user_message(self, message: str): return message
+            def assistant_message(self, message: str): return message
 
-            vn = VannaGemini(config={
-                "api_key": GOOGLE_API_KEY,
-                "model_name": LLM_MODEL,
-                "path": VANNA_CHROMA_PATH,
-            })
-            logger.info("Vanna initialised with Gemini backend.")
-            return vn
-        except ImportError:
-            raise RuntimeError("Install 'vanna[google]' and 'google-generativeai' for Gemini support.")
+            def submit_prompt(self, prompt, **kwargs) -> str:
+                return self.chat_model.generate_content(
+                    prompt,
+                    generation_config={"temperature": self.temperature},
+                ).text
+
+        class VannaGemini(ChromaDB_VectorStore, _GeminiChat):
+            def __init__(self, config=None):
+                ChromaDB_VectorStore.__init__(self, config=config)
+                _GeminiChat.__init__(self, config=config)
+
+            def extract_sql(self, llm_response: str) -> str:
+                return llm_response
+
+        vn = VannaGemini(config={
+            "api_key": GOOGLE_API_KEY,
+            "model_name": LLM_MODEL,
+            "path": VANNA_CHROMA_PATH,
+        })
+        logger.info("Vanna initialised with Gemini backend (%s).", LLM_MODEL)
+        return vn
 
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER for Vanna: '{provider}'. Use 'groq', 'openai', or 'gemini'.")
