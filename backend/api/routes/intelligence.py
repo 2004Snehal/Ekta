@@ -244,7 +244,8 @@ def get_chart_data_insights(payload: dict[str, Any]):
         return result.model_dump()
     except Exception as e:
         logger.error("chart data-insights failed: %s", e)
-        raise HTTPException(status_code=500, detail="Chart insight generation failed")
+        import traceback
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
 
 
 @router.get("/kpis/registry")
