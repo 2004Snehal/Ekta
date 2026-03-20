@@ -2,113 +2,135 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Upload, Zap, BarChart3, RefreshCw, Trash2, ChevronDown, ChevronRight,
-  CheckCircle2, AlertCircle, Loader2, Database, FlaskConical, Lightbulb,
-  FileText, Play, X, Server,
+  Zap, BarChart3, RefreshCw, ChevronDown, ChevronRight, CheckCircle2,
+  AlertCircle, Loader2, Database, FlaskConical, Lightbulb, Play, X,
+  Server, TrendingUp, BookOpen, ArrowUp, ArrowDown, PenLine, Sparkles,
+  Plus, Table2, Copy, CornerDownLeft,
 } from 'lucide-react';
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer,
+} from 'recharts';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
-const BASE = `${API_URL}/kpi-lab`;
+const BASE    = `${API_URL}/kpi-lab`;
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 
-type DataSource = 'csv' | 'postgres';
-
-interface ColumnInfo { name: string; type: string; }
+interface ColumnInfo  { name: string; type: string; }
 interface TableSchema { columns: ColumnInfo[]; row_count: number; sample_rows: Record<string, unknown>[]; }
-interface SchemaResponse { source: DataSource; tables: Record<string, TableSchema>; }
-
-interface SourceInfo {
-  id: DataSource;
-  label: string;
-  description: string;
-  table_count: number;
-  tables: string[];
-}
+interface SchemaResponse { tables: Record<string, TableSchema>; cached?: boolean; }
 
 interface GoodKPI {
-  name: string;
-  description?: string;
-  value?: number | string;
-  unit?: string;
-  category?: string;
-  usefulness_score?: number;
-  sql?: string;
+  kpi_id: string; name: string; description?: string; formula?: string;
+  value?: number | string; unit?: string; category?: string;
+  usefulness_score?: number; sql?: string; registry_id?: string;
 }
-
-interface CandidateKPI {
-  name: string;
-  description?: string;
-  formula?: string;
-  category?: string;
-}
-
-interface KPIInsight {
-  kpi_name?: string;
-  insight?: string;
-  text?: string;
-  summary?: string;
-}
-
+interface KPIInsight { kpi_name?: string; insight?: string; text?: string; summary?: string; }
 interface DiscoverResult {
-  run_id: string;
-  source: DataSource;
-  table_groups: string[][];
-  candidate_kpis: CandidateKPI[];
-  computed_values: Record<string, unknown>;
-  good_kpis: GoodKPI[];
-  insights: KPIInsight[];
-  errors: string[];
+  run_id: string; table_groups: string[][]; good_kpis: GoodKPI[];
+  insights: KPIInsight[]; errors: string[];
 }
 
-type PipelineMode = 'discover' | 'generate' | 'compute' | 'evaluate';
-type PageState = 'idle' | 'loading_sources' | 'uploading' | 'loading_schema' | 'running' | 'done' | 'error';
+interface ExpandStat  { label: string; value: string; }
+interface ExpandChart {
+  chart_type: 'line' | 'bar' | 'pie'; title: string;
+  data: Record<string, unknown>[];
+  axes?: { x: { field: string; label: string }; y: { field: string; label: string } };
+}
+interface ExpandDetail {
+  interpretation: string; value_range: string;
+  high_value_means: string; low_value_means: string;
+  stats: ExpandStat[]; charts: ExpandChart[];
+}
+interface RegistryKPIFull {
+  id: string; name: string; description?: string; formula?: string;
+  current_value?: unknown; unit?: string; usefulness_score?: number;
+  expand_detail: ExpandDetail;
+}
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+type PageTab    = 'discover' | 'manual' | 'agent';
+type PageState  = 'idle' | 'loading_schema' | 'running' | 'done' | 'error';
+type FormState  = 'idle' | 'loading' | 'success' | 'error';
+
+// ── Static data ────────────────────────────────────────────────────────────────
+
+const FORMULA_FUNCTIONS = [
+  { name: 'COUNT',          sig: 'COUNT(column)',                              cat: 'aggregation', insert: 'COUNT(column)',          desc: 'Count non-null values' },
+  { name: 'COUNT_DISTINCT', sig: 'COUNT_DISTINCT(column)',                     cat: 'aggregation', insert: 'COUNT_DISTINCT(column)',  desc: 'Count unique values' },
+  { name: 'SUM',            sig: 'SUM(column)',                                cat: 'aggregation', insert: 'SUM(column)',             desc: 'Sum of values' },
+  { name: 'AVG',            sig: 'AVG(column)',                                cat: 'aggregation', insert: 'AVG(column)',             desc: 'Average value' },
+  { name: 'MAX',            sig: 'MAX(column)',                                cat: 'aggregation', insert: 'MAX(column)',             desc: 'Maximum value' },
+  { name: 'MIN',            sig: 'MIN(column)',                                cat: 'aggregation', insert: 'MIN(column)',             desc: 'Minimum value' },
+  { name: 'FILTER',         sig: "FILTER(expr, condition AND condition2)",     cat: 'filter',      insert: "FILTER(COUNT_DISTINCT(column), condition = 'value')", desc: 'Aggregate with WHERE — supports AND/OR for multiple dimensions' },
+  { name: 'RATIO',          sig: 'RATIO(numerator_expr, denominator_expr)',    cat: 'derived',     insert: 'RATIO(numerator_expr, denominator_expr)',   desc: '(A ÷ B) × 100, NULL-safe' },
+  { name: 'GROWTH',         sig: 'GROWTH(current_expr, previous_expr)',        cat: 'derived',     insert: 'GROWTH(CURRENT_PERIOD(COUNT_DISTINCT(column), 30), PREVIOUS_PERIOD(COUNT_DISTINCT(column), 30))', desc: 'Period-over-period % change' },
+  { name: 'RATE',           sig: 'RATE(metric_expr, total_expr)',              cat: 'derived',     insert: 'RATE(FILTER(COUNT_DISTINCT(column), condition), COUNT_DISTINCT(column))', desc: '(metric ÷ total) × 100' },
+  { name: 'CURRENT_PERIOD', sig: 'CURRENT_PERIOD(expr, days)',                 cat: 'temporal',    insert: 'CURRENT_PERIOD(COUNT_DISTINCT(column), 30)', desc: 'Last N days' },
+  { name: 'PREVIOUS_PERIOD',sig: 'PREVIOUS_PERIOD(expr, days)',                cat: 'temporal',    insert: 'PREVIOUS_PERIOD(COUNT_DISTINCT(column), 30)', desc: 'Previous N-day window' },
+] as const;
+
+const CAT_COLORS: Record<string, string> = {
+  aggregation: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  filter:      'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  derived:     'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  temporal:    'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+};
+
+const FORMULA_TEMPLATES = [
+  {
+    label: 'Simple distinct count',
+    formula: 'COUNT_DISTINCT(video_id)',
+  },
+  {
+    label: 'Filtered count (1 dimension)',
+    formula: "FILTER(COUNT_DISTINCT(video_id), output_type = 'Chapters')",
+  },
+  {
+    label: 'Multi-dimension ratio  ← your example',
+    formula: "RATIO(\n  FILTER(COUNT_DISTINCT(video_id), published_flag = TRUE AND output_type = 'Chapters'),\n  FILTER(COUNT_DISTINCT(video_id), output_type = 'Chapters')\n)",
+  },
+  {
+    label: 'Publication rate',
+    formula: "RATE(\n  FILTER(COUNT_DISTINCT(video_id), published_flag = TRUE),\n  COUNT_DISTINCT(video_id)\n)",
+  },
+  {
+    label: 'Period-over-period growth',
+    formula: 'GROWTH(\n  CURRENT_PERIOD(COUNT_DISTINCT(video_id), 30),\n  PREVIOUS_PERIOD(COUNT_DISTINCT(video_id), 30)\n)',
+  },
+  {
+    label: 'Average with filter',
+    formula: "AVG(FILTER(duration_seconds, output_type = 'Chapters'))",
+  },
+];
+
+const CATEGORIES = ['growth', 'quality', 'efficiency', 'engagement', 'volume'];
+const UNITS      = ['%', 'count', 'ratio', 'seconds', 'minutes', 'hours'];
+const AGENT_LABELS = [
+  'Reading schema','Discovering relationships','Grouping tables','Extracting statistics',
+  'Generating KPI candidates','Building SQL','Executing queries','Evaluating KPIs','Generating insights',
+];
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmt(val: number | string | undefined | null): string {
   if (val === undefined || val === null) return '—';
   const n = typeof val === 'string' ? parseFloat(val) : val;
   if (isNaN(n)) return String(val);
   if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
-  if (Math.abs(n) >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-  if (Number.isInteger(n)) return n.toLocaleString();
+  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+  if (Number.isInteger(n))      return n.toLocaleString();
   return n.toFixed(2);
 }
 
-function insightText(ins: KPIInsight): string {
-  return ins.insight ?? ins.text ?? ins.summary ?? '';
-}
-
-const PIPELINE_STEPS: { id: PipelineMode; label: string; icon: React.ElementType; description: string }[] = [
-  { id: 'discover',  label: 'Full Discovery', icon: Zap,          description: 'All 9 agents: schema → relationships → SQL → insights' },
-  { id: 'generate',  label: 'Generate KPIs',  icon: FlaskConical, description: 'Candidate KPI generation only (no SQL execution)' },
-  { id: 'compute',   label: 'Compute Values', icon: BarChart3,    description: 'Generate + build SQL + execute queries' },
-  { id: 'evaluate',  label: 'Evaluate KPIs',  icon: CheckCircle2, description: 'Compute + filter by variance, correlation & usefulness' },
-];
-
-const AGENT_LABELS = [
-  'Reading schema',
-  'Discovering relationships',
-  'Grouping tables',
-  'Extracting statistics',
-  'Generating KPI candidates',
-  'Building SQL',
-  'Executing queries',
-  'Evaluating KPIs',
-  'Generating insights',
-];
-
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Shared sub-components ─────────────────────────────────────────────────────
 
 function SchemaCard({ name, schema }: { name: string; schema: TableSchema }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="border border-border rounded-xl overflow-hidden">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/30 transition-colors text-left"
-      >
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/30 transition-colors text-left">
         <div className="flex items-center gap-2.5">
           <Database className="w-4 h-4 text-primary" />
           <span className="font-mono text-sm font-semibold text-foreground">{name}</span>
@@ -129,80 +151,8 @@ function SchemaCard({ name, schema }: { name: string; schema: TableSchema }) {
               </span>
             ))}
           </div>
-          {schema.sample_rows.length > 0 && (
-            <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-              <table className="text-xs w-full">
-                <thead className="bg-secondary/50">
-                  <tr>{schema.columns.slice(0, 6).map(c => (
-                    <th key={c.name} className="px-3 py-2 text-left text-muted-foreground font-medium truncate max-w-[120px]">{c.name}</th>
-                  ))}</tr>
-                </thead>
-                <tbody>
-                  {schema.sample_rows.slice(0, 3).map((row, i) => (
-                    <tr key={i} className="border-t border-border/50">
-                      {schema.columns.slice(0, 6).map(c => (
-                        <td key={c.name} className="px-3 py-2 text-muted-foreground truncate max-w-[120px]">{String(row[c.name] ?? '—')}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       )}
-    </div>
-  );
-}
-
-function KPIResultCard({ kpi, index }: { kpi: GoodKPI; index: number }) {
-  const score = kpi.usefulness_score ?? 0;
-  const scoreColor = score >= 8 ? 'text-green-400' : score >= 6 ? 'text-yellow-400' : 'text-muted-foreground';
-  const [sqlOpen, setSqlOpen] = useState(false);
-  return (
-    <div className="bg-card border border-border rounded-xl p-4 flex flex-col gap-3 hover:border-primary/30 transition-colors">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs text-muted-foreground font-mono">#{index + 1}</span>
-            {kpi.category && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{kpi.category}</span>}
-          </div>
-          <h3 className="font-semibold text-foreground text-sm leading-tight">{kpi.name}</h3>
-        </div>
-        <div className="text-right flex-shrink-0">
-          <div className="text-2xl font-bold text-foreground tabular-nums">
-            {fmt(kpi.value)}{kpi.unit && <span className="text-sm text-muted-foreground ml-1">{kpi.unit}</span>}
-          </div>
-          {kpi.usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
-        </div>
-      </div>
-      {kpi.description && <p className="text-xs text-muted-foreground leading-relaxed">{kpi.description}</p>}
-      {kpi.sql && (
-        <div>
-          <button onClick={() => setSqlOpen(o => !o)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            {sqlOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}View SQL
-          </button>
-          {sqlOpen && (
-            <pre className="mt-2 text-xs bg-secondary/50 rounded-lg p-3 overflow-x-auto text-muted-foreground font-mono leading-relaxed whitespace-pre-wrap">{kpi.sql}</pre>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function InsightCard({ insight }: { insight: KPIInsight }) {
-  const text = insightText(insight);
-  if (!text) return null;
-  return (
-    <div className="flex gap-3 bg-card border border-border rounded-xl p-4">
-      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <Lightbulb className="w-4 h-4 text-primary" />
-      </div>
-      <div className="flex-1 min-w-0">
-        {insight.kpi_name && <p className="text-xs font-semibold text-primary mb-1">{insight.kpi_name}</p>}
-        <p className="text-sm text-muted-foreground leading-relaxed">{text}</p>
-      </div>
     </div>
   );
 }
@@ -218,8 +168,7 @@ function AgentProgress({ active, agentIndex }: { active: boolean; agentIndex: nu
             <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
               i < agentIndex ? 'bg-green-500/20 text-green-400' :
               i === agentIndex ? 'bg-primary/20 text-primary' :
-              'bg-secondary text-muted-foreground/40'
-            }`}>
+              'bg-secondary text-muted-foreground/40'}`}>
               {i < agentIndex ? <CheckCircle2 className="w-3 h-3" /> :
                i === agentIndex ? <Loader2 className="w-3 h-3 animate-spin" /> :
                <span className="w-1.5 h-1.5 rounded-full bg-current" />}
@@ -232,45 +181,615 @@ function AgentProgress({ active, agentIndex }: { active: boolean; agentIndex: nu
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+function KPIExpandPanel({ registryId }: { registryId: string }) {
+  const [detail, setDetail] = useState<RegistryKPIFull | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]         = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true); setErr(null);
+    fetch(`${BASE}/registry/${registryId}`)
+      .then(r => r.ok ? r.json() : r.json().then((e: { detail?: string }) => { throw new Error(e.detail ?? 'Load failed'); }))
+      .then((d: RegistryKPIFull) => setDetail(d))
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [registryId]);
+
+  if (loading) return <div className="flex items-center gap-2 py-5 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-xs">Loading detail page…</span></div>;
+  if (err)     return <div className="py-3 text-xs text-destructive flex items-center gap-2"><AlertCircle className="w-4 h-4 flex-shrink-0" />{err}</div>;
+  if (!detail) return null;
+
+  const ex = detail.expand_detail;
+  const hasContent = ex.interpretation || ex.stats?.length > 0 || ex.charts?.length > 0;
+
+  if (!hasContent) return (
+    <div className="py-4 text-xs text-muted-foreground flex items-center gap-2">
+      <Loader2 className="w-3 h-3 animate-spin" />Detail page is being generated in the background — check back in a moment.
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 pt-4 border-t border-border mt-2">
+      {ex.interpretation && (
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <BookOpen className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed pt-1">{ex.interpretation}</p>
+        </div>
+      )}
+      {(ex.high_value_means || ex.low_value_means) && (
+        <div className="grid grid-cols-2 gap-3">
+          {ex.high_value_means && (
+            <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-3 space-y-1">
+              <div className="flex items-center gap-1.5"><ArrowUp className="w-3 h-3 text-green-400" /><span className="text-xs font-semibold text-green-400">High value</span></div>
+              <p className="text-xs text-muted-foreground leading-snug">{ex.high_value_means}</p>
+            </div>
+          )}
+          {ex.low_value_means && (
+            <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3 space-y-1">
+              <div className="flex items-center gap-1.5"><ArrowDown className="w-3 h-3 text-destructive" /><span className="text-xs font-semibold text-destructive">Low value</span></div>
+              <p className="text-xs text-muted-foreground leading-snug">{ex.low_value_means}</p>
+            </div>
+          )}
+        </div>
+      )}
+      {ex.stats?.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {ex.stats.map((s, i) => (
+            <div key={i} className="bg-secondary/40 rounded-xl p-3 space-y-1">
+              <p className="text-xs text-muted-foreground leading-tight">{s.label}</p>
+              <p className="text-lg font-bold text-foreground tabular-nums">{s.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {ex.charts?.map((chart, i) => {
+        const xField = chart.axes?.x?.field ?? 'x';
+        const yField = chart.axes?.y?.field ?? 'value';
+        return (
+          <div key={i} className="space-y-2">
+            <p className="text-xs font-semibold text-foreground">{chart.title}</p>
+            <div className="bg-secondary/20 rounded-xl p-3">
+              <ResponsiveContainer width="100%" height={180}>
+                {chart.chart_type === 'line' ? (
+                  <LineChart data={chart.data} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                    <XAxis dataKey={xField} tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} width={45} />
+                    <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} labelStyle={{ color: 'rgba(255,255,255,0.6)' }} itemStyle={{ color: '#FF4D5A' }} />
+                    <Line type="monotone" dataKey={yField} stroke="#FF4D5A" strokeWidth={2} dot={false} />
+                  </LineChart>
+                ) : (
+                  <BarChart data={chart.data} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                    <XAxis dataKey={xField} tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} width={45} />
+                    <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} labelStyle={{ color: 'rgba(255,255,255,0.6)' }} itemStyle={{ color: '#FF4D5A' }} />
+                    <Bar dataKey={yField} fill="#FF4D5A" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                  </BarChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })}
+      {ex.value_range && <p className="text-xs text-muted-foreground/60 italic">{ex.value_range}</p>}
+    </div>
+  );
+}
+
+function KPICard({ name, value, unit, description, category, usefulness_score, sql, registryId, index }:
+  { name: string; value?: unknown; unit?: string; description?: string; category?: string;
+    usefulness_score?: number; sql?: string; registryId?: string; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const [sqlOpen, setSqlOpen]   = useState(false);
+  const score = usefulness_score ?? 0;
+  const scoreColor = score >= 8 ? 'text-green-400' : score >= 6 ? 'text-yellow-400' : 'text-muted-foreground';
+
+  return (
+    <div className={`bg-card border rounded-xl p-4 flex flex-col gap-3 transition-all duration-200 ${expanded ? 'border-primary/40 shadow-sm shadow-primary/10' : 'border-border hover:border-primary/30'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs text-muted-foreground font-mono">#{index + 1}</span>
+            {category && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{category}</span>}
+          </div>
+          <h3 className="font-semibold text-foreground text-sm leading-tight">{name}</h3>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="text-2xl font-bold text-foreground tabular-nums">
+            {fmt(value as number | string | null)}{unit && <span className="text-sm text-muted-foreground ml-1">{unit}</span>}
+          </div>
+          {usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
+        </div>
+      </div>
+      {description && <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>}
+      {sql && (
+        <div>
+          <button onClick={() => setSqlOpen(o => !o)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            {sqlOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}View SQL
+          </button>
+          {sqlOpen && <pre className="mt-2 text-xs bg-secondary/50 rounded-lg p-3 overflow-x-auto text-muted-foreground font-mono leading-relaxed whitespace-pre-wrap">{sql}</pre>}
+        </div>
+      )}
+      {registryId && (
+        <button onClick={() => setExpanded(o => !o)}
+          className={`flex items-center gap-2 text-xs font-medium transition-colors mt-1 ${expanded ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}>
+          {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          {expanded ? 'Hide detail page' : 'View detail page'}
+          <TrendingUp className="w-3 h-3 opacity-60" />
+        </button>
+      )}
+      {expanded && registryId && <KPIExpandPanel registryId={registryId} />}
+    </div>
+  );
+}
+
+function InsightCard({ insight }: { insight: KPIInsight }) {
+  const text = insight.insight ?? insight.text ?? insight.summary ?? '';
+  if (!text) return null;
+  return (
+    <div className="flex gap-3 bg-card border border-border rounded-xl p-4">
+      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Lightbulb className="w-4 h-4 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        {insight.kpi_name && <p className="text-xs font-semibold text-primary mb-1">{insight.kpi_name}</p>}
+        <p className="text-sm text-muted-foreground leading-relaxed">{text}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Column browser (used in manual builder) ───────────────────────────────────
+
+function ColumnBrowser({ schema, onInsert }: { schema: SchemaResponse | null; onInsert: (col: string) => void }) {
+  const [openTable, setOpenTable] = useState<string | null>(null);
+
+  if (!schema) return (
+    <div className="flex items-center justify-center h-32 text-muted-foreground/50">
+      <div className="text-center"><Database className="w-6 h-6 mx-auto mb-2" /><p className="text-xs">Schema loading…</p></div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-1 max-h-[480px] overflow-y-auto pr-1">
+      {Object.entries(schema.tables).map(([tbl, info]) => (
+        <div key={tbl} className="border border-border rounded-xl overflow-hidden">
+          <button onClick={() => setOpenTable(t => t === tbl ? null : tbl)}
+            className="w-full flex items-center justify-between px-3 py-2.5 bg-card hover:bg-secondary/30 transition-colors text-left">
+            <div className="flex items-center gap-2">
+              <Table2 className="w-3.5 h-3.5 text-primary" />
+              <span className="font-mono text-xs font-semibold text-foreground">{tbl}</span>
+              <span className="text-xs text-muted-foreground/60">{info.columns.length} cols</span>
+            </div>
+            {openTable === tbl ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+          </button>
+          {openTable === tbl && (
+            <div className="px-3 pb-3 bg-card/50 border-t border-border">
+              <p className="text-xs text-muted-foreground/50 mt-2 mb-1.5">Click to insert column name</p>
+              <div className="flex flex-wrap gap-1.5">
+                {info.columns.map(col => (
+                  <button key={col.name} onClick={() => onInsert(col.name)}
+                    className="inline-flex items-center gap-1 text-xs bg-secondary hover:bg-primary/10 hover:text-primary border border-border hover:border-primary/30 rounded-lg px-2 py-1 font-mono transition-colors">
+                    <span>{col.name}</span>
+                    <span className="text-muted-foreground/50 text-[10px]">{col.type.split('(')[0]}</span>
+                    <Plus className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Formula Builder Tab ────────────────────────────────────────────────────────
+
+interface ManualCreatedKPI {
+  id: string; name: string; sql?: string; current_value?: unknown; unit?: string; message?: string;
+}
+
+function FormulaBuilderTab({ schema }: { schema: SchemaResponse | null }) {
+  const [name, setName]             = useState('');
+  const [description, setDesc]      = useState('');
+  const [formula, setFormula]       = useState('');
+  const [category, setCategory]     = useState('');
+  const [unit, setUnit]             = useState('');
+  const [columnsUsed, setColumns]   = useState<string[]>([]);
+  const [formState, setFormState]   = useState<FormState>('idle');
+  const [formError, setFormError]   = useState('');
+  const [created, setCreated]       = useState<ManualCreatedKPI | null>(null);
+  const [activeSection, setSection] = useState<'templates' | 'functions'>('templates');
+  const formulaRef = useRef<HTMLTextAreaElement>(null);
+
+  function insertToFormula(text: string) {
+    const el = formulaRef.current;
+    if (!el) { setFormula(f => f + text); return; }
+    const start = el.selectionStart ?? formula.length;
+    const end   = el.selectionEnd   ?? formula.length;
+    const next  = formula.substring(0, start) + text + formula.substring(end);
+    setFormula(next);
+    setTimeout(() => { el.selectionStart = el.selectionEnd = start + text.length; el.focus(); }, 0);
+  }
+
+  function addColumn(col: string) {
+    insertToFormula(col);
+    setColumns(cs => cs.includes(col) ? cs : [...cs, col]);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !formula.trim()) return;
+    setFormState('loading'); setFormError(''); setCreated(null);
+    try {
+      const res = await fetch(`${BASE}/kpi/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), description: description.trim() || undefined, formula: formula.trim(), columns_used: columnsUsed, category: category || undefined, unit: unit || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Creation failed');
+      setCreated(data as ManualCreatedKPI);
+      setFormState('success');
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : String(err));
+      setFormState('error');
+    }
+  }
+
+  const catColors: Record<string, string> = {
+    templates: 'bg-primary/10 text-primary border-primary/30',
+    functions: 'bg-secondary text-muted-foreground border-border',
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+      {/* ── Left: Column browser ──────────────────────────────────── */}
+      <div className="lg:col-span-2 space-y-3">
+        <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Column Browser</h3>
+            <span className="text-xs text-muted-foreground">click to insert</span>
+          </div>
+          <ColumnBrowser schema={schema} onInsert={addColumn} />
+        </div>
+        {columnsUsed.length > 0 && (
+          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <p className="text-xs text-muted-foreground font-medium">Columns in formula</p>
+            <div className="flex flex-wrap gap-1.5">
+              {columnsUsed.map(c => (
+                <span key={c} className="inline-flex items-center gap-1 text-xs bg-primary/10 text-primary border border-primary/20 rounded-lg px-2 py-0.5 font-mono">
+                  {c}
+                  <button onClick={() => setColumns(cs => cs.filter(x => x !== c))} className="hover:text-destructive transition-colors"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Right: Form ───────────────────────────────────────────── */}
+      <div className="lg:col-span-3 space-y-4">
+
+        {/* Metadata */}
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <PenLine className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">KPI Details</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground mb-1.5 block">KPI Name *</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Chapter Publication Rate"
+                className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1.5 block">Category</label>
+              <select value={category} onChange={e => setCategory(e.target.value)}
+                className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/60 transition-colors">
+                <option value="">— select —</option>
+                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1.5 block">Unit</label>
+              <select value={unit} onChange={e => setUnit(e.target.value)}
+                className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/60 transition-colors">
+                <option value="">— select —</option>
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground mb-1.5 block">Description</label>
+              <input value={description} onChange={e => setDesc(e.target.value)} placeholder="What this KPI measures…"
+                className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors" />
+            </div>
+          </div>
+        </div>
+
+        {/* Formula builder */}
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Formula Builder</h3>
+          </div>
+
+          {/* Toggle: Templates / Functions */}
+          <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 w-fit">
+            {(['templates', 'functions'] as const).map(s => (
+              <button key={s} onClick={() => setSection(s)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all capitalize ${activeSection === s ? catColors[s] : 'text-muted-foreground border-transparent hover:text-foreground'}`}>
+                {s === 'templates' ? 'Templates' : 'Functions'}
+              </button>
+            ))}
+          </div>
+
+          {/* Templates */}
+          {activeSection === 'templates' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Click a template to fill the formula editor</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {FORMULA_TEMPLATES.map(t => (
+                  <button key={t.label} onClick={() => setFormula(t.formula)}
+                    className="text-left p-3 bg-secondary/50 hover:bg-secondary border border-border hover:border-primary/30 rounded-xl transition-colors group">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs font-medium text-foreground leading-snug">{t.label}</p>
+                      <Copy className="w-3 h-3 text-muted-foreground/40 group-hover:text-primary flex-shrink-0 mt-0.5 transition-colors" />
+                    </div>
+                    <p className="text-[10px] font-mono text-muted-foreground/60 mt-1 leading-relaxed truncate">{t.formula.split('\n')[0]}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Functions reference */}
+          {activeSection === 'functions' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Click to insert function template at cursor</p>
+              <div className="space-y-1.5">
+                {(['aggregation', 'filter', 'derived', 'temporal'] as const).map(cat => (
+                  <div key={cat}>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1.5 mt-2 font-medium">{cat}</p>
+                    <div className="space-y-1">
+                      {FORMULA_FUNCTIONS.filter(f => f.cat === cat).map(fn => (
+                        <button key={fn.name} onClick={() => insertToFormula(fn.insert)}
+                          className="w-full text-left flex items-start gap-3 p-2.5 bg-secondary/40 hover:bg-secondary border border-transparent hover:border-border rounded-xl transition-colors group">
+                          <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded-md border flex-shrink-0 mt-0.5 ${CAT_COLORS[cat]}`}>{fn.name}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-mono text-muted-foreground/70 leading-snug truncate">{fn.sig}</p>
+                            <p className="text-xs text-muted-foreground/50 leading-snug mt-0.5">{fn.desc}</p>
+                          </div>
+                          <CornerDownLeft className="w-3.5 h-3.5 text-muted-foreground/30 group-hover:text-primary flex-shrink-0 mt-1 transition-colors" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Formula textarea */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-2 block">
+              Formula *
+              <span className="text-muted-foreground/40">— use FILTER for multi-dimensional conditions</span>
+            </label>
+            <textarea ref={formulaRef} value={formula} onChange={e => setFormula(e.target.value)}
+              rows={5} spellCheck={false}
+              placeholder={"e.g.\nRATIO(\n  FILTER(COUNT_DISTINCT(video_id), published_flag = TRUE AND output_type = 'Chapters'),\n  FILTER(COUNT_DISTINCT(video_id), output_type = 'Chapters')\n)"}
+              className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors resize-y leading-relaxed" />
+            <p className="text-xs text-muted-foreground/50 mt-1.5">Use function names from the reference above — combine them freely to express any calculation.</p>
+          </div>
+
+          {/* Submit */}
+          <form onSubmit={handleSubmit}>
+            <button type="submit" disabled={!name.trim() || !formula.trim() || formState === 'loading'}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
+              {formState === 'loading'
+                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating SQL & computing…</>
+                : <><Zap className="w-4 h-4" />Create KPI</>}
+            </button>
+          </form>
+
+          {/* Error */}
+          {formState === 'error' && (
+            <div className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+              <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-muted-foreground">{formError}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Created KPI result */}
+        {created && formState === 'success' && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-green-400" />
+              <p className="text-sm font-semibold text-green-400">KPI created and saved to registry</p>
+            </div>
+            <KPICard
+              index={0} name={created.name} value={created.current_value} unit={created.unit}
+              sql={created.sql} registryId={created.id}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── AI Generate Tab ────────────────────────────────────────────────────────────
+
+interface AgentResult {
+  context: string; kpis_created: number;
+  kpis: { id: string; name: string; description?: string; category?: string; current_value?: unknown; unit?: string; formula?: string; }[];
+}
+
+function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
+  const [context, setContext]       = useState('');
+  const [selectedTables, setTables] = useState<string[]>([]);
+  const [formState, setFormState]   = useState<FormState>('idle');
+  const [formError, setFormError]   = useState('');
+  const [result, setResult]         = useState<AgentResult | null>(null);
+
+  function toggleTable(tbl: string) {
+    setTables(ts => ts.includes(tbl) ? ts.filter(t => t !== tbl) : [...ts, tbl]);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!context.trim()) return;
+    setFormState('loading'); setFormError(''); setResult(null);
+    try {
+      const res = await fetch(`${BASE}/kpi/agent-create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: context.trim(), tables: selectedTables.length > 0 ? selectedTables : undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Generation failed');
+      setResult(data as AgentResult);
+      setFormState('success');
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : String(err));
+      setFormState('error');
+    }
+  }
+
+  const tables = schema ? Object.keys(schema.tables) : [];
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      {/* ── Left: Config ──────────────────────────────────────────── */}
+      <div className="lg:col-span-1 space-y-4">
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">AI KPI Generator</h3>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Describe your team or business objective. The AI generates 3–6 complex, meaningful KPIs — each with SQL, computed values, and an expand detail page.
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1.5 block">Business context *</label>
+              <textarea value={context} onChange={e => setContext(e.target.value)} rows={5}
+                placeholder={"Examples:\n• KPIs for the content operations team\n• Track chapter publishing efficiency\n• Monitor video production pipeline health"}
+                className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors resize-none leading-relaxed" />
+            </div>
+
+            {tables.length > 0 && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1.5 block">
+                  Focus tables <span className="text-muted-foreground/50">(optional — leave blank for all)</span>
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {tables.map(tbl => (
+                    <button key={tbl} type="button" onClick={() => toggleTable(tbl)}
+                      className={`text-xs font-mono px-2.5 py-1 rounded-lg border transition-colors ${
+                        selectedTables.includes(tbl)
+                          ? 'bg-primary/10 text-primary border-primary/30'
+                          : 'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
+                      }`}>
+                      {selectedTables.includes(tbl) && <CheckCircle2 className="w-2.5 h-2.5 inline mr-1" />}
+                      {tbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button type="submit" disabled={!context.trim() || formState === 'loading'}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
+              {formState === 'loading'
+                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating KPIs…</>
+                : <><Sparkles className="w-4 h-4" />Generate KPIs</>}
+            </button>
+
+            {formState === 'error' && (
+              <div className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+                <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground">{formError}</p>
+              </div>
+            )}
+          </form>
+        </div>
+      </div>
+
+      {/* ── Right: Results ────────────────────────────────────────── */}
+      <div className="lg:col-span-2">
+        {formState === 'loading' && (
+          <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
+            <Loader2 className="w-10 h-10 text-primary animate-spin" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">Generating KPIs…</p>
+              <p className="text-xs text-muted-foreground mt-1">The AI is analysing your schema and creating meaningful KPIs</p>
+            </div>
+          </div>
+        )}
+
+        {result && formState === 'success' && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-green-400" />
+              <p className="text-sm font-semibold text-foreground">
+                {result.kpis_created} KPI{result.kpis_created !== 1 ? 's' : ''} generated and saved to registry
+              </p>
+            </div>
+            <div className="space-y-3">
+              {result.kpis.map((kpi, i) => (
+                <KPICard
+                  key={kpi.id} index={i} name={kpi.name}
+                  value={kpi.current_value} unit={kpi.unit}
+                  description={kpi.description} category={kpi.category}
+                  registryId={kpi.id}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {formState === 'idle' && (
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center mb-4">
+              <Sparkles className="w-8 h-8 text-muted-foreground/40" />
+            </div>
+            <p className="text-sm font-semibold text-foreground mb-2">Describe your objective</p>
+            <p className="text-xs text-muted-foreground max-w-xs">Enter a business context on the left — the AI will generate KPIs tailored to your team and data.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function KPILabPage() {
-  const [pageState, setPageState]     = useState<PageState>('idle');
-  const [dataSource, setDataSource]   = useState<DataSource>('postgres');
-  const [sources, setSources]         = useState<SourceInfo[] | null>(null);
-  const [schema, setSchema]           = useState<(SchemaResponse & { cached?: boolean }) | null>(null);
-  const [result, setResult]           = useState<DiscoverResult | null>(null);
-  const [errors, setErrors]           = useState<string[]>([]);
-  const [mode, setMode]               = useState<PipelineMode>('discover');
-  const [agentIndex, setAgentIndex]   = useState(0);
-  const [dragOver, setDragOver]       = useState(false);
-  const [uploadedTables, setUploadedTables] = useState<string[]>([]);
-  const fileInputRef  = useRef<HTMLInputElement>(null);
-  const agentTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [tab, setTab]               = useState<PageTab>('discover');
+  const [pageState, setPageState]   = useState<PageState>('idle');
+  const [schema, setSchema]         = useState<SchemaResponse | null>(null);
+  const [result, setResult]         = useState<DiscoverResult | null>(null);
+  const [errors, setErrors]         = useState<string[]>([]);
+  const [agentIndex, setAgentIndex] = useState(0);
+  const agentTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── API helpers ──────────────────────────────────────────────────
-
-  const loadSources = useCallback(async () => {
-    setPageState('loading_sources');
+  const loadSchema = useCallback(async (forceRefresh = false) => {
+    setPageState('loading_schema'); setErrors([]);
     try {
-      const res = await fetch(`${BASE}/sources`);
-      const data = await res.json();
-      setSources(data.sources ?? []);
-      setPageState('idle');
-    } catch {
-      setPageState('idle');
-    }
-  }, []);
-
-  const loadSchema = useCallback(async (src: DataSource, forceRefresh = false) => {
-    setPageState('loading_schema');
-    setErrors([]);
-    try {
-      const url = `${BASE}/schema?source=${src}${forceRefresh ? '&refresh=true' : ''}`;
-      const res = await fetch(url);
+      const res = await fetch(`${BASE}/schema?source=postgres${forceRefresh ? '&refresh=true' : ''}`);
       if (!res.ok) throw new Error(await res.text());
-      const data: SchemaResponse & { cached?: boolean } = await res.json();
-      setSchema(data);
+      setSchema(await res.json());
       setPageState('idle');
     } catch (e: unknown) {
       setErrors([e instanceof Error ? e.message : String(e)]);
@@ -278,458 +797,230 @@ export default function KPILabPage() {
     }
   }, []);
 
-  const handleSourceChange = useCallback((src: DataSource) => {
-    setDataSource(src);
-    setSchema(null);
-    setResult(null);
-    setErrors([]);
-    loadSchema(src);
-  }, [loadSchema]);
-
-  const uploadFiles = useCallback(async (files: FileList | File[]) => {
-    setPageState('uploading');
-    setErrors([]);
-    const form = new FormData();
-    Array.from(files).forEach(f => form.append('files', f));
-    try {
-      const res = await fetch(`${BASE}/data/upload`, { method: 'POST', body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? 'Upload failed');
-      setUploadedTables(data.tables_loaded ?? []);
-      await loadSchema('csv');
-    } catch (e: unknown) {
-      setErrors([e instanceof Error ? e.message : String(e)]);
-      setPageState('error');
-    }
-  }, [loadSchema]);
+  useEffect(() => { loadSchema(); }, [loadSchema]);
 
   const startAgentSim = useCallback(() => {
-    setAgentIndex(0);
-    let idx = 0;
+    setAgentIndex(0); let idx = 0;
     agentTimer.current = setInterval(() => {
-      idx++;
-      setAgentIndex(idx);
+      idx++; setAgentIndex(idx);
       if (idx >= AGENT_LABELS.length) { clearInterval(agentTimer.current!); agentTimer.current = null; }
     }, 1800);
   }, []);
 
   const runPipeline = useCallback(async () => {
     if (!schema || Object.keys(schema.tables).length === 0) return;
-    setPageState('running');
-    setResult(null);
-    setErrors([]);
-    startAgentSim();
+    setPageState('running'); setResult(null); setErrors([]); startAgentSim();
     try {
-      const res = await fetch(`${BASE}/kpi/${mode}?source=${dataSource}`, { method: 'POST' });
+      const res  = await fetch(`${BASE}/kpi/discover?source=postgres`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? 'Pipeline failed');
       if (agentTimer.current) { clearInterval(agentTimer.current); agentTimer.current = null; }
       setAgentIndex(AGENT_LABELS.length);
-      setResult(data as DiscoverResult);
-      setErrors(data.errors ?? []);
+      setResult(data as DiscoverResult); setErrors(data.errors ?? []);
       setPageState('done');
     } catch (e: unknown) {
       if (agentTimer.current) { clearInterval(agentTimer.current); agentTimer.current = null; }
-      setErrors([e instanceof Error ? e.message : String(e)]);
-      setPageState('error');
+      setErrors([e instanceof Error ? e.message : String(e)]); setPageState('error');
     }
-  }, [schema, mode, dataSource, startAgentSim]);
+  }, [schema, startAgentSim]);
 
-  const resetAll = useCallback(async () => {
-    if (dataSource === 'csv') {
-      try { await fetch(`${BASE}/data/reset`, { method: 'DELETE' }); } catch { /* ignore */ }
-      setUploadedTables([]);
-    }
-    setSchema(null);
-    setResult(null);
-    setErrors([]);
-    setAgentIndex(0);
-    setPageState('idle');
-  }, [dataSource]);
+  const hasSchema = !!schema && Object.keys(schema.tables).length > 0;
+  const isRunning = pageState === 'running';
+  const isBusy    = pageState === 'loading_schema';
+  const canRun    = hasSchema && !isRunning && !isBusy;
 
-  // ── Init: load sources + default postgres schema ──────────────────────────
-  useEffect(() => {
-    loadSources();
-    loadSchema('postgres');
-  }, []);
-
-  // ── Drag & drop ──────────────────────────────────────────────────
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files.length) {
-      setDataSource('csv');
-      uploadFiles(e.dataTransfer.files);
-    }
-  }, [uploadFiles]);
-
-  // ── Computed ─────────────────────────────────────────────────────
-  const hasSchema  = !!schema && Object.keys(schema.tables).length > 0;
-  const isRunning  = pageState === 'running';
-  const isBusy     = pageState === 'uploading' || pageState === 'loading_schema' || pageState === 'loading_sources';
-  const canRun     = hasSchema && !isRunning && !isBusy;
-
-  const pgSource   = sources?.find(s => s.id === 'postgres');
-  const csvSource  = sources?.find(s => s.id === 'csv');
+  const TABS = [
+    { id: 'discover' as PageTab, label: 'Discover',        icon: Zap },
+    { id: 'manual'   as PageTab, label: 'Formula Builder', icon: PenLine },
+    { id: 'agent'    as PageTab, label: 'AI Generate',     icon: Sparkles },
+  ];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
-        {/* ── Header ─────────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Zap className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">KPI Lab</h1>
-              <p className="text-sm text-muted-foreground">Agentic KPI discovery — choose a data source and run the pipeline</p>
-            </div>
+        {/* ── Header ────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Zap className="w-5 h-5 text-primary" />
           </div>
-          <div className="flex items-center gap-2">
-            {(hasSchema || result) && (
-              <button onClick={resetAll} className="flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/50 transition-colors">
-                <Trash2 className="w-3.5 h-3.5" />Reset
-              </button>
-            )}
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">KPI Lab</h1>
+            <p className="text-sm text-muted-foreground">Discover, build, and manage KPIs — all saved to your registry</p>
           </div>
         </div>
 
-        {/* ── Data Source Selector ────────────────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-
-          {/* Postgres */}
-          <button
-            onClick={() => handleSourceChange('postgres')}
-            className={`flex items-start gap-4 p-4 rounded-2xl border-2 text-left transition-all duration-150 ${
-              dataSource === 'postgres'
-                ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
-                : 'border-border hover:border-primary/30 bg-card'
-            }`}
-          >
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${dataSource === 'postgres' ? 'bg-primary/20' : 'bg-secondary'}`}>
-              <Server className={`w-5 h-5 ${dataSource === 'postgres' ? 'text-primary' : 'text-muted-foreground'}`} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className={`text-sm font-semibold ${dataSource === 'postgres' ? 'text-primary' : 'text-foreground'}`}>Frammer Database</span>
-                {pgSource && (
-                  <span className="text-xs bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full">
-                    {pgSource.table_count} tables
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground leading-snug">Discover KPIs directly from your live Supabase PostgreSQL tables — no upload needed</p>
-            </div>
-            {dataSource === 'postgres' && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0 mt-1" />}
-          </button>
-
-          {/* CSV Upload */}
-          <button
-            onClick={() => handleSourceChange('csv')}
-            className={`flex items-start gap-4 p-4 rounded-2xl border-2 text-left transition-all duration-150 ${
-              dataSource === 'csv'
-                ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
-                : 'border-border hover:border-primary/30 bg-card'
-            }`}
-          >
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${dataSource === 'csv' ? 'bg-primary/20' : 'bg-secondary'}`}>
-              <Upload className={`w-5 h-5 ${dataSource === 'csv' ? 'text-primary' : 'text-muted-foreground'}`} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className={`text-sm font-semibold ${dataSource === 'csv' ? 'text-primary' : 'text-foreground'}`}>Upload CSV</span>
-                {csvSource && csvSource.table_count > 0 && (
-                  <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
-                    {csvSource.table_count} loaded
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground leading-snug">Upload your own CSV files and discover KPIs from any dataset in memory</p>
-            </div>
-            {dataSource === 'csv' && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0 mt-1" />}
-          </button>
+        {/* ── Tabs ──────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-1 bg-card border border-border rounded-2xl p-1 w-fit">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            const active = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                  active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                }`}>
+                <Icon className="w-4 h-4" />{t.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* ── CSV upload zone (only shown when csv selected) ─────────── */}
-        {dataSource === 'csv' && (
-          <div
-            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-200 ${
-              dragOver ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-border hover:border-primary/40 hover:bg-secondary/10 bg-card'
-            }`}
-          >
-            <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt" multiple className="hidden"
-              onChange={e => { if (e.target.files?.length) uploadFiles(e.target.files); }} />
-            {pageState === 'uploading' ? (
-              <div className="flex flex-col items-center gap-2">
-                <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                <p className="text-sm text-muted-foreground">Uploading and loading into DuckDB…</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center">
-                  <FileText className="w-6 h-6 text-muted-foreground" />
+        {/* ── Discover Tab ──────────────────────────────────────────── */}
+        {tab === 'discover' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left: controls */}
+            <div className="lg:col-span-1 space-y-4">
+              <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-green-500/5 border border-green-500/20">
+                  <Server className="w-4 h-4 text-green-400 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-green-400">Frammer Database</p>
+                    <p className="text-xs text-muted-foreground truncate">Live Supabase PostgreSQL</p>
+                  </div>
+                  {hasSchema && (
+                    <span className="ml-auto text-xs bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
+                      {Object.keys(schema!.tables).length} tables
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm font-medium text-foreground">Drop CSV files here or click to browse</p>
-                <p className="text-xs text-muted-foreground">.csv · .tsv · .txt · multiple files supported</p>
+                <div className="flex items-start gap-3 px-1">
+                  <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Play className="w-3.5 h-3.5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-foreground">Full Discovery</p>
+                    <p className="text-xs text-muted-foreground leading-snug mt-0.5">
+                      All 9 agents: schema → relationships → SQL → insights. KPIs are saved to registry with expandable detail pages.
+                    </p>
+                  </div>
+                </div>
+                <button onClick={runPipeline} disabled={!canRun}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
+                  {isRunning ? <><Loader2 className="w-4 h-4 animate-spin" />Running…</> : <><Zap className="w-4 h-4" />Discover KPIs</>}
+                </button>
+                <AgentProgress active={isRunning} agentIndex={agentIndex} />
               </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Uploaded tables chips ───────────────────────────────────── */}
-        {dataSource === 'csv' && uploadedTables.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {uploadedTables.map(t => (
-              <span key={t} className="inline-flex items-center gap-1.5 text-xs text-green-400 bg-green-400/5 border border-green-400/20 rounded-lg px-3 py-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /><span className="font-mono">{t}</span>
-              </span>
-            ))}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-          {/* ── Left: Pipeline config ─────────────────────────────────── */}
-          <div className="lg:col-span-1 space-y-4">
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <Play className="w-4 h-4 text-primary" />
-                <h2 className="font-semibold text-sm text-foreground">Pipeline Mode</h2>
-              </div>
-              <div className="space-y-2">
-                {PIPELINE_STEPS.map(step => {
-                  const Icon = step.icon;
-                  const active = mode === step.id;
-                  return (
-                    <button key={step.id} onClick={() => setMode(step.id)}
-                      className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all duration-150 ${
-                        active ? 'border-primary bg-primary/5' : 'border-border hover:bg-secondary/20'
-                      }`}>
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${active ? 'bg-primary/20' : 'bg-secondary'}`}>
-                        <Icon className={`w-4 h-4 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
-                      </div>
-                      <div>
-                        <p className={`text-xs font-semibold ${active ? 'text-primary' : 'text-foreground'}`}>{step.label}</p>
-                        <p className="text-xs text-muted-foreground leading-snug mt-0.5">{step.description}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <button onClick={runPipeline} disabled={!canRun}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
-                {isRunning
-                  ? <><Loader2 className="w-4 h-4 animate-spin" />Running…</>
-                  : <><Zap className="w-4 h-4" />Run on {dataSource === 'postgres' ? 'Frammer DB' : 'Uploaded CSV'}</>}
-              </button>
-
-              {/* Source badge */}
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${dataSource === 'postgres' ? 'bg-green-500/5 border border-green-500/20 text-green-400' : 'bg-blue-500/5 border border-blue-500/20 text-blue-400'}`}>
-                {dataSource === 'postgres' ? <Server className="w-3.5 h-3.5" /> : <Upload className="w-3.5 h-3.5" />}
-                <span>{dataSource === 'postgres' ? 'Using Frammer PostgreSQL' : 'Using uploaded CSV tables'}</span>
-              </div>
-
-              <AgentProgress active={isRunning} agentIndex={agentIndex} />
             </div>
-          </div>
 
-          {/* ── Right: Schema + Results ───────────────────────────────── */}
-          <div className="lg:col-span-2 space-y-6">
-
-            {/* Loading state */}
-            {isBusy && !isRunning && (
-              <div className="flex items-center justify-center py-12">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                  <p className="text-sm text-muted-foreground">
-                    {pageState === 'loading_schema' ? `Loading ${dataSource === 'postgres' ? 'Frammer database' : 'CSV'} schema…` : 'Loading sources…'}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Schema */}
-            {hasSchema && !isBusy && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {dataSource === 'postgres' ? <Server className="w-4 h-4 text-primary" /> : <Database className="w-4 h-4 text-primary" />}
-                    <h2 className="font-semibold text-sm text-foreground">
-                      {dataSource === 'postgres' ? 'Frammer Database Schema' : 'Uploaded CSV Schema'}
-                      <span className="ml-2 text-xs text-muted-foreground font-normal">{Object.keys(schema!.tables).length} tables</span>
-                    </h2>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {schema?.cached && dataSource === 'postgres' && (
-                      <span className="text-xs text-muted-foreground/60 bg-secondary px-2 py-0.5 rounded-full">cached</span>
-                    )}
-                    <button onClick={() => loadSchema(dataSource, true)}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      title={dataSource === 'postgres' ? 'Force re-fetch from database' : 'Reload schema'}>
-                      <RefreshCw className="w-3 h-3" />Refresh
-                    </button>
+            {/* Right: schema + results */}
+            <div className="lg:col-span-2 space-y-6">
+              {isBusy && (
+                <div className="flex items-center justify-center py-12">
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                    <p className="text-sm text-muted-foreground">Loading Frammer database schema…</p>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                  {Object.entries(schema!.tables).map(([name, tbl]) => (
-                    <SchemaCard key={name} name={name} schema={tbl} />
+              )}
+              {hasSchema && !isBusy && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Server className="w-4 h-4 text-primary" />
+                      <h2 className="font-semibold text-sm text-foreground">
+                        Database Schema
+                        <span className="ml-2 text-xs text-muted-foreground font-normal">{Object.keys(schema!.tables).length} tables</span>
+                      </h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {schema?.cached && <span className="text-xs text-muted-foreground/60 bg-secondary px-2 py-0.5 rounded-full">cached</span>}
+                      <button onClick={() => loadSchema(true)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                        <RefreshCw className="w-3 h-3" />Refresh
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {Object.entries(schema!.tables).map(([name, tbl]) => <SchemaCard key={name} name={name} schema={tbl} />)}
+                  </div>
+                </div>
+              )}
+              {!hasSchema && !isBusy && pageState !== 'error' && (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center mb-4">
+                    <FlaskConical className="w-8 h-8 text-muted-foreground/50" />
+                  </div>
+                  <h3 className="font-semibold text-foreground mb-2">Could not load database schema</h3>
+                  <p className="text-sm text-muted-foreground max-w-xs">Make sure the backend is running and DATABASE_URL is configured.</p>
+                </div>
+              )}
+              {result && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: 'Table Groups',    value: (result.table_groups ?? []).length, icon: Database },
+                      { label: 'KPIs Discovered', value: (result.good_kpis   ?? []).length, icon: CheckCircle2 },
+                      { label: 'Insights',        value: (result.insights    ?? []).length, icon: Lightbulb },
+                    ].map(s => {
+                      const Icon = s.icon;
+                      return (
+                        <div key={s.label} className="bg-card border border-border rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-1"><Icon className="w-4 h-4 text-primary" /><span className="text-xs text-muted-foreground">{s.label}</span></div>
+                          <span className="text-2xl font-bold text-foreground tabular-nums">{s.value}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {(result.good_kpis ?? []).length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <BarChart3 className="w-4 h-4 text-primary" />
+                        <h2 className="font-semibold text-sm text-foreground">
+                          Discovered KPIs <span className="ml-1 text-xs text-muted-foreground font-normal">click to expand detail page</span>
+                        </h2>
+                      </div>
+                      <div className="space-y-3">
+                        {(result.good_kpis ?? []).map((kpi, i) => (
+                          <KPICard key={kpi.kpi_id ?? i} index={i} name={kpi.name} value={kpi.value}
+                            unit={kpi.unit} description={kpi.description} category={kpi.category}
+                            usefulness_score={kpi.usefulness_score} sql={kpi.sql} registryId={kpi.registry_id} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(result.insights ?? []).length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Lightbulb className="w-4 h-4 text-primary" />
+                        <h2 className="font-semibold text-sm text-foreground">AI Insights</h2>
+                      </div>
+                      <div className="space-y-2">{(result.insights ?? []).map((ins, i) => <InsightCard key={i} insight={ins} />)}</div>
+                    </div>
+                  )}
+                  {errors.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-destructive" /><h2 className="font-semibold text-sm">Errors</h2></div>
+                      {errors.map((err, i) => (
+                        <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+                          <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                          <p className="text-xs text-muted-foreground">{err}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {pageState === 'error' && !result && errors.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-destructive" /><h2 className="font-semibold text-sm">Something went wrong</h2></div>
+                  {errors.map((err, i) => (
+                    <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+                      <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-muted-foreground">{err}</p>
+                    </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* Empty idle state */}
-            {!hasSchema && !isBusy && pageState !== 'error' && (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center mb-4">
-                  <FlaskConical className="w-8 h-8 text-muted-foreground/50" />
-                </div>
-                <h3 className="font-semibold text-foreground mb-2">
-                  {dataSource === 'csv' ? 'No CSV files uploaded yet' : 'Could not load database schema'}
-                </h3>
-                <p className="text-sm text-muted-foreground max-w-xs">
-                  {dataSource === 'csv'
-                    ? 'Upload one or more CSV files above to get started.'
-                    : 'Make sure the backend is running and DATABASE_URL is configured correctly.'}
-                </p>
-              </div>
-            )}
-
-            {/* Results */}
-            {result && (
-              <div className="space-y-6">
-                {/* Summary row */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label: 'Table Groups', value: result.table_groups.length, icon: Database },
-                    { label: 'Candidates',   value: result.candidate_kpis.length, icon: FlaskConical },
-                    { label: 'Good KPIs',    value: result.good_kpis.length, icon: CheckCircle2 },
-                    { label: 'Insights',     value: result.insights.length, icon: Lightbulb },
-                  ].map(s => {
-                    const Icon = s.icon;
-                    return (
-                      <div key={s.label} className="bg-card border border-border rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Icon className="w-4 h-4 text-primary" />
-                          <span className="text-xs text-muted-foreground">{s.label}</span>
-                        </div>
-                        <span className="text-2xl font-bold text-foreground tabular-nums">{s.value}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Good KPIs */}
-                {result.good_kpis.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">
-                        Discovered KPIs
-                        <span className="ml-2 text-xs text-muted-foreground font-normal">{result.good_kpis.length} passed all filters</span>
-                      </h2>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {result.good_kpis.map((kpi, i) => <KPIResultCard key={kpi.name ?? i} kpi={kpi} index={i} />)}
-                    </div>
-                  </div>
-                )}
-
-                {/* Candidate KPIs (generate mode only) */}
-                {result.candidate_kpis.length > 0 && result.good_kpis.length === 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <FlaskConical className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">Candidate KPIs</h2>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {result.candidate_kpis.map((kpi, i) => (
-                        <div key={kpi.name ?? i} className="bg-card border border-border rounded-xl p-4 space-y-1.5">
-                          {kpi.category && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{kpi.category}</span>}
-                          <h3 className="font-semibold text-sm text-foreground">{kpi.name}</h3>
-                          {kpi.description && <p className="text-xs text-muted-foreground">{kpi.description}</p>}
-                          {kpi.formula && <p className="text-xs font-mono text-muted-foreground/70 bg-secondary/50 rounded px-2 py-1">{kpi.formula}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Table groups */}
-                {result.table_groups.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Database className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">Table Groups</h2>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {result.table_groups.map((group, i) => (
-                        <div key={i} className="flex items-center gap-1.5 bg-secondary border border-border rounded-lg px-3 py-1.5">
-                          <span className="text-xs text-muted-foreground">Group {i + 1}:</span>
-                          <span className="text-xs font-mono text-foreground">{group.join(' · ')}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Insights */}
-                {result.insights.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Lightbulb className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">
-                        AI Insights <span className="ml-1 text-xs text-muted-foreground font-normal">{result.insights.length} generated</span>
-                      </h2>
-                    </div>
-                    <div className="space-y-2">
-                      {result.insights.map((ins, i) => <InsightCard key={i} insight={ins} />)}
-                    </div>
-                  </div>
-                )}
-
-                {/* Errors */}
-                {errors.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-destructive" />
-                      <h2 className="font-semibold text-sm text-foreground">Errors / Warnings</h2>
-                    </div>
-                    {errors.map((err, i) => (
-                      <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-                        <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                        <p className="text-xs text-muted-foreground">{err}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Top-level error (no results) */}
-            {pageState === 'error' && !result && errors.length > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-destructive" />
-                  <h2 className="font-semibold text-sm">Something went wrong</h2>
-                </div>
-                {errors.map((err, i) => (
-                  <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-                    <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-muted-foreground">{err}</p>
-                  </div>
-                ))}
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* ── Formula Builder Tab ───────────────────────────────────── */}
+        {tab === 'manual' && <FormulaBuilderTab schema={schema} />}
+
+        {/* ── AI Generate Tab ───────────────────────────────────────── */}
+        {tab === 'agent' && <AIGenerateTab schema={schema} />}
+
       </div>
     </div>
   );

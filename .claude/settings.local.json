@@ -7,9 +7,34 @@
       "Bash(cd:*)",
       "Bash(find:*)",
       "mcp__plugin_supabase_supabase__list_projects",
-      "Bash(npx next:*)"
+      "Bash(npx next:*)",
+      "Bash(python -m py_compile backend/intelligence/nlq/*.py)",
+      "Bash(xargs grep:*)",
+      "Bash(ls -la /d/GitHub/Ekta/dashboard_frontend/.env*)",
+      "Bash(grep -r \"nlq/query\\\\|/query\\\\|/nlq\" /d/GitHub/Ekta/dashboard_frontend --include=*.ts --include=*.tsx --include=*.js --include=*.jsx)",
+      "Bash(grep -l \"CREATE TABLE\\\\|CREATE VIEW\" /d/GitHub/Ekta/backend/*.sql)",
+      "mcp__plugin_supabase_supabase__list_tables",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(for branch:*)",
+      "Bash(do echo:*)",
+      "Bash(__NEW_LINE_58d41ea3de5d5e66__ git:*)",
+      "Bash(__NEW_LINE_58d41ea3de5d5e66__ done:*)",
+      "WebSearch",
+      "WebFetch(domain:costgoat.com)",
+      "WebFetch(domain:openrouter.ai)",
+      "WebFetch(domain:www.teamday.ai)",
+      "WebFetch(domain:apidog.com)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -r \"data.*generation\\\\|synthetic\\\\|mock\\\\|faker\\\\|gaussian\\\\|normal distribution\" 'c:\\\\Users\\\\HARSH SAHU\\\\Documents\\\\GitHub\\\\Ekta' --include=*.md)"
     ]
   },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ],
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true
   }

@@ -1,14 +1,13 @@
 """
-SQL RAG core logic — Hybrid MetricFlow + direct SQL execution.
+NLQ pipeline orchestrator — full 7-step Vanna+LIDA flow.
 
-Flow:
-  question
-    → LLM (routing + query params)          [logged: LLM routing]
-    → MetricFlow path: mf query --explain   [logged: MF compile]
-      OR SQL path: validate raw SQL
-    → execute SQL                           [logged: SQL execute]
-    → generate_answer()                     [logged: Answer gen]
-    → unified response                      [logged: Total time]
+Step 1: Load session context          (follow-up query support)
+Step 2: Vanna RAG → SQL + chart spec + answer_strategy
+Step 3: Self-healing SQL execution    (auto-corrects on failure)
+Step 4: Optional LIDA insights        (explore=True only)
+Step 5: Statistical pre-summarization + LLM answer narration
+Step 6: Store verified Q→SQL in Vanna knowledge base
+Step 7: Update session context
 """
 
 import logging
@@ -16,215 +15,202 @@ import re
 import time
 from datetime import datetime
 
-from intelligence.nlq.context import build_system_prompt
-from intelligence.nlq.llm import call_llm, generate_answer
+from intelligence.nlq.vanna_service import generate_sql, store_successful_query
+from intelligence.nlq.self_healing import run_sql_with_healing
+from intelligence.nlq.session_service import get_session, update_session
+from intelligence.nlq.llm import build_summary, generate_answer
 
 log = logging.getLogger("nlq")
-
-REQUIRED_KEYS_MF  = {"path", "metrics", "group_by", "chart_type", "title", "x", "y"}
-REQUIRED_KEYS_SQL = {"path", "sql", "chart_type", "title", "x", "y"}
-
 _SEP = "─" * 52
 
 
-def run_nlq_query(question: str, client_id: int, conn, profile: str = "operations") -> dict:
-    """
-    Execute an NLQ query end-to-end.
-    Returns a dict ready to send as API response.
-
-    ``profile`` is one of: "founder" | "client_success" | "operations" |
-    "editorial" | "tech_product". It biases the system prompt toward the
-    user's area of responsibility.
-    """
-    t_start = time.perf_counter()
-    log.info(_SEP)
-    log.info(f'[NLQ] ← "{question}"  (client={client_id}, profile={profile})')
-
-    system_prompt = build_system_prompt(client_id, conn, profile=profile)
-
-    # ── Step 1: LLM routing + query generation ────────────────────────────────
-    t0 = time.perf_counter()
-    try:
-        llm_response = call_llm(system_prompt, question)
-    except Exception as e:
-        log.error(f"[NLQ] LLM call failed  ({time.perf_counter()-t0:.2f}s): {e}")
-        return _error(str(e), question)
-
-    path = llm_response.get("path", "sql")
-    t1 = time.perf_counter()
-    log.info(f"[NLQ] LLM routing    {t1-t0:>6.2f}s  → path={path}")
-
-    # ── Step 2: Dispatch to execution path ────────────────────────────────────
-    if path == "metricflow":
-        result = _run_metricflow_path(question, client_id, llm_response, conn, t_start)
-    else:
-        result = _run_sql_path(question, client_id, llm_response, conn, t_start)
-
-    total = time.perf_counter() - t_start
-    log.info(f"[NLQ] Total          {total:>6.2f}s  → {result.get('row_count', 0)} rows")
-    log.info(_SEP)
-
-    result["query_time_ms"] = round(total * 1000)
-    return result
-
-
-# ── MetricFlow path ────────────────────────────────────────────────────────────
-
-def _run_metricflow_path(
-    question: str, client_id: int, llm_response: dict, conn, t_start: float
-) -> dict:
-    missing = REQUIRED_KEYS_MF - set(llm_response.keys())
-    if missing:
-        return _error(f"LLM response missing fields for MetricFlow path: {missing}", question)
-
-    metrics  = llm_response["metrics"]
-    group_by = llm_response["group_by"]
-    log.info(f"[NLQ] MF params      metrics={metrics}  group_by={group_by}")
-
-    from intelligence.nlq.metricflow_client import run_metricflow_query
-
-    t0 = time.perf_counter()
-    try:
-        sql = run_metricflow_query(
-            metrics=metrics,
-            group_by=group_by,
-            where=llm_response.get("where"),
-            order_by=llm_response.get("order_by"),
-            limit=llm_response.get("limit"),
-            start_time=llm_response.get("start_time"),
-            end_time=llm_response.get("end_time"),
-        )
-    except RuntimeError as e:
-        log.warning(f"[NLQ] MF compile     {time.perf_counter()-t0:>6.2f}s  ✗ {e}")
-        return _error(f"MetricFlow compilation failed — try rephrasing: {e}", question)
-
-    log.info(f"[NLQ] MF compile     {time.perf_counter()-t0:>6.2f}s  ✓")
-
-    return _execute_and_respond(
-        question, client_id, sql, llm_response, conn, path="metricflow"
-    )
-
-
-# ── SQL path ───────────────────────────────────────────────────────────────────
-
-def _run_sql_path(
-    question: str, client_id: int, llm_response: dict, conn, t_start: float
-) -> dict:
-    missing = REQUIRED_KEYS_SQL - set(llm_response.keys())
-    if missing:
-        return _error(f"LLM response missing fields for SQL path: {missing}", question)
-
-    sql = llm_response["sql"].strip()
-
-    if not re.match(r"^\s*SELECT\b", sql, re.IGNORECASE):
-        log.warning("[NLQ] SQL path       ✗ non-SELECT blocked")
-        return _error("LLM generated a non-SELECT statement — blocked.", question)
-
-    # Block destructive statements hidden in CTEs or sub-selects
-    sql_upper = sql.upper()
-    for forbidden in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"):
-        if forbidden in sql_upper:
-            log.warning(f"[NLQ] SQL path       ✗ {forbidden} blocked")
-            return _error(f"LLM generated SQL containing {forbidden} — blocked.", question)
-
-    # Enforce client_id isolation: if querying fact table, client_id must be present
-    if "fact_created_videos" in sql.lower() and "client_id" not in sql.lower():
-        log.warning("[NLQ] SQL path       ✗ missing client_id filter — injecting")
-        # Wrap the query to enforce tenant isolation
-        sql = f"SELECT * FROM ({sql.rstrip(';')}) _nlq WHERE client_id = {int(client_id)}"
-
-    if "LIMIT" not in sql_upper:
-        sql = sql.rstrip(";") + " LIMIT 500"
-
-    log.info("[NLQ] SQL path       raw SQL generated")
-    return _execute_and_respond(
-        question, client_id, sql, llm_response, conn, path="sql"
-    )
-
-
-# ── Shared execution ───────────────────────────────────────────────────────────
-
-def _execute_and_respond(
+def run_nlq_query(
     question: str,
     client_id: int,
-    sql: str,
-    llm_response: dict,
     conn,
-    path: str,
+    session_id: str = "default",
+    explore: bool = False,
+    user_role: str = None,
 ) -> dict:
-    # ── SQL execution ─────────────────────────────────────────────────────────
-    t0 = time.perf_counter()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(sql)
-        rows    = cursor.fetchall()
-        columns = [d[0] for d in cursor.description]
-        data    = _serialize([dict(zip(columns, row)) for row in rows])
-        success = True
-        error_msg = None
-    except Exception as e:
-        conn.rollback()
-        success   = False
-        error_msg = str(e)
-        data      = []
-        columns   = []
+    """
+    Execute the full NLQ pipeline.
+    Returns a structured dict ready to send as an API response.
+    """
+    effective_role = user_role
 
-    t1 = time.perf_counter()
-    if success:
-        log.info(f"[NLQ] SQL execute    {t1-t0:>6.2f}s  → {len(data)} rows")
-    else:
-        log.warning(f"[NLQ] SQL execute    {t1-t0:>6.2f}s  ✗ {error_msg}")
+    t_start = time.perf_counter()
+    log.info(_SEP)
+    log.info('[NLQ] ← "%s"  (client=%s, role=%s, explore=%s)', question, client_id, effective_role or "none", explore)
 
-    _log_query(conn, client_id, question, sql, success, len(data))
+    def _ms():
+        return round((time.perf_counter() - t_start) * 1000, 1)
 
-    if not success:
-        return _error(f"SQL execution failed: {error_msg}", question)
+    # ── Step 1: Load session context ──────────────────────────────────────────
+    session = get_session(session_id)
+    previous_sql = session.last_sql
+    log.info("[1/7] Session loaded (follow-up=%s) — %.0f ms", previous_sql is not None, _ms())
 
-    # ── Answer generation ─────────────────────────────────────────────────────
+    # ── Step 2: Vanna RAG → SQL + chart spec + answer_strategy ───────────────
     t2 = time.perf_counter()
-    answer = generate_answer(question, data)
-    log.info(f"[NLQ] Answer gen     {time.perf_counter()-t2:>6.2f}s")
+    try:
+        vr = generate_sql(
+            question=question,
+            previous_sql=previous_sql,
+            user_role=effective_role,
+            client_id=client_id,
+        )
+    except Exception as exc:
+        log.error("[2/7] Vanna SQL generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
+        return _error(str(exc), question)
+    log.info("[2/7] SQL generated — %.0f ms", _ms())
+
+    sql = vr.sql.strip()
+
+    # ── Security: only allow SELECT ───────────────────────────────────────────
+    if not re.match(r"^\s*SELECT\b", sql, re.IGNORECASE):
+        log.warning("[NLQ] Non-SELECT blocked")
+        return _error("Generated a non-SELECT statement — blocked.", question)
+
+    for forbidden in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"):
+        if re.search(rf"\b{forbidden}\b", sql, re.IGNORECASE):
+            log.warning("[NLQ] %s statement blocked", forbidden)
+            return _error(f"Generated SQL containing {forbidden} — blocked.", question)
+
+    # Enforce client_id isolation on the fact table
+    if "fact_created_videos" in sql.lower() and "client_id" not in sql.lower():
+        log.warning("[NLQ] Missing client_id filter — injecting wrapper")
+        sql = f"SELECT * FROM ({sql.rstrip(';')}) _nlq WHERE client_id = {int(client_id)}"
+
+    if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE):
+        sql = sql.rstrip(";") + " LIMIT 500"
+
+    # ── Step 3: Self-healing SQL execution ────────────────────────────────────
+    t3 = time.perf_counter()
+    try:
+        final_sql, rows = run_sql_with_healing(conn, sql, question)
+    except Exception as exc:
+        log.error("[3/7] SQL execution failed after retries (%.2fs): %s", time.perf_counter() - t3, exc)
+        _log_query(conn, client_id, question, sql, success=False, row_count=0)
+        return _error(f"SQL execution failed: {exc}", question)
+
+    data = _serialize(rows)
+    columns = list(data[0].keys()) if data else []
+    log.info("[3/7] SQL executed — %d rows — %.0f ms", len(data), _ms())
+
+    _log_query(conn, client_id, question, final_sql, success=True, row_count=len(data))
+
+    # Fill any missing chart metadata from actual result shape
+    _fill_chart_meta(vr, data, question)
+
+    # ── Step 4: Optional LIDA insight generation ──────────────────────────────
+    insights = []
+    if explore:
+        t4 = time.perf_counter()
+        try:
+            import pandas as pd
+            from intelligence.nlq.lida_service import generate_insights
+            df = pd.DataFrame(data)
+            insights = generate_insights(df=df, question=question, user_role=effective_role)
+            log.info("[4/7] LIDA generated %d insights — %.0f ms", len(insights), _ms())
+        except Exception as exc:
+            log.warning("[4/7] LIDA failed (non-fatal, %.2fs): %s", time.perf_counter() - t4, exc)
+    else:
+        log.info("[4/7] LIDA skipped (explore=False)")
+
+    # ── Step 5: Statistical summary + LLM answer narration ───────────────────
+    t5 = time.perf_counter()
+    strategy = vr.answer_strategy or {"type": "detail_sample", "focus": []}
+    x_col = vr.x_column or (columns[0] if columns else "")
+    y_col = vr.y_column or (columns[1] if len(columns) > 1 else "")
+
+    summary = build_summary(data, x_col, y_col, strategy)
+    answer = generate_answer(question, summary, strategy.get("focus", []))
+    log.info("[5/7] Answer generated (%.2fs) — %.0f ms", time.perf_counter() - t5, _ms())
+
+    # ── Step 6: Store Q→SQL in Vanna knowledge base ───────────────────────────
+    store_successful_query(question, final_sql)
+    log.info("[6/7] Vanna KB updated — %.0f ms", _ms())
+
+    # ── Step 7: Update session context ────────────────────────────────────────
+    update_session(session_id, question, final_sql)
+    total_ms = _ms()
+    log.info("[7/7] Session updated — total %.0f ms", total_ms)
+    log.info(_SEP)
 
     return {
-        "question":    question,
-        "answer":      answer,
-        "path":        path,
-        "sql":         sql,
-        "chart_type":  llm_response.get("chart_type", "table"),
-        "title":       llm_response.get("title", ""),
-        "x":           llm_response.get("x", columns[0] if columns else ""),
-        "y":           llm_response.get("y", columns[1] if len(columns) > 1 else ""),
-        "description": llm_response.get("description", ""),
-        "data":        data,
-        "columns":     columns,
-        "row_count":   len(data),
+        "question":           question,
+        "answer":             answer,
+        "sql":                final_sql,
+        "chart_type":         vr.chart_type or "table",
+        "title":              vr.title or "",
+        "x":                  vr.x_column or "",
+        "y":                  vr.y_column or "",
+        "description":        answer,
+        "data":               data,
+        "columns":            columns,
+        "row_count":          len(data),
+        "insights":           insights,
+        "processing_time_ms": total_ms,
     }
 
 
-# ── helpers ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _serialize(data: list) -> list:
-    """Convert dates/decimals to JSON-safe types."""
+def _fill_chart_meta(vr, rows: list, question: str) -> None:
+    """Infer missing chart metadata from actual result columns."""
+    if not rows:
+        if not vr.chart_type:
+            vr.chart_type = "table"
+        return
+
+    first = rows[0]
+    cols = list(first.keys())
+    numeric_cols = [c for c in cols if isinstance(first.get(c), (int, float))]
+    text_cols = [c for c in cols if c not in numeric_cols]
+
+    if not vr.x_column:
+        vr.x_column = text_cols[0] if text_cols else (numeric_cols[0] if numeric_cols else None)
+    if not vr.y_column:
+        candidates = [c for c in numeric_cols if c != vr.x_column]
+        vr.y_column = candidates[0] if candidates else (numeric_cols[0] if numeric_cols else None)
+
+    if not vr.chart_type:
+        if text_cols and numeric_cols:
+            x_lower = (vr.x_column or "").lower()
+            time_kws = ("month", "date", "year", "week", "day", "time", "period")
+            vr.chart_type = "line" if any(kw in x_lower for kw in time_kws) else (
+                "pie" if len(rows) <= 8 and len(numeric_cols) == 1 else "bar"
+            )
+        else:
+            vr.chart_type = "table"
+
+    if not vr.title:
+        vr.title = question[:80]
+
+
+def _serialize(rows: list) -> list:
+    """Coerce dates, decimals, and nested objects to JSON-safe types."""
     import decimal
+    import json as _json
     result = []
-    for row in data:
+    for row in rows:
         clean = {}
         for k, v in row.items():
             if isinstance(v, datetime):
                 clean[k] = v.isoformat()
-            elif hasattr(v, "date"):
+            elif hasattr(v, "date") and callable(v.date):
                 clean[k] = str(v)
             elif isinstance(v, decimal.Decimal):
                 clean[k] = float(v)
+            elif isinstance(v, (dict, list)):
+                clean[k] = _json.dumps(v)
             else:
                 clean[k] = v
         result.append(clean)
     return result
 
 
-def _log_query(
-    conn, client_id: int, question: str, sql: str, success: bool, row_count: int
-):
+def _log_query(conn, client_id: int, question: str, sql: str, success: bool, row_count: int):
     try:
         cursor = conn.cursor()
         cursor.execute(
@@ -240,20 +226,20 @@ def _log_query(
 
 
 def _error(message: str, question: str) -> dict:
-    log.warning(f"[NLQ] ERROR: {message}")
+    log.warning("[NLQ] ERROR: %s", message)
     return {
-        "question":      question,
-        "error":         message,
-        "path":          "error",
-        "sql":           None,
-        "chart_type":    "table",
-        "title":         "Error",
-        "x":             "",
-        "y":             "",
-        "description":   "",
-        "answer":        "",
-        "data":          [],
-        "columns":       [],
-        "row_count":     0,
-        "query_time_ms": 0,
+        "question":           question,
+        "error":              message,
+        "answer":             "",
+        "sql":                None,
+        "chart_type":         "table",
+        "title":              "Error",
+        "x":                  "",
+        "y":                  "",
+        "description":        "",
+        "data":               [],
+        "columns":            [],
+        "row_count":          0,
+        "insights":           [],
+        "processing_time_ms": 0.0,
     }

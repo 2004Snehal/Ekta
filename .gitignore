@@ -2,9 +2,6 @@
 .env
 .env.local
 .env*.local
-.env.development.local
-.env.test.local
-.env.production.local
 
 # Python
 __pycache__/
@@ -66,9 +63,6 @@ dist-ssr/
 out/
 .vercel
 
-# Vite
-*.local
-
 # IDE / Editor
 .vscode/
 .idea/
@@ -95,6 +89,7 @@ desktop.ini
 # Logs
 *.log
 logs/
+docs
 
 # Temporary files
 *.tmp
@@ -103,3 +98,6 @@ logs/
 data
 
 claude
+
+# Vanna / ChromaDB — local vector store (binary, auto-regenerated on startup)
+backend/vanna_chroma_db/

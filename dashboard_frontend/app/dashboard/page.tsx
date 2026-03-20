@@ -6,12 +6,9 @@ import { SparkKPI } from '@/components/SparkKPI';
 import { KPIDetailModal } from '@/components/KPIDetailModal';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { Filters } from '@/components/Filters';
-import { InsightPanel } from '@/components/InsightPanel';
-import { InsightBanner } from '@/components/InsightBanner';
-import { RecommendationsPanel } from '@/components/RecommendationsPanel';
+import { IntelligencePanel } from '@/components/IntelligencePanel';
 import {
   buildDashboardCharts,
-  buildDashboardInsights,
   buildDashboardKpiDetails,
   buildDashboardKpis,
   createDashboardState,
@@ -72,25 +69,41 @@ export default function Dashboard() {
   const [shareStatus, setShareStatus] = useState<ShareStatus>('idle');
   const lastSavedState = useRef('');
 
-  // New: narrator insights for InsightBanner
+  // Narrator v2 data for InsightBanner + SparkKPI dots
   const [narratorInsights, setNarratorInsights] = useState<{ title: string; severity: 'high' | 'medium' | 'low'; body?: string }[]>([]);
+  const [kpiInsightMap, setKpiInsightMap] = useState<Record<string, 'high' | 'medium' | 'low'>>({});
+  const [narratorData, setNarratorData] = useState<{ digest?: string | null; dashboard_banner?: any[] } | null>(null);
 
-  // New: period comparison data for delta values on SparkKPIs
+  // Period comparison data for delta values on SparkKPIs
   const [periodDeltas, setPeriodDeltas] = useState<Record<string, number>>({});
 
-  /* ── Fetch narrator insights ─────────────────────────────── */
+  /* ── Fetch narrator insights (v2) ──────────────────────────── */
   useEffect(() => {
     if (!apiBaseUrl) return;
     fetch(`${apiBaseUrl}/narrator/insights?client_id=1`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
-        const raw = Array.isArray(data) ? data : (data.insights ?? []);
-        setNarratorInsights(raw.slice(0, 3).map((ins: any) => ({
-          title: ins.title ?? ins.headline ?? String(ins),
-          severity: ins.severity ?? ins.priority ?? 'medium',
-          body: ins.body ?? ins.description ?? undefined,
-        })));
+        setNarratorData(data);
+        // v2: use dashboard_banner for banner, kpi_insights for dots
+        const banner = data.dashboard_banner ?? data.insights ?? [];
+        setNarratorInsights(
+          (Array.isArray(banner) ? banner : []).slice(0, 3).map((ins: any) => ({
+            title: ins.title ?? ins.headline ?? String(ins),
+            severity: ins.severity ?? ins.priority ?? 'medium',
+            body: ins.body ?? ins.description ?? undefined,
+          }))
+        );
+        // Build KPI insight severity map from kpi_insights
+        const kpiIns = data.kpi_insights ?? [];
+        const kpiMap: Record<string, 'high' | 'medium' | 'low'> = {};
+        for (const ins of kpiIns) {
+          const key = ins.metric_name;
+          if (key && (!kpiMap[key] || ins.severity === 'high' || (ins.severity === 'medium' && kpiMap[key] === 'low'))) {
+            kpiMap[key] = ins.severity;
+          }
+        }
+        setKpiInsightMap(kpiMap);
       })
       .catch(() => {});
   }, [apiBaseUrl]);
@@ -231,7 +244,6 @@ export default function Dashboard() {
   const kpis            = useMemo(() => buildDashboardKpis(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
   const kpiDetails      = useMemo(() => buildDashboardKpiDetails(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
   const charts          = useMemo(() => buildDashboardCharts(filteredRecords), [filteredRecords]);
-  const insights        = useMemo(() => buildDashboardInsights(filteredRecords, filterFields), [filteredRecords, filterFields]);
   const selectedKpiDetail = selectedKpiId ? kpiDetails[selectedKpiId] ?? null : null;
   const dataReady       = !isLoading && filteredRecords.length > 0;
 
@@ -312,6 +324,7 @@ export default function Dashboard() {
                 sparkData={sparklines[kpi.id] ?? []}
                 active={selectedKpiId === kpi.id}
                 onClick={() => setSelectedKpiId(kpi.id === selectedKpiId ? null : kpi.id)}
+                insightSeverity={kpiInsightMap[kpi.id] ?? null}
               />
             </div>
           ))
@@ -388,38 +401,18 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {insights.length > 0 && (
-              <>
-                <div className="wire-h" style={{ margin: '32px 0 24px' }} />
-                <div
-                  className="grid"
-                  style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}
-                >
-                  <InsightPanel insights={insights.slice(0, 2)} label="Insights" />
-                  {insights.length > 2 && (
-                    <InsightPanel insights={insights.slice(2, 4)} label="More Insights" />
-                  )}
-                </div>
-              </>
-            )}
           </div>
 
           {/* Right: InsightBanner + recommendations (35%) */}
           <div style={{ flex: '0 0 35%', padding: '24px 24px', position: 'sticky', top: '88px', alignSelf: 'flex-start', maxHeight: 'calc(100vh - 88px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
-            {/* InsightBanner at top of right column */}
-            {narratorInsights.length > 0 && (
-              <div style={{ marginBottom: '16px', flexShrink: 0 }}>
-                <InsightBanner insights={narratorInsights} />
-              </div>
-            )}
-
-            <RecommendationsPanel
+            <IntelligencePanel
               apiBaseUrl={apiBaseUrl}
               filters={filters}
               kpis={kpis}
               selectedKpiId={selectedKpiId}
               dataReady={dataReady}
+              narratorData={narratorData}
             />
           </div>
         </div>

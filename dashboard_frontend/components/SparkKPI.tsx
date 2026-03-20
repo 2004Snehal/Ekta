@@ -10,9 +10,16 @@ interface SparkKPIProps {
   sparkData?: number[];        // last 30 data points for sparkline
   active?: boolean;
   onClick?: () => void;
+  insightSeverity?: 'high' | 'medium' | 'low' | null;  // v2: insight dot
 }
 
-export function SparkKPI({ title, value, delta, sparkData, active, onClick }: SparkKPIProps) {
+const INSIGHT_DOT_COLOR: Record<string, string> = {
+  high: 'var(--signal)',
+  medium: 'var(--warn)',
+  low: 'var(--uplink)',
+};
+
+export function SparkKPI({ title, value, delta, sparkData, active, onClick, insightSeverity }: SparkKPIProps) {
   const sparkPoints = useMemo(() =>
     (sparkData ?? []).map((v, i) => ({ i, v })),
     [sparkData]
@@ -33,18 +40,33 @@ export function SparkKPI({ title, value, delta, sparkData, active, onClick }: Sp
       style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}
     >
       {/* Title */}
-      <span
-        style={{
-          fontFamily: 'var(--font-condensed)',
-          fontSize: '0.55rem',
-          fontWeight: 700,
-          letterSpacing: '0.18em',
-          textTransform: 'uppercase',
-          color: 'var(--on-low)',
-        }}
-      >
-        {title}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span
+          style={{
+            fontFamily: 'var(--font-condensed)',
+            fontSize: '0.55rem',
+            fontWeight: 700,
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: 'var(--on-low)',
+          }}
+        >
+          {title}
+        </span>
+        {insightSeverity && (
+          <span
+            title={`${insightSeverity} severity insight`}
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: INSIGHT_DOT_COLOR[insightSeverity] ?? 'var(--on-low)',
+              animation: insightSeverity === 'high' ? 'blink 2s ease-in-out infinite' : undefined,
+              flexShrink: 0,
+            }}
+          />
+        )}
+      </div>
 
       {/* Value + Delta row */}
       <div className="flex items-end gap-3">

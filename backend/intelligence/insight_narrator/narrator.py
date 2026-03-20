@@ -20,72 +20,12 @@ import time
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from backend_config import LLM_PROVIDER, LLM_MODEL, GOOGLE_API_KEY, OPENAI_API_KEY
+from llm_config import QWEN_INSIGHT_MODEL, make_openai_client, LLM_MAX_TOKENS
 
 from intelligence.insight_narrator.schemas import FlaggedMetric, InsightCard
+from intelligence.shared.profiles import PROFILE_FRAMING
 
 logger = logging.getLogger(__name__)
-
-
-# ── Profile framing ───────────────────────────────────────────────────────────
-
-_PROFILE_FRAMING = {
-    "founder": "Frame insights for executives focused on strategic growth and revenue impact.",
-    "client_success": "Frame insights for account managers focused on client health and adoption.",
-    "operations": "Frame insights for operations leads focused on throughput and efficiency.",
-    "editorial": "Frame insights for editors focused on content quality and production pipeline.",
-    "tech_product": "Frame insights for engineers focused on data quality and platform health.",
-}
-
-
-# ── System prompt ─────────────────────────────────────────────────────────────
-
-_NARRATOR_SYSTEM = """\
-You are a media operations analyst generating insight cards for a media analytics platform.
-
-You will receive a numbered list of pre-flagged metrics. For EACH metric write an insight card.
-
-RULES (non-negotiable):
-1. Do NOT change the severity — it is pre-assigned and read-only.
-2. Do NOT invent patterns or causes not present in the evidence.
-3. Do NOT use the word "significant".
-4. Title: max 12 words, plain English.
-5. Body: exactly 2–3 sentences, plain English, no jargon.
-   - Reference the actual numbers (delta_pct, current_value, reference_value).
-   - State what happened, then briefly why it matters.
-6. category must be EXACTLY one of: anomaly | trend | comparison | milestone
-   - anomaly   → single-period outlier vs historical baseline
-   - trend     → multi-period directional movement (flag only if evidence spans 2+ periods)
-   - comparison → cross-channel or cross-user relative gap
-   - milestone  → first time a threshold was crossed
-   For single-month data with no multi-period context, default to "anomaly".
-7. root_cause_hint: one sentence max, or null if you cannot infer a plausible cause.
-8. Return ONLY a JSON array. No preamble, no markdown, no extra keys.
-
-Each element of the array must match:
-{
-  "title": string,
-  "body": string,
-  "category": "anomaly"|"trend"|"comparison"|"milestone",
-  "root_cause_hint": string|null
-}
-"""
-
-
-# ── Evidence formatting ───────────────────────────────────────────────────────
-
-def _format_evidence(metrics: list[FlaggedMetric]) -> str:
-    lines = []
-    for i, m in enumerate(metrics, 1):
-        direction = "up" if m.delta_pct > 0 else "down"
-        lines.append(
-            f"{i}. {m.entity_type.title()} «{m.entity_label}» — "
-            f"{m.metric_name.replace('_', ' ')} {direction} {abs(m.delta_pct):.1f}% MoM "
-            f"(current: {m.current_value:.2f}, 3m avg: {m.reference_value:.2f}). "
-            f"Severity: {m.severity}."
-            + (f" Z-score: {m.zscore:.1f}." if m.zscore is not None else "")
-        )
-    return "\n".join(lines)
 
 
 # ── Retry helper ──────────────────────────────────────────────────────────────
@@ -109,71 +49,22 @@ def _retry(fn, retries: int = 3, backoff: float = 5.0):
 # ── LLM call (JSON array) ─────────────────────────────────────────────────────
 
 def _call_llm_json_array(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
-    if LLM_PROVIDER == "gemini":
-        return _gemini_narrator(user_message, system_prompt=system_prompt)
-    elif LLM_PROVIDER == "openai":
-        return _openai_narrator(user_message, system_prompt=system_prompt)
-    raise ValueError(f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'")
+    return _openrouter_narrator(user_message, system_prompt=system_prompt)
 
 
-def _gemini_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
-    try:
-        import google.genai as genai
-        import google.genai.types as genai_types
-    except ImportError:
-        raise ImportError("google-genai is not installed. Run: pip install google-genai")
-
-    if not GOOGLE_API_KEY:
-        raise RuntimeError("GOOGLE_API_KEY is not set in .env")
-
-    # Enforce JSON array schema at the API level
-    insight_schema = genai_types.Schema(
-        type=genai_types.Type.ARRAY,
-        items=genai_types.Schema(
-            type=genai_types.Type.OBJECT,
-            properties={
-                "title":            genai_types.Schema(type=genai_types.Type.STRING),
-                "body":             genai_types.Schema(type=genai_types.Type.STRING),
-                "category":         genai_types.Schema(type=genai_types.Type.STRING),
-                "root_cause_hint":  genai_types.Schema(type=genai_types.Type.STRING),
-            },
-            required=["title", "body", "category"],
-        ),
-    )
-
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    response = _retry(lambda: client.models.generate_content(
-        model=LLM_MODEL,
-        contents=user_message,
-        config={
-            "system_instruction": system_prompt,
-            "response_mime_type": "application/json",
-            "response_schema":    insight_schema,
-        },
-    ))
-    return json.loads(response.text)
-
-
-def _openai_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("openai is not installed. Run: pip install openai")
-
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set in .env")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model=LLM_MODEL,
+def _openrouter_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
+    client = make_openai_client()
+    response = _retry(lambda: client.chat.completions.create(
+        model=QWEN_INSIGHT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
-    )
+        max_tokens=LLM_MAX_TOKENS,
+    ))
     raw = json.loads(response.choices[0].message.content)
-    # OpenAI json_object wraps in a top-level key when returning arrays
+    # json_object may wrap the array in a top-level key
     if isinstance(raw, list):
         return raw
     for val in raw.values():
@@ -182,96 +73,204 @@ def _openai_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -
     return []
 
 
-# ── Digest generation ─────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# Parallel narration across 3 signal batches
+# ═══════════════════════════════════════════════════════════════════════════════
 
-_DIGEST_SYSTEM = """\
-You are a media operations analyst. Write a single paragraph (3–5 sentences) summarising
-the platform's overall performance for the period described. Be factual, reference numbers,
-and state what is notable. Do not use the word "significant". Return plain text only.
-"""
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from intelligence.insight_narrator.prompts_v2 import (
+    URGENT_PROMPT, ANALYTICAL_PROMPT, OPERATIONAL_PROMPT, DIGEST_PROMPT,
+)
 
 
-def _generate_digest(metrics: list[FlaggedMetric], period: str) -> Optional[str]:
-    if not metrics:
-        return None
-
-    high   = [m for m in metrics if m.severity == "high"]
-    medium = [m for m in metrics if m.severity == "medium"]
-    summary_lines = [
-        f"Period: {period}",
-        f"Total anomalies flagged: {len(metrics)} "
-        f"({len(high)} high severity, {len(medium)} medium).",
-    ]
-    for m in metrics[:5]:
+def _format_evidence_v2(metrics: list[FlaggedMetric]) -> str:
+    """Format evidence with v2 fields (status, consecutive, suggested_action)."""
+    lines = []
+    for i, m in enumerate(metrics, 1):
         direction = "up" if m.delta_pct > 0 else "down"
-        summary_lines.append(
-            f"- {m.entity_label} {m.metric_name.replace('_', ' ')} {direction} "
-            f"{abs(m.delta_pct):.1f}%."
-        )
-    user_message = "\n".join(summary_lines)
-
-    try:
-        if LLM_PROVIDER == "gemini":
-            import google.genai as genai
-            client = genai.Client(api_key=GOOGLE_API_KEY)
-            resp = _retry(lambda: client.models.generate_content(
-                model=LLM_MODEL,
-                contents=user_message,
-                config={"system_instruction": _DIGEST_SYSTEM},
-            ))
-            return resp.text.strip()
-        elif LLM_PROVIDER == "openai":
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
-            resp = client.chat.completions.create(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": _DIGEST_SYSTEM},
-                    {"role": "user",   "content": user_message},
-                ],
+        parts = [
+            f"{i}. {m.entity_type.title()} «{m.entity_label}» — "
+            f"{m.metric_name.replace('_', ' ')} {direction} {abs(m.delta_pct):.1f}% "
+            f"(current: {m.current_value:.2f}, baseline: {m.reference_value:.2f}). "
+            f"Severity: {m.severity}."
+        ]
+        if m.status and m.status != "new":
+            parts.append(f" Status: {m.status}.")
+        if m.consecutive_periods and m.consecutive_periods > 1:
+            parts.append(f" Consecutive periods: {m.consecutive_periods}.")
+        if m.root_cause_breakdown:
+            drivers = "; ".join(
+                f"{d.get('dimension','')}: {d.get('driver_label','')} ({d.get('contribution_pct',0):.0f}%)"
+                for d in m.root_cause_breakdown[:2]
             )
-            return resp.choices[0].message.content.strip()
-    except Exception as e:
-        logger.warning("digest generation failed: %s", e)
-    return None
+            parts.append(f" Root cause breakdown: {drivers}.")
+        if m.suggested_action:
+            parts.append(f" Context: {m.suggested_action}")
+        lines.append("".join(parts))
+    return "\n".join(lines)
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
-
-def narrate(
-    metrics: list[FlaggedMetric],
-    include_digest: bool = True,
-    profile: Optional[str] = None,
-) -> tuple[list[InsightCard], Optional[str]]:
+def _make_template_card(m: FlaggedMetric) -> InsightCard:
     """
-    Calls the LLM to produce InsightCard objects for each FlaggedMetric.
-
-    ``profile`` is one of: "founder" | "client_success" | "operations" |
-    "editorial" | "tech_product". When supplied, a framing line is prepended
-    to the system prompt so the LLM tailors language and emphasis accordingly.
-
-    Returns (insight_cards, digest_text).
-    On LLM failure, logs the error and returns empty lists — the pipeline
-    will serve the previous cache rather than surfacing broken data.
+    Create a card from a signal WITHOUT any LLM call.
+    Used as fallback when the API is unavailable or rate-limited.
+    Produces clear, factual insight cards that are fully functional.
     """
-    if not metrics:
-        return [], None
+    direction = "increased" if m.delta_pct > 0 else "decreased"
+    abs_delta = abs(m.delta_pct)
+    metric_label = m.metric_name.replace("_", " ")
 
-    # Optionally inject a profile-aware framing line into the system prompt
-    if profile and profile in _PROFILE_FRAMING:
-        effective_system = _PROFILE_FRAMING[profile] + "\n\n" + _NARRATOR_SYSTEM
+    # --- Title (concise, factual) ---
+    if m.insight_source == "consecutive":
+        periods = m.consecutive_periods or 3
+        dir_word = "rising" if m.delta_pct > 0 else "declining"
+        title = f"{m.entity_label}: {metric_label} {dir_word} for {periods} months"
+    elif m.insight_source == "milestone":
+        title = f"{m.entity_label} reached a new record in {metric_label}"
+    elif m.insight_source == "op_risk":
+        if m.metric_name == "days_inactive":
+            title = f"{m.entity_label} has been inactive for {int(m.current_value)} days"
+        elif m.metric_name == "spof_output_type":
+            title = f"{m.entity_label} is the sole producer of this content type"
+        elif m.metric_name == "user_concentration":
+            title = f"Fleet output is concentrated in top 2 users ({m.current_value:.0f}%)"
+        else:
+            title = f"Operational risk: {m.entity_label} — {metric_label}"
+    elif m.insight_source == "funnel":
+        title = f"{m.entity_label}: publish rate {abs_delta:.1f}% below fleet average"
+    elif m.insight_source == "dq":
+        title = f"Data quality issue: {metric_label} in {m.entity_label}"
+    elif m.insight_source == "cross_dim":
+        title = f"Unusual pattern detected: {m.entity_label} — {metric_label}"
     else:
-        effective_system = _NARRATOR_SYSTEM
+        title = f"{m.entity_label}: {metric_label} {direction} {abs_delta:.1f}%"
 
-    evidence     = _format_evidence(metrics)
-    period       = metrics[0].period
-    digest_text  = _generate_digest(metrics, period) if include_digest else None
+    # Clamp title length
+    if len(title) > 80:
+        title = title[:77] + "..."
+
+    # --- Body (2 factual sentences) ---
+    body_parts: list[str] = []
+
+    if m.insight_source in ("anomaly", "consecutive"):
+        body_parts.append(
+            f"The {metric_label} for {m.entity_label} {direction} by {abs_delta:.1f}% "
+            f"compared to the 3-month average "
+            f"(current: {m.current_value:.1f}, baseline: {m.reference_value:.1f})."
+        )
+        if m.insight_source == "consecutive":
+            periods = m.consecutive_periods or 3
+            body_parts.append(
+                f"This directional movement has persisted for {periods} consecutive months, "
+                f"indicating a structural shift rather than a one-off spike."
+            )
+        elif m.delta_pct > 0:
+            body_parts.append(
+                f"This rise is above the expected range and warrants investigation "
+                f"into whether it reflects genuine growth or a data anomaly."
+            )
+        else:
+            body_parts.append(
+                f"This decline is outside the expected range and may require "
+                f"editorial or operational intervention."
+            )
+    elif m.insight_source == "op_risk":
+        if m.suggested_action:
+            body_parts.append(m.suggested_action)
+        else:
+            body_parts.append(
+                f"An operational risk was detected for {m.entity_label}. "
+                f"This represents a structural vulnerability in your platform's workflow."
+            )
+            body_parts.append("Review team assignments and content distribution to reduce single points of failure.")
+    elif m.insight_source == "funnel":
+        body_parts.append(
+            f"{m.entity_label} has a publish rate of {m.current_value:.1f}%, "
+            f"compared to the fleet average of {m.reference_value:.1f}%."
+        )
+        body_parts.append(
+            "Uploaded content is not completing the publish pipeline at the expected rate. "
+            "Check for editorial backlogs or technical publish failures."
+        )
+    elif m.insight_source == "dq":
+        body_parts.append(m.suggested_action or f"A data quality issue was detected in {m.entity_label}.")
+        body_parts.append("Fixing this will improve the accuracy of all reports and AI-generated analysis.")
+    elif m.insight_source == "milestone":
+        body_parts.append(
+            f"{m.entity_label} achieved a new record: {metric_label} reached {m.current_value:.1f}, "
+            f"surpassing the previous best of {m.reference_value:.1f}."
+        )
+        body_parts.append("This positive milestone reflects sustained improvement and is worth recognising.")
+    elif m.insight_source == "cross_dim":
+        body_parts.append(
+            f"An unusual combination was detected: {m.entity_label} shows a {metric_label} "
+            f"of {m.current_value:.1f} — {abs_delta:.1f}% different from the expected baseline."
+        )
+        body_parts.append("This cross-dimension pattern may reveal an untapped opportunity or an emerging issue.")
+    else:
+        body_parts.append(
+            f"The {metric_label} for {m.entity_label} {direction} by {abs_delta:.1f}% "
+            f"(current: {m.current_value:.1f}, baseline: {m.reference_value:.1f})."
+        )
+        body_parts.append(m.suggested_action or "Review recent activity to understand the cause of this change.")
+
+    # Category mapping
+    category_map = {
+        "anomaly": "anomaly", "consecutive": "trend", "cross_dim": "comparison",
+        "milestone": "milestone", "funnel": "operational", "op_risk": "operational",
+        "dq": "data_quality",
+    }
+
+    return InsightCard(
+        title=title,
+        body=" ".join(body_parts),
+        category=category_map.get(m.insight_source, "anomaly"),
+        severity=m.severity,
+        metric_name=m.metric_name,
+        entity_type=m.entity_type,
+        entity_id=str(m.entity_id),
+        current_value=m.current_value,
+        reference_value=m.reference_value,
+        delta_pct=m.delta_pct,
+        period=m.period,
+        confidence="statistical",
+        root_cause_hint=None,
+        status=m.status,
+        suggested_action=m.suggested_action,
+        insight_source=m.insight_source,
+        tab_destination=getattr(m, "tab_destination", "watchlist"),
+        consecutive_periods=m.consecutive_periods,
+        root_cause_breakdown=m.root_cause_breakdown,
+        actionability_score=m.actionability_score,
+        nlq_query=getattr(m, "nlq_query", None),
+    )
+
+
+def _narrate_batch(
+    metrics: list[FlaggedMetric],
+    system_prompt: str,
+    profile: str | None = None,
+) -> list[InsightCard]:
+    """
+    Narrate a single batch of signals.
+    Tries LLM first; falls back to template cards if the API fails.
+    """
+
+    if not metrics:
+        return []
+
+    if profile and profile in PROFILE_FRAMING:
+        effective = PROFILE_FRAMING[profile] + "\n\n" + system_prompt
+    else:
+        effective = system_prompt
+
+    evidence = _format_evidence_v2(metrics)
 
     try:
-        raw_cards = _call_llm_json_array(evidence, system_prompt=effective_system)
+        raw_cards = _call_llm_json_array(evidence, system_prompt=effective)
     except Exception as e:
-        logger.error("narrator LLM call failed: %s", e)
-        return [], digest_text
+        logger.warning("v2 narrate batch LLM failed — using template cards: %s", e)
+        return [_make_template_card(m) for m in metrics]
 
     cards: list[InsightCard] = []
     for i, raw in enumerate(raw_cards):
@@ -283,7 +282,7 @@ def narrate(
                 title            = raw.get("title", "Untitled insight"),
                 body             = raw.get("body", ""),
                 category         = raw.get("category", "anomaly"),
-                severity         = m.severity,         # Python-owned, not LLM
+                severity         = m.severity,
                 metric_name      = m.metric_name,
                 entity_type      = m.entity_type,
                 entity_id        = m.entity_id,
@@ -292,11 +291,189 @@ def narrate(
                 delta_pct        = m.delta_pct,
                 period           = m.period,
                 confidence       = "statistical",
-                root_cause_hint  = raw.get("root_cause_hint") or None,
+                root_cause_hint  = raw.get("root_cause_hint"),
+                # v2 fields
+                status           = m.status,
+                suggested_action = raw.get("suggested_action") or m.suggested_action,
+                insight_source   = m.insight_source,
+                tab_destination  = getattr(m, "tab_destination", "watchlist"),
+                consecutive_periods = m.consecutive_periods,
+                root_cause_breakdown = m.root_cause_breakdown,
+                actionability_score = m.actionability_score,
+                nlq_query        = getattr(m, "nlq_query", None),
             )
             cards.append(card)
         except Exception as e:
-            logger.warning("failed to parse card %d: %s — raw: %s", i, e, raw)
+            logger.warning("v2 parse card %d failed: %s", i, e)
 
-    logger.info("narrator: produced %d insight cards", len(cards))
-    return cards, digest_text
+    return cards
+
+
+def narrate_v2(
+    routed: dict,
+    profile: str | None = None,
+) -> tuple[list[InsightCard], str | None]:
+    """
+    Narrate signals in 3 parallel batches + 1 digest call.
+
+    Args:
+        routed: output of signal_router.route_signals()
+        profile: user profile for tone framing
+
+    Returns (all_cards, digest_text)
+    """
+
+    # Build the 3 batches from routed signals
+    urgent_signals: list[FlaggedMetric] = []
+    analytical_signals: list[FlaggedMetric] = []
+    operational_signals: list[FlaggedMetric] = []
+
+    # Urgent: flagged anomalies (high/medium) + worsening follow-ups
+    for sig in routed.get("watchlist", {}).get("flagged_metrics", []):
+        if hasattr(sig, "severity"):
+            urgent_signals.append(sig)
+    for sig in routed.get("follow_ups", []):
+        if hasattr(sig, "status") and sig.status == "worsening":
+            urgent_signals.append(sig)
+
+    # Analytical: trends + cross-dim + milestones
+    for key in ["consecutive_trends", "cross_dimension", "milestones"]:
+        for sig in routed.get("watchlist", {}).get(key, []):
+            analytical_signals.append(sig)
+
+    # Operational: funnel gaps + op risks + DQ
+    for key in ["funnel_gaps", "operational_risks", "stalled_content"]:
+        for sig in routed.get("pipeline", {}).get(key, []):
+            operational_signals.append(sig)
+    for sig in routed.get("data_governance", {}).get("dq_issues", []):
+        operational_signals.append(sig)
+
+    # Fire 3 calls in parallel
+    all_cards: list[InsightCard] = []
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {}
+        if urgent_signals:
+            futures[pool.submit(_narrate_batch, urgent_signals, URGENT_PROMPT, profile)] = "urgent"
+        if analytical_signals:
+            futures[pool.submit(_narrate_batch, analytical_signals, ANALYTICAL_PROMPT, profile)] = "analytical"
+        if operational_signals:
+            futures[pool.submit(_narrate_batch, operational_signals, OPERATIONAL_PROMPT, profile)] = "operational"
+
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                cards = future.result()
+                all_cards.extend(cards)
+                logger.info(f"v2 narrate [{label}]: {len(cards)} cards")
+            except Exception as e:
+                logger.error(f"v2 narrate [{label}] failed: {e}")
+
+    # Resolved signals → template strings, no LLM
+    for sig in routed.get("resolved", []):
+        all_cards.append(InsightCard(
+            title=f"Resolved: {sig.entity_label} {sig.metric_name.replace('_', ' ')}",
+            body=f"Previously flagged issue has recovered. This was tracked for {sig.consecutive_periods or 1} period(s).",
+            category="milestone",
+            severity="low",
+            metric_name=sig.metric_name,
+            entity_type=sig.entity_type,
+            entity_id=sig.entity_id,
+            current_value=sig.current_value,
+            reference_value=sig.reference_value,
+            delta_pct=sig.delta_pct,
+            period=sig.period,
+            status="resolved",
+            insight_source=sig.insight_source,
+            tab_destination="pulse",
+        ))
+
+    # Digest call (sequential, after narration)
+    all_metrics = urgent_signals + analytical_signals + operational_signals
+    period = all_metrics[0].period if all_metrics else ""
+    digest = _generate_digest_v2(all_metrics, period)
+
+    logger.info(f"v2 narrate total: {len(all_cards)} cards, digest={'yes' if digest else 'no'}")
+    return all_cards, digest
+
+
+def _generate_digest_v2(metrics: list[FlaggedMetric], period: str) -> str | None:
+    """Generate period digest with v2 context."""
+    if not metrics:
+        return None
+
+    by_source = {}
+    for m in metrics:
+        by_source.setdefault(m.insight_source, []).append(m)
+
+    summary_lines = [f"Period: {period}"]
+    summary_lines.append(f"Total signals: {len(metrics)}")
+    for source, sigs in by_source.items():
+        high = sum(1 for s in sigs if s.severity == "high")
+        summary_lines.append(f"  {source}: {len(sigs)} ({high} high severity)")
+
+    for m in metrics[:7]:
+        direction = "up" if m.delta_pct > 0 else "down"
+        status_str = f" [{m.status}]" if m.status != "new" else ""
+        summary_lines.append(
+            f"- {m.entity_label}: {m.metric_name.replace('_', ' ')} "
+            f"{direction} {abs(m.delta_pct):.1f}%{status_str}"
+        )
+
+    try:
+        client = make_openai_client()
+        resp = _retry(lambda: client.chat.completions.create(
+            model=QWEN_INSIGHT_MODEL,
+            messages=[
+                {"role": "system", "content": DIGEST_PROMPT},
+                {"role": "user",   "content": "\n".join(summary_lines)},
+            ],
+        ))
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning("v2 digest LLM failed — using template digest: %s", e)
+        return _make_template_digest(metrics, period)
+
+
+def _make_template_digest(metrics: list[FlaggedMetric], period: str) -> str:
+    """Generate a plain-English digest without LLM."""
+    if not metrics:
+        return f"No significant signals detected for {period}. All monitored metrics are within expected ranges."
+
+    total = len(metrics)
+    high = [m for m in metrics if m.severity == "high"]
+    medium = [m for m in metrics if m.severity == "medium"]
+
+    by_source: dict[str, int] = {}
+    for m in metrics:
+        by_source[m.insight_source] = by_source.get(m.insight_source, 0) + 1
+
+    parts = [
+        f"The platform recorded {total} signal{'s' if total != 1 else ''} during {period}."
+    ]
+
+    if high:
+        top_entities = list(dict.fromkeys(m.entity_label for m in high))[:3]
+        parts.append(
+            f"{len(high)} high-severity issue{'s' if len(high) != 1 else ''} "
+            f"{'were' if len(high) != 1 else 'was'} detected, "
+            f"affecting {', '.join(top_entities)}."
+        )
+
+    if medium:
+        parts.append(
+            f"An additional {len(medium)} medium-severity pattern{'s' if len(medium) != 1 else ''} "
+            f"{'are' if len(medium) != 1 else 'is'} worth monitoring."
+        )
+
+    source_phrases = {
+        "anomaly": "metric anomalies", "consecutive": "multi-month trends",
+        "funnel": "funnel gaps", "op_risk": "operational risks",
+        "dq": "data quality issues", "milestone": "positive milestones",
+        "cross_dim": "cross-dimension patterns",
+    }
+    detected_types = [source_phrases.get(k, k) for k in by_source if k != "anomaly"]
+    if detected_types:
+        parts.append(f"The analysis also identified {', '.join(detected_types[:3])}.")
+
+    return " ".join(parts)

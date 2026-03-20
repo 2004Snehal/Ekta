@@ -43,38 +43,40 @@ def main():
     if args.clear:
         clear_cache(args.client)
 
-    logger.info("starting narrator pipeline for client_id=%s", args.client)
+    logger.info("starting narrator v2 pipeline for client_id=%s", args.client)
 
-    from intelligence.insight_narrator.pipeline import run_pipeline
-    result = run_pipeline(client_id=args.client)
+    from intelligence.insight_narrator.pipeline import run_pipeline_v2
+    result = run_pipeline_v2(client_id=args.client)
 
     if result is None:
         logger.error("pipeline returned None — check logs above for the error")
         sys.exit(1)
 
     print("\n" + "=" * 60)
-    print(f"  INSIGHT NARRATOR — client {result.client_id}  |  period {result.period}")
+    print(f"  INSIGHT NARRATOR v2 — client {result.client_id}  |  period {result.period}  |  pulse={result.pulse_score}")
     print("=" * 60)
 
     if result.digest:
         print(f"\n[DIGEST]\n{result.digest}\n")
 
-    if not result.insights:
+    all_cards = result.insights
+    if not all_cards:
         print("No insights generated this run.\n")
     else:
-        for i, card in enumerate(result.insights, 1):
+        for i, card in enumerate(all_cards, 1):
             delta_sign = "+" if card.delta_pct > 0 else ""
-            print(f"[{i}] [{card.severity.upper():6}] [{card.category}]  {card.title}")
+            print(f"[{i}] [{card.severity.upper():6}] [{card.category}] [{card.tab_destination}]  {card.title}")
             print(f"     {card.entity_type}:{card.entity_id}  {card.metric_name}  "
                   f"{delta_sign}{card.delta_pct:.1f}%  "
-                  f"(current={card.current_value:.2f}, 3m avg={card.reference_value:.2f})")
+                  f"(current={card.current_value:.2f}, baseline={card.reference_value:.2f})"
+                  f"  status={card.status}")
             print(f"     {card.body}")
             if card.root_cause_hint:
                 print(f"     Hint: {card.root_cause_hint}")
             print()
 
     print(f"Generated at: {result.generated_at}")
-    print(f"Total cards:  {len(result.insights)}")
+    print(f"Total cards:  {len(all_cards)}  |  checks: {', '.join(result.checks_run)}")
 
 
 if __name__ == "__main__":

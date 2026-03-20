@@ -18,6 +18,7 @@ class ChartInsightRequest(BaseModel):
     x_label: Optional[str] = None
     y_label: Optional[str] = None
     data: list[dict[str, Any]]              # exactly what is rendered in the chart
+    user_role: Optional[str] = None
 
 
 class ChartInsightResponse(BaseModel):
