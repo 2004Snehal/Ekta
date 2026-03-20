@@ -43,8 +43,11 @@ const BUILTIN_CHART_NAMES = [
   'Videos by Channel', 'Daily Upload Trend', 'Language Distribution', 'Content by Type',
 ];
 
-interface CtxMenu { x: number; y: number; type: 'kpi' | 'chart'; targetId: string | number }
+interface CtxMenu { x: number; y: number; type: 'kpi' | 'graph'; targetId: string }
 interface RegistryKpi { id: string; name: string; current_value: unknown; unit?: string; }
+interface NLQPinnedGraph { id: string; title: string; chart_type: string; x: string; y: string; data: Record<string, unknown>[]; sql?: string | null; description?: string | null; }
+
+function uid() { return Math.random().toString(36).slice(2); }
 
 type ShareStatus = 'idle' | 'saving' | 'copied';
 
@@ -100,6 +103,11 @@ export default function Dashboard() {
   // Context menu
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
 
+  // NLQ pinned graphs + ordering
+  const [nlqGraphs, setNlqGraphs]       = useState<NLQPinnedGraph[]>([]);
+  const [graphOrder, setGraphOrder]     = useState<string[]>([]);
+  const [pinsInitialized, setPinsInitialized] = useState(false);
+
   /* ── Narrator insights ───────────────────────────────── */
   useEffect(() => {
     if (!apiBaseUrl) return;
@@ -146,6 +154,72 @@ export default function Dashboard() {
     return () => window.removeEventListener('click', h);
   }, [ctxMenu]);
 
+  /* ── Load pinned KPIs + NLQ graphs from localStorage (once) ─────────── */
+  useEffect(() => {
+    if (!stateReady || pinsInitialized) return;
+    // Pinned registry KPIs (starred in KPI Lab)
+    try {
+      const pinned = JSON.parse(localStorage.getItem('dashboard_pinned_kpis') ?? '[]') as string[];
+      if (pinned.length > 0) {
+        setVisibleKpiIds(prev => {
+          const toAdd = pinned.filter(id => !prev.includes(id));
+          if (toAdd.length === 0) return prev;
+          toAdd.forEach(id => {
+            if (!apiBaseUrl) return;
+            fetch(`${apiBaseUrl}/kpi-lab/registry/${id}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(k => { if (k) setRegistryKpiMap(p => ({ ...p, [id]: k as RegistryKpi })); })
+              .catch(() => {});
+          });
+          return [...prev, ...toAdd];
+        });
+      }
+    } catch { /* ignore */ }
+    // Pinned NLQ graphs (starred in Query page)
+    try {
+      const nlq = JSON.parse(localStorage.getItem('dashboard_nlq_graphs') ?? '[]') as NLQPinnedGraph[];
+      if (nlq.length > 0) setNlqGraphs(nlq);
+    } catch { /* ignore */ }
+    // Saved graph order
+    try {
+      const order = JSON.parse(localStorage.getItem('dashboard_graph_order') ?? '[]') as string[];
+      if (order.length > 0) setGraphOrder(order);
+    } catch { /* ignore */ }
+    setPinsInitialized(true);
+  }, [stateReady, pinsInitialized, apiBaseUrl]);
+
+  /* ── Keep graphOrder in sync with visible items ──────── */
+  useEffect(() => {
+    const wanted = [
+      ...visibleGraphIndices.map(i => `builtin_${i}`),
+      ...nlqGraphs.map(g => `nlq_${g.id}`),
+    ];
+    setGraphOrder(prev => {
+      const filtered = prev.filter(id => wanted.includes(id));
+      const added    = wanted.filter(id => !filtered.includes(id));
+      return [...filtered, ...added];
+    });
+  }, [visibleGraphIndices, nlqGraphs]);
+
+  /* ── Sync pinned KPIs to localStorage ───────────────── */
+  useEffect(() => {
+    if (!pinsInitialized) return;
+    const registryIds = visibleKpiIds.filter(id => !DEFAULT_VISIBLE_KPI_IDS.includes(id));
+    localStorage.setItem('dashboard_pinned_kpis', JSON.stringify(registryIds));
+  }, [visibleKpiIds, pinsInitialized]);
+
+  /* ── Sync NLQ graphs to localStorage ────────────────── */
+  useEffect(() => {
+    if (!pinsInitialized) return;
+    localStorage.setItem('dashboard_nlq_graphs', JSON.stringify(nlqGraphs));
+  }, [nlqGraphs, pinsInitialized]);
+
+  /* ── Sync graph order to localStorage ───────────────── */
+  useEffect(() => {
+    if (!pinsInitialized || graphOrder.length === 0) return;
+    localStorage.setItem('dashboard_graph_order', JSON.stringify(graphOrder));
+  }, [graphOrder, pinsInitialized]);
+
   /* ── Share ───────────────────────────────────────────── */
   async function handleShare() {
     if (!apiBaseUrl || shareStatus !== 'idle') return;
@@ -184,10 +258,14 @@ export default function Dashboard() {
           try {
             const res = await fetch(`${apiBaseUrl}/workspace/dashboards/${loadDashId}`, { cache: 'no-store' });
             if (res.ok) {
-              const d = await res.json() as { visible_kpi_ids: string[]; graphs: { source: string; index: number }[] };
-              const indices = d.graphs.filter(g => g.source === 'builtin' && typeof g.index === 'number').map(g => g.index);
+              const d = await res.json() as { visible_kpi_ids: string[]; graphs: Array<Record<string, unknown>> };
+              const indices = d.graphs.filter(g => g['source'] === 'builtin' && typeof g['index'] === 'number').map(g => g['index'] as number);
+              const nlqGs: NLQPinnedGraph[] = d.graphs
+                .filter(g => g['source'] === 'nlq')
+                .map(g => ({ id: String(g['id'] ?? uid()), title: String(g['title'] ?? 'NLQ Graph'), chart_type: String(g['chart_type'] ?? 'bar'), x: String(g['x'] ?? ''), y: String(g['y'] ?? ''), data: (g['data'] as Record<string, unknown>[]) ?? [], sql: g['sql'] as string | null, description: g['description'] as string | null }));
               if (d.visible_kpi_ids.length > 0) setVisibleKpiIds(d.visible_kpi_ids);
               if (indices.length > 0) setVisibleGraphIndices(indices);
+              if (nlqGs.length > 0) { setNlqGraphs(nlqGs); localStorage.setItem('dashboard_nlq_graphs', JSON.stringify(nlqGs)); }
             }
           } catch { /* ignore */ }
         }
@@ -273,13 +351,30 @@ export default function Dashboard() {
   }
 
   /* ── Load saved workspace dashboard ─────────────────── */
-  function handleLoadDashboard(kpiIds: string[], graphIndices: number[]) {
+  function handleLoadDashboard(kpiIds: string[], graphIndices: number[], nlqGs: NLQPinnedGraph[] = []) {
     setVisibleKpiIds(kpiIds.length > 0 ? kpiIds : DEFAULT_VISIBLE_KPI_IDS);
     setVisibleGraphIndices(graphIndices.length > 0 ? graphIndices : [0, 1, 2, 3]);
+    setNlqGraphs(nlqGs);
+    localStorage.setItem('dashboard_nlq_graphs', JSON.stringify(nlqGs));
+    // Reset order so it rebuilds from new state
+    setGraphOrder([]);
     const registryIds = kpiIds.filter(id => !DEFAULT_VISIBLE_KPI_IDS.includes(id));
     registryIds.forEach(id => {
       if (registryKpiMap[id] || !apiBaseUrl) return;
       fetch(`${apiBaseUrl}/kpi-lab/registry/${id}`).then(r => r.ok ? r.json() : null).then(k => { if (k) setRegistryKpiMap(prev => ({ ...prev, [id]: k as RegistryKpi })); }).catch(() => {});
+    });
+  }
+
+  /* ── Move graph up/down ──────────────────────────────── */
+  function moveGraph(gid: string, dir: -1 | 1) {
+    setGraphOrder(prev => {
+      const idx = prev.indexOf(gid);
+      if (idx === -1) return prev;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return next;
     });
   }
 
@@ -331,6 +426,7 @@ export default function Dashboard() {
       <WorkspacePanel isOpen={showWorkspace} onClose={() => setShowWorkspace(false)}
         apiBaseUrl={apiBaseUrl} currentUserId={USER_ID}
         visibleKpiIds={visibleKpiIds} visibleGraphIndices={visibleGraphIndices}
+        nlqGraphs={nlqGraphs}
         onLoadDashboard={handleLoadDashboard} />
 
       {/* Context menu */}
@@ -348,7 +444,14 @@ export default function Dashboard() {
                 setVisibleKpiIds(prev => prev.filter(id => id !== ctxMenu.targetId));
                 if (selectedKpiId === ctxMenu.targetId) setSelectedKpiId(null);
               } else {
-                setVisibleGraphIndices(prev => prev.filter(i => i !== ctxMenu.targetId));
+                const gid = ctxMenu.targetId;
+                if (gid.startsWith('builtin_')) {
+                  const idx = parseInt(gid.slice(8));
+                  setVisibleGraphIndices(prev => prev.filter(i => i !== idx));
+                } else if (gid.startsWith('nlq_')) {
+                  const id = gid.slice(4);
+                  setNlqGraphs(prev => prev.filter(g => g.id !== id));
+                }
               }
               setCtxMenu(null);
             }}
@@ -470,7 +573,7 @@ export default function Dashboard() {
           {/* Charts (65%) */}
           <div style={{ flex: '0 0 65%', borderRight: '1px solid var(--wire)', padding: '24px 28px' }}>
 
-            {/* Hidden chart restore buttons */}
+            {/* Hidden built-in chart restore buttons */}
             {hiddenChartIndices.length > 0 && (
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
                 {hiddenChartIndices.map(idx => (
@@ -482,15 +585,43 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Charts */}
+            {/* Charts — ordered by graphOrder, supports up/down reposition */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-              {enrichedCharts.map((chart, idx) => {
-                if (!visibleGraphIndices.includes(idx)) return null;
+              {(graphOrder.length === 0 ? visibleGraphIndices.map(i => `builtin_${i}`) : graphOrder).map((gid, pos, arr) => {
+                const moveBtnStyle: React.CSSProperties = { background: 'none', border: '1px solid var(--wire)', cursor: 'pointer', color: 'var(--on-low)', padding: '1px 5px', borderRadius: '2px', ...mono, fontSize: '0.6rem', lineHeight: 1.4 };
+                const moveControls = (
+                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end', marginBottom: '4px' }}>
+                    <button onClick={() => moveGraph(gid, -1)} disabled={pos === 0} title="Move up" style={{ ...moveBtnStyle, opacity: pos === 0 ? 0.3 : 1 }}>▲</button>
+                    <button onClick={() => moveGraph(gid, 1)} disabled={pos === arr.length - 1} title="Move down" style={{ ...moveBtnStyle, opacity: pos === arr.length - 1 ? 0.3 : 1 }}>▼</button>
+                  </div>
+                );
+
+                if (gid.startsWith('builtin_')) {
+                  const idx = parseInt(gid.slice(8));
+                  const chart = enrichedCharts[idx];
+                  if (!chart) return null;
+                  return (
+                    <div key={gid}>
+                      {moveControls}
+                      <div onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, type: 'graph', targetId: gid }); }} title="Right-click to remove">
+                        <ChartRenderer chart={chart} onElementClick={handleChartClick} />
+                      </div>
+                    </div>
+                  );
+                }
+
+                // NLQ graph
+                const id = gid.slice(4);
+                const nlqG = nlqGraphs.find(g => g.id === id);
+                if (!nlqG) return null;
+                const spec = { chart_type: nlqG.chart_type as 'bar' | 'line' | 'pie' | 'scatter' | 'stacked_bar' | 'table', title: nlqG.title, description: nlqG.description ?? undefined, x: nlqG.x, y: nlqG.y, data: nlqG.data };
                 return (
-                  <div key={idx}
-                    onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, type: 'chart', targetId: idx }); }}
-                    title="Right-click to remove">
-                    <ChartRenderer chart={chart} onElementClick={handleChartClick} />
+                  <div key={gid}>
+                    {moveControls}
+                    <div onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, type: 'graph', targetId: gid }); }} title="Right-click to remove">
+                      <div style={{ ...mono, fontSize: '0.5rem', color: 'var(--on-low)', marginBottom: '4px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>From NLQ ·</div>
+                      <ChartRenderer chart={spec} />
+                    </div>
                   </div>
                 );
               })}

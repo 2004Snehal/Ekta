@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '');
@@ -110,12 +109,7 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-muted-foreground">
-            No account?{' '}
-            <Link href="/signup" className="text-primary underline">
-              Sign up
-            </Link>
-          </p>
+
         </div>
       </div>
     </div>
