@@ -1,8 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
 
-name: Build and deploy Python app to Azure Web App - frammer
+name: Build and deploy Node.js app to Azure Web App - frammer-frontend
 
 on:
   push:
@@ -19,34 +18,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python version
-        uses: actions/setup-python@v5
+      - name: Set up Node.js version
+        uses: actions/setup-node@v3
         with:
-          python-version: "3.12"
+          node-version: "24.x"
 
-      # 🛠️ Local Build Section targeting ./backend
-      - name: Create and Start virtual environment and Install dependencies
-        working-directory: ./backend
+      - name: npm install, build, and test
+        working-directory: ./dashboard_frontend
         run: |
-          python -m venv antenv
-          source antenv/bin/activate
-          pip install -r requirements.txt
+          npm install
+          npm run build --if-present
+          npm run test --if-present
 
-      # By default, when you enable GitHub CI/CD integration through the Azure portal, the platform automatically sets the SCM_DO_BUILD_DURING_DEPLOYMENT application setting to true. This triggers the use of Oryx, a build engine that handles application compilation and dependency installation (e.g., pip install) directly on the platform during deployment. Hence, we exclude the antenv virtual environment directory from the deployment artifact to reduce the payload size.
-      - name: Upload artifact for deployment jobs
+      - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
-          name: python-app
+          name: node-app
           path: |
-            backend/
-            !backend/antenv/
-            !backend/.venv/
-            !backend/__pycache__/
-
-      # 🚫 Opting Out of Oryx Build
-      # If you prefer to disable the Oryx build process during deployment, follow these steps:
-      # 1. Remove the SCM_DO_BUILD_DURING_DEPLOYMENT app setting from your Azure App Service Environment variables.
-      # 2. Refer to sample workflows for alternative deployment strategies: https://github.com/Azure/actions-workflow-samples/tree/master/AppService
+            dashboard_frontend/
+            !dashboard_frontend/node_modules/
+            !dashboard_frontend/.git/
 
   deploy:
     runs-on: ubuntu-latest
@@ -59,18 +50,19 @@ jobs:
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
-          name: python-app
+          name: node-app
 
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_89948188B5B3424F95E4B7BE5B1974C2 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_C884E7F042D14DE68BD576D8609B2986 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7D0B90CD5EF1423A82A9C645DD369135 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_A120DF0AA1324C7F838D72E37427DE98 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_1F02C3A475ED454F928C615BCD51C0B3 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_4E1B62AB1F774B35AF0A650ED3EE612F }}
 
       - name: "Deploy to Azure Web App"
-        uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
         with:
-          app-name: "frammer"
+          app-name: "frammer-frontend"
           slot-name: "Production"
+          package: dashboard_frontend/
