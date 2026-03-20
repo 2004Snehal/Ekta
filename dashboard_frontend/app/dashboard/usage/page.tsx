@@ -136,7 +136,7 @@ function UsagePageInner() {
           <div className="wire-h" style={{ margin: '28px 0' }} />
 
           {/* Two-column: Period comparison + Duration chart */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '28px', marginBottom: '28px' }}>
+          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '28px', marginBottom: '28px', overflow: 'visible' }}>
             {periodData && (
               <PeriodComparison
                 current={periodData.current}
