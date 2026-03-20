@@ -1,15 +1,10 @@
 """
-Pydantic schemas for the Insight Narrator output.
+Pydantic schemas for the Insight Narrator pipeline.
 
-InsightCard is the canonical unit surfaced to users.
-FlaggedMetric is the internal pre-LLM representation
-produced by the statistical detector.
-
-v2 additions (backward-compatible):
-- Extended FlaggedMetric with source/status/root-cause fields
-- Extended InsightCard with status/action/tab routing
-- New models: EntityHealthScore, FunnelSummary, DQScorecard, etc.
-- NarratorResponseV2 with tabbed sections
+FlaggedMetric   — internal pre-LLM statistical detection output
+InsightCard     — canonical unit surfaced to the frontend
+NarratorResponseV2 — full pipeline response, organized by tab destination
+Supporting models: EntityHealthScore, FunnelSummary, DQScorecard, PeriodSummary
 """
 
 from __future__ import annotations
@@ -17,10 +12,6 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 import uuid
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# v1 models (unchanged — backward compatible)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Pre-LLM: statistical detector output ─────────────────────────────────────
 
@@ -49,7 +40,7 @@ class FlaggedMetric(BaseModel):
     actionability_score: Optional[float] = None  # 0-100 composite: severity × recoverability × scope
 
 
-# ── Post-LLM: narrator output ─────────────────────────────────────────────────
+# ── Post-LLM: narrator output ────────────────────────────────────────────────
 
 class InsightCard(BaseModel):
     """A single insight card returned to the frontend."""
@@ -80,19 +71,8 @@ class InsightCard(BaseModel):
     nlq_query: Optional[str] = None        # pre-filled NLQ question for "Explore in NLQ" link
 
 
-class NarratorResponse(BaseModel):
-    """Top-level response returned by the narrator pipeline (v1 — kept for compat)."""
-
-    client_id: int
-    period: str                            # YYYY-MM of the most recent month analysed
-    generated_at: str                      # ISO datetime
-    data_as_of: str                        # ISO date — most recent month in dataset
-    digest: Optional[str] = None           # one-paragraph weekly digest
-    insights: list[InsightCard] = []
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# v2 models (new — narrator intelligence hub)
+# v2 models — narrator intelligence hub
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Entity Health ─────────────────────────────────────────────────────────────

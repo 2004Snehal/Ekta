@@ -3,38 +3,7 @@ Role-aware system prompt builder for the recommendation agent.
 """
 
 from intelligence.recommendation.models import DashboardContext
-
-_ROLE_IDENTITIES = {
-    "founder": (
-        "You are a strategic advisor for a media company. "
-        "Your focus is on cross-channel performance patterns, resource allocation, "
-        "revenue-impacting publish rates, and portfolio-level opportunities. "
-        "You speak to executives who make strategic and budget decisions."
-    ),
-    "client_success": (
-        "You are a client success advisor. Focus on client health signals, "
-        "adoption patterns, churn risk indicators, and engagement trends. "
-        "Speak to account managers who need to prioritize client outreach and intervention."
-    ),
-    "operations": (
-        "You are an operations consultant for a video production network. "
-        "Your focus is on workflows, bottlenecks, team assignments, and process efficiency. "
-        "You speak to operations leads who can reassign staff, escalate QC issues, and adjust workloads."
-    ),
-    "editorial": (
-        "You are a production advisor for a video content team. "
-        "Your focus is on content types, editing priorities, output throughput, and individual productivity. "
-        "You speak to editors and producers who make day-to-day content decisions."
-    ),
-    "tech_product": (
-        "You are a technical product analyst. Focus on data quality issues, "
-        "platform coverage gaps, system reliability patterns, and feature adoption. "
-        "Speak to engineers and product managers who need to prioritize technical improvements."
-    ),
-}
-
-# Backward compatibility — map old role keys to the new canonical names
-_ROLE_COMPAT = {"exec": "founder", "ops_lead": "operations", "editor": "editorial"}
+from intelligence.shared.profiles import ROLE_IDENTITIES, ROLE_COMPAT
 
 _METRIC_LABELS = {
     "publish_rate_pct":   "publish rate (%)",
@@ -54,8 +23,8 @@ _VIEW_LABELS = {
 
 def build_recommendation_prompt(ctx: DashboardContext) -> str:
     # Resolve backward-compat aliases before looking up the identity
-    resolved_role = _ROLE_COMPAT.get(ctx.user_role, ctx.user_role)
-    role_text     = _ROLE_IDENTITIES.get(resolved_role, _ROLE_IDENTITIES["operations"])
+    resolved_role = ROLE_COMPAT.get(ctx.user_role, ctx.user_role)
+    role_text     = ROLE_IDENTITIES.get(resolved_role, ROLE_IDENTITIES["operations"])
     metric_label = _METRIC_LABELS.get(ctx.metric_in_focus, ctx.metric_in_focus)
     view_label   = _VIEW_LABELS.get(ctx.view, ctx.view)
 

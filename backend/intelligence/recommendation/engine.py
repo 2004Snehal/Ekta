@@ -17,6 +17,7 @@ from intelligence.recommendation.models import (
 from intelligence.recommendation.context_expander import expand_context
 from intelligence.recommendation.prompts import build_recommendation_prompt
 import intelligence.recommendation.cache as rec_cache
+from intelligence.shared.stats_summary import summarize_rows
 
 # Reuse the LLM abstraction from the NLQ module
 from intelligence.nlq.llm import call_llm_text as call_llm
@@ -85,39 +86,28 @@ def get_recommendations(ctx: DashboardContext, conn) -> RecommendationResponse:
 
 def _format_context(expanded: ExpandedContext) -> str:
     """
-    Serialize the 4 data sections into labelled text blocks.
-    Keeps total context under ~2000 tokens by capping rows per section.
+    Serialize the 4 data sections into statistical summaries for the LLM.
+    Each section is summarized with min/max/mean/std, categorical distributions,
+    time-series trend, and top/bottom N rows — rather than raw row dumps.
     """
     parts = []
 
-    def _section(label: str, rows: list[dict], limit: int = 10) -> str:
+    # Benchmark may contain nested sub-sections (e.g. this_channel vs network_wide)
+    def _benchmark_summary(rows: list[dict]) -> str:
         if not rows:
-            return f"## {label}\n(no data)\n"
-        sample = rows[:limit]
-        # Special case: benchmark can be a list of dicts with nested "rows"
-        if sample and "section" in sample[0]:
-            lines = [f"## {label}"]
-            for block in sample:
-                lines.append(f"### {block.get('section', '').upper()}")
-                sub = block.get("rows", [])[:limit]
-                if sub:
-                    lines.append(" | ".join(str(k) for k in sub[0].keys()))
-                    for r in sub:
-                        lines.append(" | ".join(str(v) for v in r.values()))
-                else:
-                    lines.append("(no data)")
+            return "### BENCHMARK\n(no data)\n"
+        if rows and "section" in rows[0]:
+            lines = ["### BENCHMARK"]
+            for block in rows:
+                sub = block.get("rows", [])
+                lines.append(summarize_rows(sub, label=block.get("section", "").upper()))
             return "\n".join(lines) + "\n"
+        return summarize_rows(rows, label="BENCHMARK")
 
-        header = " | ".join(str(k) for k in sample[0].keys())
-        data_rows = "\n".join(
-            " | ".join(str(v) for v in row.values()) for row in sample
-        )
-        return f"## {label}\n{header}\n{data_rows}\n"
-
-    parts.append(_section("ENTITY PROFILE",  expanded.entity_profile))
-    parts.append(_section("PEER COMPARISON",  expanded.peer_comparison))
-    parts.append(_section("RELATED ACTORS",   expanded.related_actors))
-    parts.append(_section("BENCHMARK",        expanded.benchmark))
+    parts.append(summarize_rows(expanded.entity_profile, label="ENTITY PROFILE"))
+    parts.append(summarize_rows(expanded.peer_comparison, label="PEER COMPARISON"))
+    parts.append(summarize_rows(expanded.related_actors,  label="RELATED ACTORS"))
+    parts.append(_benchmark_summary(expanded.benchmark))
 
     return "\n".join(parts)
 

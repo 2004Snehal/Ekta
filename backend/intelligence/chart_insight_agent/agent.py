@@ -26,6 +26,8 @@ from intelligence.chart_insight_agent.schemas import (
     ChartInsightRequest, ChartInsightResponse,
     ChartDescriptionRequest, ChartDescriptionResponse,
 )
+from intelligence.shared.stats_summary import summarize_rows
+from intelligence.shared.profiles import PROFILE_FRAMING
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,11 @@ RULES (non-negotiable):
 # ── Data formatting ───────────────────────────────────────────────────────────
 
 def _format_data(req: ChartInsightRequest) -> str:
-    """Serialise the chart context into a compact text block for the LLM."""
+    """
+    Serialise the chart context into a statistical summary for the LLM.
+    Replaces raw row dumps with computed min/max/mean/std, categorical
+    distributions, time-series trend, and top/bottom N rows.
+    """
     lines = [
         f"Chart title: {req.chart_title}",
         f"Chart type: {req.chart_type}",
@@ -64,27 +70,20 @@ def _format_data(req: ChartInsightRequest) -> str:
     if req.y_label:
         lines.append(f"Y axis: {req.y_label}")
 
-    lines.append(f"Data ({len(req.data)} rows):")
-
-    # Cap at 100 rows to keep prompt size reasonable
-    for row in req.data[:100]:
-        lines.append("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
-
-    if len(req.data) > 100:
-        lines.append(f"  ... ({len(req.data) - 100} more rows not shown)")
+    lines.append(summarize_rows(req.data, label="Data"))
 
     return "\n".join(lines)
 
 
 # ── LLM calls ─────────────────────────────────────────────────────────────────
 
-def _call_openrouter(user_message: str) -> dict[str, Any]:
+def _call_openrouter(user_message: str, system_prompt: str = _SYSTEM_PROMPT) -> dict[str, Any]:
     client = make_openai_client()
     logger.debug("chart_insight_agent: calling OpenRouter (%s)", QWEN_INSIGHT_MODEL)
     response = client.chat.completions.create(
         model=QWEN_INSIGHT_MODEL,
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
@@ -167,13 +166,18 @@ def generate_chart_insights(req: ChartInsightRequest) -> ChartInsightResponse:
             insights=["This chart currently has no data to analyse."],
         )
 
+    # Build role-aware system prompt
+    effective_prompt = _SYSTEM_PROMPT
+    if req.user_role and req.user_role in PROFILE_FRAMING:
+        effective_prompt = PROFILE_FRAMING[req.user_role] + "\n\n" + _SYSTEM_PROMPT
+
     logger.info(
         "chart_insight_agent: generating insights for '%s' (%s, %d rows) via %s",
         req.chart_title, req.chart_type, len(req.data), QWEN_INSIGHT_MODEL,
     )
 
     user_message = _format_data(req)
-    raw = _call_openrouter(user_message)
+    raw = _call_openrouter(user_message, system_prompt=effective_prompt)
 
     n_insights = len(raw.get("insights", []))
     logger.info("chart_insight_agent: produced %d insight(s) for '%s'", n_insights, req.chart_title)

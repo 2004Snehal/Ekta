@@ -8,6 +8,7 @@ import {
 } from 'recharts';
 import type { UniversalChartSpec } from '@/types/chart';
 import { ChartInsightPanel } from '@/components/ChartInsightPanel';
+import { useProfile } from '@/lib/profiles';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
 
@@ -98,6 +99,7 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const hasDrill = Boolean(chart.drillDown);
   const cursorStyle = hasDrill ? 'pointer' : 'default';
   const [showAll, setShowAll] = useState(false);
+  const { profile } = useProfile();
 
   // ── Hover insight state ────────────────────────────────────────────────────
   const [insightVisible, setInsightVisible]       = useState(false);
@@ -169,6 +171,7 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
           x_label:     xField || undefined,
           y_label:     yField || undefined,
           data:        chart.data,
+          user_role:   profile,
         }),
       });
       if (res.ok) {

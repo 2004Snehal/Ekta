@@ -6,12 +6,9 @@ import { SparkKPI } from '@/components/SparkKPI';
 import { KPIDetailModal } from '@/components/KPIDetailModal';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { Filters } from '@/components/Filters';
-import { InsightPanel } from '@/components/InsightPanel';
-import { InsightBanner } from '@/components/InsightBanner';
-import { RecommendationsPanel } from '@/components/RecommendationsPanel';
+import { IntelligencePanel } from '@/components/IntelligencePanel';
 import {
   buildDashboardCharts,
-  buildDashboardInsights,
   buildDashboardKpiDetails,
   buildDashboardKpis,
   createDashboardState,
@@ -75,6 +72,7 @@ export default function Dashboard() {
   // Narrator v2 data for InsightBanner + SparkKPI dots
   const [narratorInsights, setNarratorInsights] = useState<{ title: string; severity: 'high' | 'medium' | 'low'; body?: string }[]>([]);
   const [kpiInsightMap, setKpiInsightMap] = useState<Record<string, 'high' | 'medium' | 'low'>>({});
+  const [narratorData, setNarratorData] = useState<{ digest?: string | null; dashboard_banner?: any[] } | null>(null);
 
   // Period comparison data for delta values on SparkKPIs
   const [periodDeltas, setPeriodDeltas] = useState<Record<string, number>>({});
@@ -86,6 +84,7 @@ export default function Dashboard() {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
+        setNarratorData(data);
         // v2: use dashboard_banner for banner, kpi_insights for dots
         const banner = data.dashboard_banner ?? data.insights ?? [];
         setNarratorInsights(
@@ -245,7 +244,6 @@ export default function Dashboard() {
   const kpis            = useMemo(() => buildDashboardKpis(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
   const kpiDetails      = useMemo(() => buildDashboardKpiDetails(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
   const charts          = useMemo(() => buildDashboardCharts(filteredRecords), [filteredRecords]);
-  const insights        = useMemo(() => buildDashboardInsights(filteredRecords, filterFields), [filteredRecords, filterFields]);
   const selectedKpiDetail = selectedKpiId ? kpiDetails[selectedKpiId] ?? null : null;
   const dataReady       = !isLoading && filteredRecords.length > 0;
 
@@ -403,38 +401,18 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {insights.length > 0 && (
-              <>
-                <div className="wire-h" style={{ margin: '32px 0 24px' }} />
-                <div
-                  className="grid"
-                  style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}
-                >
-                  <InsightPanel insights={insights.slice(0, 2)} label="Insights" />
-                  {insights.length > 2 && (
-                    <InsightPanel insights={insights.slice(2, 4)} label="More Insights" />
-                  )}
-                </div>
-              </>
-            )}
           </div>
 
           {/* Right: InsightBanner + recommendations (35%) */}
           <div style={{ flex: '0 0 35%', padding: '24px 24px', position: 'sticky', top: '88px', alignSelf: 'flex-start', maxHeight: 'calc(100vh - 88px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
-            {/* InsightBanner at top of right column */}
-            {narratorInsights.length > 0 && (
-              <div style={{ marginBottom: '16px', flexShrink: 0 }}>
-                <InsightBanner insights={narratorInsights} />
-              </div>
-            )}
-
-            <RecommendationsPanel
+            <IntelligencePanel
               apiBaseUrl={apiBaseUrl}
               filters={filters}
               kpis={kpis}
               selectedKpiId={selectedKpiId}
               dataReady={dataReady}
+              narratorData={narratorData}
             />
           </div>
         </div>
