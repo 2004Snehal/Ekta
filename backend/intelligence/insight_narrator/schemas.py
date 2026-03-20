@@ -38,8 +38,8 @@ class FlaggedMetric(BaseModel):
     status: str = "new"                    # new|ongoing|worsening|resolved
     root_cause_breakdown: Optional[list[dict]] = None  # [{dimension, driver, contribution_pct}]
     actionability_score: Optional[float] = None  # 0-100 composite: severity × recoverability × scope
-    tab_destination: Optional[str] = None
-    nlq_query: Optional[str] = None
+    tab_destination: str = "watchlist"     # pulse|watchlist|pipeline|data_governance
+    nlq_query: Optional[str] = None        # pre-filled NLQ question for "Explore in NLQ" link
 
 
 # ── Post-LLM: narrator output ────────────────────────────────────────────────
