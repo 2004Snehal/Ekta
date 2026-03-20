@@ -62,12 +62,38 @@ def run_nlq_query(
     except Exception as exc:
         log.error("[2/7] Vanna SQL generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
         return _error(str(exc), question)
-    log.info("[2/7] SQL generated — %.0f ms", _ms())
+    log.info("[2/7] SQL + metadata generated — %.0f ms", _ms())
 
+    # ── Step 2a: Router — allow Vanna to signal no-SQL path ──────────────────
+    routing = vr.routing or {}
+    requires_sql = routing.get("requires_sql")
+    if requires_sql is False:
+        direct_answer = routing.get("direct_answer") or "I cannot answer this from the analytics database."
+        log.info("[NLQ] Router: requires_sql=False — returning direct answer only.")
+        total_ms = _ms()
+        log.info("[7/7] Session updated — total %.0f ms", total_ms)
+        log.info(_SEP)
+        return {
+            "question":           question,
+            "answer":             direct_answer,
+            "sql":                None,
+            "chart_type":         vr.chart_type or "table",
+            "title":              vr.title or question[:80],
+            "x":                  vr.x_column or "",
+            "y":                  vr.y_column or "",
+            "description":        direct_answer,
+            "data":               [],
+            "columns":            [],
+            "row_count":          0,
+            "insights":           [],
+            "processing_time_ms": total_ms,
+        }
+
+    # default / legacy behaviour: run full SQL pipeline
     sql = vr.sql.strip()
 
-    # ── Security: only allow SELECT ───────────────────────────────────────────
-    if not re.match(r"^\s*SELECT\b", sql, re.IGNORECASE):
+    # ── Security: only allow read-only queries (SELECT or CTE starting WITH) ─
+    if not re.match(r"^\s*(WITH|SELECT)\b", sql, re.IGNORECASE):
         log.warning("[NLQ] Non-SELECT blocked")
         return _error("Generated a non-SELECT statement — blocked.", question)
 
