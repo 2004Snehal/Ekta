@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Insight Narrator — Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { background: #0f1117; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; padding: 24px; }
+    h1 { text-align: center; font-size: 20px; margin-bottom: 6px; color: #f0f6ff; }
+    p  { text-align: center; font-size: 12px; color: #8899aa; margin-bottom: 24px; }
+    .wrap { background: #1a1d27; border: 1px solid #2d3348; border-radius: 10px; padding: 24px; overflow-x: auto; }
+    .mermaid { display: flex; justify-content: center; }
+  </style>
+</head>
+<body>
+  <h1>Insight Narrator v2 — Full Architecture</h1>
+  <p>pipeline.py · detector.py · deduplicator.py · narrator.py · schemas.py</p>
+  <div class="wrap">
+    <div class="mermaid">
+flowchart TD
+
+  subgraph ENTRY["ENTRY POINTS"]
+    CLI["CLI: run_narrator.py\n--client N, --clear flag"]
+    API_GET["GET /narrator/insights\nstale-while-revalidate"]
+    API_POST["POST /narrator/run\nmanual background trigger"]
+    API_FB["POST /narrator/feedback\nthumbs up / down on cards"]
+    API_QUERY["GET /insights/\nfilter by type, entity, period"]
+  end
+
+  subgraph CACHE["CACHE LAYER — pipeline.py"]
+    CC{"insight_cache\nage < 24h?"}
+    RC["Return cached NarratorResponse\nserve immediately"]
+    BGR["Schedule background\nrefresh task"]
+  end
+
+  subgraph ORCH["PIPELINE ORCHESTRATOR — pipeline.py: run_pipeline"]
+    LOCK["Concurrency Guard\n_RUNNING set\nskip if already running"]
+    CONN["Open DB Connection\nPostgres via psycopg2"]
+  end
+
+  subgraph DETECT["STEP 1+2 — ANOMALY DETECTION — detector.py"]
+    DM["detect_anomalies(conn, client_id)"]
+
+    subgraph PULL["Data Pull — 3 queries"]
+      PCH["_pull_channel_monthly()\nmv_monthly_kpis\npublish_rate, output_count\navg_duration_secs per channel"]
+      PUP["_pull_upload_counts()\nfact_created_videos\nupload_count per channel"]
+      PUS["_pull_user_monthly()\nmv_monthly_kpis user-grain\npublish_rate, output_count per user"]
+    end
+
+    DC["_detect_metric_anomaly()\ncombines Z-score + IQR + MoM"]
+
+    subgraph STATS["Statistical Analysis Engine"]
+      ZS["_zscore_for_series()\nrolling mean and std dev\nflag if z > 2.0"]
+      IQ["_iqr_flag()\nQ1 - 1.5xIQR / Q3 + 1.5xIQR\noutlier detection"]
+      MM["MoM Delta percent\ncurrent - ref / ref x 100\ntrigger: > plus or minus 20%"]
+    end
+
+    SEV["_severity_from_stats()\nhigh: z>3 or delta>50%\nmedium: z>2 or delta>20%\nlow: everything else"]
+    FO[("Output: List of FlaggedMetric\nentity_type, entity_id, entity_label\nmetric_name, current_value, reference_value\ndelta_pct, zscore, severity, period")]
+  end
+
+  subgraph DEDUP["STEP 3 — DEDUPLICATION AND RANKING — deduplicator.py"]
+    DD["deduplicate_and_rank(conn, client_id, flagged)"]
+    LH["_load_recent_keys()\nquery pg_insight_history\nSUPPRESS_WINDOW_DAYS = 7"]
+    SUP{"Seen in\nlast 7 days?"}
+    DROP["DROP metric\nalready surfaced recently"]
+    FR["_freshness_multiplier()\nrecency score 0.0 to 1.0\nbased on last_seen_at"]
+    RS["_ranking_score()\nscore = zscore x freshness_multiplier"]
+    SC["Sort descending by score\nCap at MAX_INSIGHTS = 7"]
+    UH["_upsert_history()\nINSERT or UPDATE pg_insight_history\nincrement seen_count, update last_seen_at"]
+    RO[("Output: List of FlaggedMetric\nTop-7, ranked and deduplicated")]
+  end
+
+  subgraph NARR["STEP 4 — LLM NARRATION — narrator.py"]
+    NM["narrate(metrics)\nreturns InsightCard list + digest_str"]
+    FE["_format_evidence()\nserialize FlaggedMetric list\nto structured text for LLM"]
+    SP["System Prompt Rules\ndo NOT detect or rank\ntitle: max 12 words\nbody: 2-3 sentences, no jargon\ncategory: anomaly/trend/comparison/milestone\nalways fill root_cause_hint"]
+    PR{"LLM Provider\nrouting"}
+    GEM["_gemini_narrator()\ngoogle-genai SDK\nJSON schema enforced at API level\nmodel: gemini-2.0-flash"]
+    OAI["_openai_narrator()\nopenai SDK\nresponse_format JSON mode\nmodel: gpt-4o-mini"]
+    RET["_retry()\nexponential backoff\nmax 3 attempts, rate-limit safe"]
+    DIG["_generate_digest()\nsingle summary paragraph\nover all insight cards"]
+    CO[("Output: List of InsightCard\nplus digest string")]
+  end
+
+  subgraph VALID["STEP 5 — SCHEMA VALIDATION — schemas.py"]
+    PYD["Pydantic v2 Validation"]
+    IC["InsightCard\nid, title, body, category, severity\nmetric_name, entity_type, entity_id\ncurrent_value, reference_value\ndelta_pct, period, confidence, root_cause_hint"]
+    NR["NarratorResponse\nclient_id, period, generated_at\ndata_as_of, digest, insights list"]
+  end
+
+  subgraph STORE["STEP 6 — PERSIST AND CACHE — pipeline.py"]
+    WC["_write_cache()\nUPSERT insight_cache\nkey: client_id\nvalue: full NarratorResponse JSON"]
+    WL["_write_insight_log()\nINSERT each InsightCard\ninto insight_log table"]
+    WH["_upsert_history()\nfinalise pg_insight_history entries"]
+  end
+
+  subgraph DBTABLES["DATABASE TABLES"]
+    MV[("mv_monthly_kpis\nmaterialized view")]
+    FCV[("fact_created_videos")]
+    PIH[("pg_insight_history\ndedup and suppression store")]
+    IC2[("insight_cache\nfull response cache")]
+    IL[("insight_log\nper-card audit log")]
+  end
+
+  CLI --> LOCK
+  API_POST --> LOCK
+  API_GET --> CC
+  CC -->|"Fresh under 24h"| RC
+  CC -->|"Stale: serve and schedule"| RC
+  CC -->|"Stale: background"| BGR
+  BGR --> LOCK
+  LOCK --> CONN
+  CONN --> DM
+
+  DM --> PCH
+  DM --> PUP
+  DM --> PUS
+  PCH --> DC
+  PUP --> DC
+  PUS --> DC
+  DC --> ZS
+  DC --> IQ
+  DC --> MM
+  ZS --> SEV
+  IQ --> SEV
+  MM --> SEV
+  SEV --> FO
+
+  FO --> DD
+  DD --> LH
+  LH --> SUP
+  SUP -->|"Yes"| DROP
+  SUP -->|"No"| FR
+  FR --> RS
+  RS --> SC
+  SC --> UH
+  UH --> RO
+
+  RO --> NM
+  NM --> FE
+  FE --> SP
+  SP --> PR
+  PR -->|"Gemini"| GEM
+  PR -->|"OpenAI"| OAI
+  GEM --> RET
+  OAI --> RET
+  RET --> DIG
+  DIG --> CO
+
+  CO --> PYD
+  PYD --> IC
+  PYD --> NR
+
+  NR --> WC
+  NR --> WL
+  NR --> WH
+
+  PCH -.->|reads| MV
+  PUP -.->|reads| FCV
+  PUS -.->|reads| MV
+  LH  -.->|reads| PIH
+  UH  -.->|writes| PIH
+  CC  -.->|reads| IC2
+  WC  -.->|upserts| IC2
+  WL  -.->|inserts| IL
+  API_FB -.->|updates thumb| IL
+  API_QUERY -.->|queries| IL
+
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      flowchart: { curve: 'basis', htmlLabels: false },
+      themeVariables: {
+        fontSize: '13px',
+        primaryColor: '#1e2a3a',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#4a90d9',
+        lineColor: '#5a7fa8',
+        secondaryColor: '#2a1e3a',
+        tertiaryColor: '#1a2a1e',
+        clusterBkg: '#161b27',
+        clusterBorder: '#334466'
+      }
+    });
+  </script>
+</body>
+</html>

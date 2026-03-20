@@ -19,8 +19,8 @@ def get_filter_options(client_id: int = Query(1)):
         cur.execute(
             """
             SELECT DISTINCT dch.channel_id, dch.channel_name, dch.channel_code
-            FROM data.dim_channel dch
-            JOIN data.fact_created_videos f ON f.channel_id = dch.channel_id
+            FROM public.dim_channel dch
+            JOIN public.fact_created_videos f ON f.channel_id = dch.channel_id
             WHERE f.client_id = %s
             ORDER BY dch.channel_code
             """,
@@ -29,17 +29,17 @@ def get_filter_options(client_id: int = Query(1)):
         channels = [{"id": r[0], "name": r[1], "code": r[2]} for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT input_type_id, type_name, category FROM data.dim_input_type ORDER BY type_name"
+            "SELECT input_type_id, type_name, category FROM public.dim_input_type ORDER BY type_name"
         )
         input_types = [{"id": r[0], "name": r[1], "category": r[2]} for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT language_id, language_code, language_name FROM data.dim_language ORDER BY language_name"
+            "SELECT language_id, language_code, language_name FROM public.dim_language ORDER BY language_name"
         )
         languages = [{"id": r[0], "code": r[1], "name": r[2]} for r in cur.fetchall()]
 
         cur.execute(
-            "SELECT MIN(uploaded_at), MAX(uploaded_at) FROM data.fact_created_videos WHERE client_id = %s",
+            "SELECT MIN(uploaded_at), MAX(uploaded_at) FROM public.fact_created_videos WHERE client_id = %s",
             (client_id,),
         )
         row = cur.fetchone()
@@ -103,11 +103,11 @@ def get_kpis_summary(
             ROUND(
                 SUM(m.published_count)::NUMERIC / NULLIF(SUM(m.created_count), 0) * 100, 2
             ) AS publish_rate_pct
-        FROM data.mv_monthly_kpis m
-        JOIN data.dim_channel  dc ON dc.channel_id  = m.channel_id
-        LEFT JOIN data.dim_input_type  di  ON di.input_type_id   = m.input_type_id
-        LEFT JOIN data.dim_output_type dot ON dot.output_type_id = m.output_type_id
-        LEFT JOIN data.dim_language    dl  ON dl.language_id     = m.language_id
+        FROM public.mv_monthly_kpis m
+        JOIN public.dim_channel  dc ON dc.channel_id  = m.channel_id
+        LEFT JOIN public.dim_input_type  di  ON di.input_type_id   = m.input_type_id
+        LEFT JOIN public.dim_output_type dot ON dot.output_type_id = m.output_type_id
+        LEFT JOIN public.dim_language    dl  ON dl.language_id     = m.language_id
         WHERE {where}
         GROUP BY m.month, m.channel_id, dc.channel_code, dc.channel_name,
                  m.input_type_id, di.type_name,
@@ -144,8 +144,8 @@ def get_channels_health(client_id: int = Query(1)):
                 ch.publish_rate_pct,
                 ch.active_users,
                 ch.last_activity
-            FROM data.mv_channel_health ch
-            JOIN data.dim_channel dc ON dc.channel_id = ch.channel_id
+            FROM public.mv_channel_health ch
+            JOIN public.dim_channel dc ON dc.channel_id = ch.channel_id
             WHERE ch.client_id = %s
             ORDER BY dc.channel_code
             """,
@@ -187,9 +187,9 @@ def get_users_performance(
             up.publish_rate_pct,
             up.total_uploaded_duration_secs,
             up.total_created_duration_secs
-        FROM data.mv_user_performance up
-        JOIN data.dim_user    du ON du.user_id    = up.user_id
-        JOIN data.dim_channel dc ON dc.channel_id = up.channel_id
+        FROM public.mv_user_performance up
+        JOIN public.dim_user    du ON du.user_id    = up.user_id
+        JOIN public.dim_channel dc ON dc.channel_id = up.channel_id
         WHERE {where}
         ORDER BY up.created_count DESC
     """
@@ -236,7 +236,7 @@ def get_kpi_totals(
                     COUNT(*) FILTER (WHERE published_flag)::NUMERIC
                     / NULLIF(COUNT(*), 0) * 100, 2
                 )                                                                   AS publish_rate_pct
-            FROM data.fact_created_videos
+            FROM public.fact_created_videos
             WHERE {where}
             """,
             params,

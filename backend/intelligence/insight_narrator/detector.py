@@ -103,8 +103,8 @@ def _pull_channel_monthly(conn, client_id: int, months_back: int = 4) -> list[di
                      THEN m.total_created_duration_secs::FLOAT / m.created_count
                 END
             ) AS avg_duration_secs
-        FROM data.mv_monthly_kpis m
-        JOIN data.dim_channel dc ON dc.channel_id = m.channel_id
+        FROM public.mv_monthly_kpis m
+        JOIN public.dim_channel dc ON dc.channel_id = m.channel_id
         WHERE m.client_id = %s
           AND m.month >= %s
         GROUP BY m.channel_id, dc.channel_name, dc.channel_code, m.month
@@ -129,7 +129,7 @@ def _pull_upload_counts(conn, client_id: int, months_back: int = 4) -> list[dict
             channel_id,
             date_trunc('month', uploaded_at) AS month,
             COUNT(DISTINCT video_id)          AS upload_count
-        FROM data.fact_created_videos
+        FROM public.fact_created_videos
         WHERE client_id = %s
           AND uploaded_at >= %s
         GROUP BY channel_id, date_trunc('month', uploaded_at)
@@ -154,9 +154,9 @@ def _pull_user_monthly(conn, client_id: int, months_back: int = 4) -> list[dict]
             date_trunc('month', f.uploaded_at) AS month,
             COUNT(*)                             AS output_count,
             COUNT(*) FILTER (WHERE f.published_flag) AS published_count
-        FROM data.fact_created_videos f
-        JOIN data.dim_user    du ON du.user_id    = f.user_id
-        JOIN data.dim_channel dc ON dc.channel_id = f.channel_id
+        FROM public.fact_created_videos f
+        JOIN public.dim_user    du ON du.user_id    = f.user_id
+        JOIN public.dim_channel dc ON dc.channel_id = f.channel_id
         WHERE f.client_id = %s
           AND f.uploaded_at >= %s
           AND du.is_bot = FALSE

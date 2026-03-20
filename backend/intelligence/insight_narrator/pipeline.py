@@ -51,7 +51,7 @@ def _cache_key(client_id: int) -> str:
 def _read_cache(conn, client_id: int) -> dict | None:
     cur = conn.cursor()
     cur.execute(
-        "SELECT insights, generated_at, data_as_of FROM internal.insight_cache WHERE cache_key = %s",
+        "SELECT insights, generated_at, data_as_of FROM public.insight_cache WHERE cache_key = %s",
         (_cache_key(client_id),),
     )
     row = cur.fetchone()
@@ -69,7 +69,7 @@ def _write_cache(conn, client_id: int, response: NarratorResponse) -> None:
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO internal.insight_cache (cache_key, insights, generated_at, data_as_of)
+        INSERT INTO public.insight_cache (cache_key, insights, generated_at, data_as_of)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (cache_key) DO UPDATE SET
             insights     = EXCLUDED.insights,
@@ -94,7 +94,7 @@ def _write_insight_log(conn, client_id: int, response: NarratorResponse) -> None
     for card in response.insights:
         cur.execute(
             """
-            INSERT INTO internal.insight_log
+            INSERT INTO public.insight_log
                 (client_id, insight_type, severity, title, body,
                  dimensions, metric_value, baseline_value, delta_pct,
                  category, entity_type, entity_id, period,

@@ -3,6 +3,11 @@
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=gvgcimbgvnnjqeeeeczk"
+    },
+    "excalidraw": {
+      "type": "stdio",
+      "command": "mcp-excalidraw-local",
+      "args": []
     }
   }
 }

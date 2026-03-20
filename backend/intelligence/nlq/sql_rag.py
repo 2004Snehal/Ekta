@@ -105,7 +105,7 @@ def _log_query(conn, client_id: int, question: str, sql: str, success: bool, row
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO internal.query_log (natural_lang, generated_sql, success, row_count)
+            INSERT INTO public.query_log (natural_lang, generated_sql, success, row_count)
             VALUES (%s, %s, %s, %s)
             """,
             (question, sql, success, row_count),

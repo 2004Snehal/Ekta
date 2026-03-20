@@ -2,6 +2,8 @@ import type { UniversalChartSpec } from '@/types/chart';
 
 export type DashboardDateRange = 'last-7-days' | 'last-30-days' | 'last-90-days' | 'all-time';
 
+export type ProfileId = 'leadership' | 'client_success';
+
 export type DashboardKpiId =
   | 'uploaded_videos'
   | 'processed_videos'
@@ -21,6 +23,7 @@ export interface DashboardRecord extends Record<string, string | number | null> 
   publisher: string;
   content_bucket: string;
   status: string;
+  team?: string;
   videoId?: string;
   videoTitle?: string;
   uploadedVideos: number;

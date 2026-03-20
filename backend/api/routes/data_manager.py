@@ -31,7 +31,7 @@ router = APIRouter(prefix="/data-manager", tags=["Data Manager"])
 
 # The schema that holds client-facing data tables.
 # System tables live in 'internal' and are never touched here.
-_DATA_SCHEMA = "data"
+_DATA_SCHEMA = "public"
 
 
 def _assert_table_exists(cur, table_name: str) -> None:

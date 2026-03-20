@@ -28,8 +28,8 @@ def clear_cache(client_id: int) -> None:
     from api.deps import get_conn
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM internal.insight_cache WHERE cache_key = %s", (f"narrator:{client_id}",))
-        cur.execute("DELETE FROM internal.pg_insight_history WHERE client_id = %s", (client_id,))
+        cur.execute("DELETE FROM public.insight_cache WHERE cache_key = %s", (f"narrator:{client_id}",))
+        cur.execute("DELETE FROM public.pg_insight_history WHERE client_id = %s", (client_id,))
         conn.commit()
     logger.info("cache and dedup history cleared for client %s", client_id)
 

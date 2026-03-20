@@ -48,7 +48,7 @@ def get_insights(
                    entity_type, entity_id, metric_name,
                    metric_value, baseline_value, delta_pct,
                    generated_at, is_read
-            FROM internal.insight_log
+            FROM public.insight_log
             WHERE {where}
             ORDER BY generated_at DESC
             LIMIT %s
@@ -98,8 +98,8 @@ def get_forecasts(
                 f.upper_bound,
                 f.model_used,
                 f.generated_at
-            FROM internal.forecast_log f
-            JOIN data.dim_channel dc ON dc.channel_id = f.channel_id
+            FROM public.forecast_log f
+            JOIN public.dim_channel dc ON dc.channel_id = f.channel_id
             WHERE {where}
             ORDER BY f.channel_id, f.metric_name, f.forecast_month
             """,
@@ -186,7 +186,7 @@ def record_insight_feedback(
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE internal.insight_log SET user_feedback = %s WHERE insight_id = %s",
+            "UPDATE public.insight_log SET user_feedback = %s WHERE insight_id = %s",
             (feedback, insight_id),
         )
         if cur.rowcount == 0:
@@ -213,7 +213,7 @@ def get_kpi_registry(
                    sql_def     AS sql_definition,
                    dimensions, created_by, is_active,
                    created_at, last_computed
-            FROM internal.kpi_registry
+            FROM public.kpi_registry
             WHERE (client_id = %s OR client_id IS NULL) {active_clause}
             ORDER BY created_at DESC
             """,

@@ -80,7 +80,7 @@ def save_state(body: SaveStateRequest):
         if body.stateId:
             cur.execute(
                 """
-                UPDATE internal.dashboard_state
+                UPDATE public.dashboard_state
                 SET
                     version          = %s,
                     filters_json     = %s,
@@ -116,7 +116,7 @@ def save_state(body: SaveStateRequest):
         new_id = str(uuid.uuid4())
         cur.execute(
             """
-            INSERT INTO internal.dashboard_state
+            INSERT INTO public.dashboard_state
                 (id, user_id, version, filters_json, filters_expanded, loaded_range, selected_kpi_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
@@ -149,7 +149,7 @@ def load_state_by_id(state_id: str):
             """
             SELECT id, user_id, version, filters_json, filters_expanded,
                    loaded_range, selected_kpi_id, created_at, updated_at
-            FROM internal.dashboard_state
+            FROM public.dashboard_state
             WHERE id = %s
             """,
             (state_id,),
@@ -174,7 +174,7 @@ def load_state_by_user(user_id: str = Query(..., description="User identifier"))
             """
             SELECT id, user_id, version, filters_json, filters_expanded,
                    loaded_range, selected_kpi_id, created_at, updated_at
-            FROM internal.dashboard_state
+            FROM public.dashboard_state
             WHERE user_id = %s
             ORDER BY COALESCE(updated_at, created_at) DESC
             LIMIT 1
@@ -195,7 +195,7 @@ def delete_state(state_id: str, user_id: str = Query(...)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "DELETE FROM internal.dashboard_state WHERE id = %s AND user_id = %s RETURNING id",
+            "DELETE FROM public.dashboard_state WHERE id = %s AND user_id = %s RETURNING id",
             (state_id, user_id),
         )
         deleted = cur.fetchone()

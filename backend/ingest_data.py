@@ -894,7 +894,7 @@ def ingest_raw(csv_path: str, table_name: str):
       re-running the same file never inserts duplicates.
     - New rows in a re-run are appended; existing rows are skipped silently.
     """
-    qualified = f"data.\"{table_name}\""
+    qualified = f"public.\"{table_name}\""
 
     print("=" * 60)
     print("FRAMMER AI ANALYTICS — RAW CSV UPLOAD")

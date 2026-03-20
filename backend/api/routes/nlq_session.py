@@ -53,7 +53,7 @@ def save_session(body: SaveSessionRequest):
         cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO internal.nlq_session (id, user_id, title, messages)
+            INSERT INTO public.nlq_session (id, user_id, title, messages)
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE
                 SET messages   = EXCLUDED.messages,
@@ -78,7 +78,7 @@ def load_session(session_id: str):
         cur.execute(
             """
             SELECT id, user_id, title, messages, created_at, updated_at
-            FROM internal.nlq_session WHERE id = %s
+            FROM public.nlq_session WHERE id = %s
             """,
             (session_id,),
         )
@@ -111,7 +111,7 @@ def list_sessions(user_id: str = Query(..., description="User identifier")):
             """
             SELECT id, user_id, title, created_at, updated_at,
                    jsonb_array_length(messages) AS message_count
-            FROM internal.nlq_session
+            FROM public.nlq_session
             WHERE user_id = %s
             ORDER BY COALESCE(updated_at, created_at) DESC
             LIMIT 50
@@ -137,6 +137,6 @@ def list_sessions(user_id: str = Query(..., description="User identifier")):
 def delete_session(session_id: str):
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM internal.nlq_session WHERE id = %s", (session_id,))
+        cur.execute("DELETE FROM public.nlq_session WHERE id = %s", (session_id,))
         conn.commit()
     return {"deleted": session_id}

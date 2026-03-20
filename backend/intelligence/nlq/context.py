@@ -77,7 +77,7 @@ def fetch_live_schema(conn) -> str:
                 break
             try:
                 cur.execute(
-                    f'SELECT DISTINCT "{cname}" FROM data."{tname}" '
+                    f'SELECT DISTINCT "{cname}" FROM public."{tname}" '
                     f'WHERE "{cname}" IS NOT NULL LIMIT 12'
                 )
                 vals = [str(r[0]) for r in cur.fetchall() if r[0] is not None]
@@ -94,7 +94,7 @@ def fetch_live_schema(conn) -> str:
     sorted_objects = sorted(objects, key=lambda r: (kind_order.get(r[1], 3), r[0]))
 
     for tname, kind in sorted_objects:
-        lines.append(f"=== {kind}: data.{tname} ===")
+        lines.append(f"=== {kind}: public.{tname} ===")
         for cname, dtype in cols_by_table.get(tname, []):
             sample = sample_values.get((tname, cname))
             sample_str = f"  -- values: {', '.join(sample)}" if sample else ""
@@ -124,7 +124,7 @@ Convert the user's natural language question into a SQL query and specify how to
 
 RULES:
 1. ONLY write SELECT statements. Never use INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
-2. Use ONLY the tables and columns listed above — always prefix table names with data. (e.g. data.shortened_filtered_data).
+2. Use ONLY the tables and columns listed above — always prefix table names with public. (e.g. public.shortened_filtered_data).
 3. When a column stores text that looks like a boolean (e.g. 'Yes'/'No', 'true'/'false'),
    use the exact string values shown in the sample values above.
 4. Add LIMIT 500 to any row-level query; aggregations can omit it.

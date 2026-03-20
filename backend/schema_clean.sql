@@ -266,7 +266,7 @@ CREATE TABLE IF NOT EXISTS data.dim_team (
 
 -- ============================================================
 -- DATA SCHEMA — source table
--- (created by ingest_data.py --raw; do not define columns here)
+-- (created by ingest_data.py --raw, do not define columns here)
 -- ============================================================
 
 -- data.shortened_filtered_data is created dynamically by ingest_data.py --raw

@@ -13,15 +13,17 @@ def test_connection():
 
         cursor.execute("SELECT version();")
         version = cursor.fetchone()
-        print(f"✓ Connected! PostgreSQL version: {version[0]}")
+        pg_version = version[0] if version else 'unknown'
+        print(f"✓ Connected! PostgreSQL version: {pg_version}")
 
         cursor.execute("SELECT schema_name FROM information_schema.schemata WHERE schema_name IN ('internal', 'data') ORDER BY schema_name;")
         schemas = [row[0] for row in cursor.fetchall()]
         print(f"✓ Schemas found: {schemas}")
 
-        cursor.execute("SELECT COUNT(*) FROM data.shortened_filtered_data;")
-        count = cursor.fetchone()[0]
-        print(f"✓ data.shortened_filtered_data rows: {count:,}")
+        cursor.execute("SELECT COUNT(*) FROM public.shortened_filtered_data;")
+        row = cursor.fetchone()
+        count = row[0] if row else 0
+        print(f"✓ public.shortened_filtered_data rows: {count:,}")
 
         cursor.close()
         conn.close()
@@ -32,3 +34,4 @@ def test_connection():
 
 if __name__ == "__main__":
     test_connection()
+

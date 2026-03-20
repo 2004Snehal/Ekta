@@ -73,7 +73,14 @@ def split_sql(text):
     return statements
 
 statements = split_sql(sql)
-ok = 0
+ok = skipped = 0
+
+# Errors that are safe to skip — happen when source table doesn't exist yet
+SKIPPABLE = (
+    'does not exist',
+    'already exists',
+)
+
 for stmt in statements:
     lines = [l for l in stmt.splitlines() if l.strip() and not l.strip().startswith("--")]
     if not lines:
@@ -82,11 +89,16 @@ for stmt in statements:
         cur.execute(stmt)
         ok += 1
     except Exception as e:
-        print(f"\n  ERROR:\n  {stmt[:120]}\n  -> {e}\n")
-        conn.close()
-        sys.exit(1)
+        err = str(e).lower()
+        if any(k in err for k in SKIPPABLE):
+            print(f"  SKIP (expected): {stmt[:80].strip()!r:.80} — {e!s:.100}")
+            skipped += 1
+        else:
+            print(f"\n  ERROR:\n  {stmt[:120]}\n  -> {e}\n")
+            conn.close()
+            sys.exit(1)
 
-print(f"  Applied {ok} statements successfully.\n")
+print(f"  Applied {ok} statements successfully ({skipped} skipped — run again after ingesting data).\n")
 conn.close()
 
 print("=== Migration complete! ===")

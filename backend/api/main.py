@@ -49,7 +49,7 @@ def run_migrations() -> None:
         # Dashboard state — one live row per user, updated in place on auto-save.
         # Shareable snapshots are extra rows identified by their UUID.
         """
-        CREATE TABLE IF NOT EXISTS dashboard_state (
+        CREATE TABLE IF NOT EXISTS public.dashboard_state (
             id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id          TEXT,
             version          INTEGER NOT NULL DEFAULT 1,
@@ -61,20 +61,71 @@ def run_migrations() -> None:
             updated_at       TIMESTAMPTZ
         )
         """,
-        # Index so "most recent state for user_id" queries are fast
         """
         CREATE INDEX IF NOT EXISTS idx_dashboard_state_user_id
-            ON dashboard_state (user_id)
+            ON public.dashboard_state (user_id)
         """,
-        # NLQ sessions table (if not yet created by another migration)
+        # NLQ sessions table
         """
-        CREATE TABLE IF NOT EXISTS nlq_session (
+        CREATE TABLE IF NOT EXISTS public.nlq_session (
             id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id     TEXT,
             title       TEXT,
             messages    JSONB NOT NULL DEFAULT '[]',
             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at  TIMESTAMPTZ
+        )
+        """,
+        # Insight cache — stale-while-revalidate store for narrator pipeline
+        """
+        CREATE TABLE IF NOT EXISTS public.insight_cache (
+            cache_key    TEXT PRIMARY KEY,
+            insights     JSONB NOT NULL,
+            generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            data_as_of   DATE
+        )
+        """,
+        # Insight deduplication history
+        """
+        CREATE TABLE IF NOT EXISTS public.pg_insight_history (
+            id           BIGSERIAL PRIMARY KEY,
+            client_id    BIGINT NOT NULL,
+            entity_type  TEXT,
+            entity_id    TEXT,
+            insight_type TEXT,
+            metric_name  TEXT,
+            period       TEXT,
+            first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            seen_count    INTEGER NOT NULL DEFAULT 1,
+            UNIQUE (client_id, entity_type, entity_id, insight_type, metric_name, period)
+        )
+        """,
+        # Insight log — per-card record for /insights/ query endpoint
+        """
+        CREATE TABLE IF NOT EXISTS public.insight_log (
+            id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            insight_id       BIGSERIAL,
+            client_id        BIGINT,
+            insight_type     TEXT,
+            severity         TEXT,
+            title            TEXT,
+            body             TEXT,
+            dimensions       JSONB,
+            metric_value     DOUBLE PRECISION,
+            baseline_value   DOUBLE PRECISION,
+            delta_pct        DOUBLE PRECISION,
+            category         TEXT,
+            entity_type      TEXT,
+            entity_id        TEXT,
+            period           TEXT,
+            current_value    DOUBLE PRECISION,
+            reference_value  DOUBLE PRECISION,
+            confidence       DOUBLE PRECISION,
+            root_cause_hint  TEXT,
+            user_feedback    INTEGER,
+            is_read          BOOLEAN NOT NULL DEFAULT FALSE,
+            generated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
     ]

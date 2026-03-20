@@ -36,7 +36,7 @@ def _load_recent_keys(conn, client_id: int, window_days: int) -> set[tuple]:
     cur.execute(
         """
         SELECT entity_type, entity_id, metric_name, period
-        FROM internal.pg_insight_history
+        FROM public.pg_insight_history
         WHERE client_id = %s
           AND last_seen_at >= %s
         """,
@@ -56,7 +56,7 @@ def _upsert_history(conn, client_id: int, metrics: list[FlaggedMetric]) -> None:
     for m in metrics:
         cur.execute(
             """
-            INSERT INTO internal.pg_insight_history
+            INSERT INTO public.pg_insight_history
                 (client_id, entity_type, entity_id, insight_type, metric_name, period,
                  first_seen_at, last_seen_at, seen_count)
             VALUES
@@ -83,7 +83,7 @@ def _freshness_multiplier(conn, client_id: int, metric: FlaggedMetric) -> float:
     cur.execute(
         """
         SELECT last_seen_at
-        FROM internal.pg_insight_history
+        FROM public.pg_insight_history
         WHERE client_id = %s
           AND entity_type = %s
           AND entity_id   = %s
