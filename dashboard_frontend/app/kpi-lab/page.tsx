@@ -5,7 +5,7 @@ import {
   Zap, BarChart3, RefreshCw, ChevronDown, ChevronRight, CheckCircle2,
   AlertCircle, Loader2, Database, FlaskConical, Lightbulb, Play, X,
   Server, TrendingUp, BookOpen, ArrowUp, ArrowDown, PenLine, Sparkles,
-  Plus, Table2, Copy, CornerDownLeft,
+  Plus, Table2, Copy, CornerDownLeft, Star,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -291,8 +291,28 @@ function KPICard({ name, value, unit, description, formula, category, usefulness
     usefulness_score?: number; sql?: string; registryId?: string; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const [sqlOpen, setSqlOpen]   = useState(false);
+  const [pinned, setPinned]     = useState(false);
   const score = usefulness_score ?? 0;
   const scoreColor = score >= 8 ? 'text-green-400' : score >= 6 ? 'text-yellow-400' : 'text-muted-foreground';
+
+  useEffect(() => {
+    if (!registryId) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem('dashboard_pinned_kpis') ?? '[]') as string[];
+      setPinned(stored.includes(registryId));
+    } catch { /* ignore */ }
+  }, [registryId]);
+
+  function togglePin(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!registryId) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem('dashboard_pinned_kpis') ?? '[]') as string[];
+      const next = pinned ? stored.filter(id => id !== registryId) : [...stored, registryId];
+      localStorage.setItem('dashboard_pinned_kpis', JSON.stringify(next));
+      setPinned(!pinned);
+    } catch { /* ignore */ }
+  }
 
   return (
     <div className={`bg-card border rounded-xl p-4 flex flex-col gap-3 transition-all duration-200 ${expanded ? 'border-primary/40 shadow-sm shadow-primary/10' : 'border-border hover:border-primary/30'}`}>
@@ -304,11 +324,19 @@ function KPICard({ name, value, unit, description, formula, category, usefulness
           </div>
           <h3 className="font-semibold text-foreground text-sm leading-tight">{name}</h3>
         </div>
-        <div className="text-right flex-shrink-0">
-          <div className="text-2xl font-bold text-foreground tabular-nums">
-            {fmt(value as number | string | null)}{unit && <span className="text-sm text-muted-foreground ml-1">{unit}</span>}
+        <div className="flex items-start gap-2 flex-shrink-0">
+          <div className="text-right">
+            <div className="text-2xl font-bold text-foreground tabular-nums">
+              {fmt(value as number | string | null)}{unit && <span className="text-sm text-muted-foreground ml-1">{unit}</span>}
+            </div>
+            {usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
           </div>
-          {usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
+          {registryId && (
+            <button onClick={togglePin} title={pinned ? 'Remove from Dashboard' : 'Pin to Dashboard'}
+              className="mt-0.5 p-1 rounded hover:bg-secondary/50 transition-colors">
+              <Star className={`w-4 h-4 transition-colors ${pinned ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground/40 hover:text-yellow-400'}`} />
+            </button>
+          )}
         </div>
       </div>
       {description && <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>}

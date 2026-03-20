@@ -10,6 +10,8 @@ interface TeamMember {
   role: string;
 }
 
+interface NLQPinnedGraph { id: string; title: string; chart_type: string; x: string; y: string; data: Record<string, unknown>[]; sql?: string | null; description?: string | null; }
+
 interface SavedDashboard {
   id: string;
   name: string;
@@ -17,7 +19,7 @@ interface SavedDashboard {
   created_by: string;
   created_by_name?: string;
   visible_kpi_ids: string[];
-  graphs: { source: string; index: number }[];
+  graphs: Array<Record<string, unknown>>;
   created_at: string;
 }
 
@@ -29,7 +31,8 @@ interface WorkspacePanelProps {
   currentUserName?: string;
   visibleKpiIds: string[];
   visibleGraphIndices: number[];
-  onLoadDashboard: (visibleKpiIds: string[], visibleGraphIndices: number[]) => void;
+  nlqGraphs: NLQPinnedGraph[];
+  onLoadDashboard: (visibleKpiIds: string[], visibleGraphIndices: number[], nlqGraphs: NLQPinnedGraph[]) => void;
 }
 
 const PROFILE_LABELS: Record<string, string> = {
@@ -54,7 +57,7 @@ const PROFILE_COLOUR: Record<string, string> = {
 
 export function WorkspacePanel({
   isOpen, onClose, apiBaseUrl, currentUserId, currentUserName,
-  visibleKpiIds, visibleGraphIndices, onLoadDashboard,
+  visibleKpiIds, visibleGraphIndices, nlqGraphs, onLoadDashboard,
 }: WorkspacePanelProps) {
   const [tab, setTab]           = useState<'team' | 'dashboards'>('team');
   const [grouped, setGrouped]   = useState<Record<string, TeamMember[]>>({});
@@ -86,7 +89,10 @@ export function WorkspacePanel({
     if (!saveName.trim() || !apiBaseUrl || saving) return;
     setSaving(true); setSaveMsg('');
     try {
-      const graphs = visibleGraphIndices.map(idx => ({ source: 'builtin', index: idx }));
+      const graphs = [
+        ...visibleGraphIndices.map(idx => ({ source: 'builtin', index: idx })),
+        ...nlqGraphs.map(g => ({ source: 'nlq', ...g })),
+      ];
       const res = await fetch(`${apiBaseUrl}/workspace/dashboards`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -113,8 +119,22 @@ export function WorkspacePanel({
   }
 
   function handleLoad(d: SavedDashboard) {
-    const indices = d.graphs.filter(g => g.source === 'builtin' && typeof g.index === 'number').map(g => g.index);
-    onLoadDashboard(d.visible_kpi_ids.length > 0 ? d.visible_kpi_ids : [], indices.length > 0 ? indices : [0, 1, 2, 3]);
+    const indices = d.graphs
+      .filter(g => g['source'] === 'builtin' && typeof g['index'] === 'number')
+      .map(g => g['index'] as number);
+    const nlqGs: NLQPinnedGraph[] = d.graphs
+      .filter(g => g['source'] === 'nlq')
+      .map(g => ({
+        id: String(g['id'] ?? Math.random().toString(36).slice(2)),
+        title: String(g['title'] ?? 'NLQ Graph'),
+        chart_type: String(g['chart_type'] ?? 'bar'),
+        x: String(g['x'] ?? ''),
+        y: String(g['y'] ?? ''),
+        data: (g['data'] as Record<string, unknown>[]) ?? [],
+        sql: g['sql'] as string | null,
+        description: g['description'] as string | null,
+      }));
+    onLoadDashboard(d.visible_kpi_ids.length > 0 ? d.visible_kpi_ids : [], indices.length > 0 ? indices : [0, 1, 2, 3], nlqGs);
     onClose();
   }
 
@@ -204,7 +224,7 @@ export function WorkspacePanel({
                   {saveMsg && <span style={{ ...mono, fontSize: '0.6rem', color: saveMsg.includes('fail') ? 'var(--signal)' : 'var(--ok)' }}>{saveMsg}</span>}
                 </div>
                 <div style={{ ...mono, fontSize: '0.55rem', color: 'var(--on-low)', marginTop: '8px' }}>
-                  Stores {visibleKpiIds.length} KPI{visibleKpiIds.length !== 1 ? 's' : ''} · {visibleGraphIndices.length} chart{visibleGraphIndices.length !== 1 ? 's' : ''}
+                  Stores {visibleKpiIds.length} KPI{visibleKpiIds.length !== 1 ? 's' : ''} · {visibleGraphIndices.length} built-in chart{visibleGraphIndices.length !== 1 ? 's' : ''}{nlqGraphs.length > 0 ? ` · ${nlqGraphs.length} NLQ chart${nlqGraphs.length !== 1 ? 's' : ''}` : ''}
                 </div>
               </div>
 
@@ -222,7 +242,7 @@ export function WorkspacePanel({
                           <div style={{ fontSize: '0.82rem', color: 'var(--on)', fontWeight: 500, marginBottom: '2px' }}>{d.name}</div>
                           {d.description && <div style={{ fontSize: '0.7rem', color: 'var(--on-low)', marginBottom: '3px' }}>{d.description}</div>}
                           <div style={{ ...mono, fontSize: '0.55rem', color: 'var(--on-low)' }}>
-                            {d.created_by_name || d.created_by} · {d.visible_kpi_ids.length} KPIs · {d.graphs.length} charts
+                            {d.created_by_name || d.created_by} · {d.visible_kpi_ids.length} KPIs · {d.graphs.filter(g => g['source'] === 'builtin').length} built-in{d.graphs.filter(g => g['source'] === 'nlq').length > 0 ? ` · ${d.graphs.filter(g => g['source'] === 'nlq').length} NLQ` : ''} charts
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
