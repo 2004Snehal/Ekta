@@ -220,6 +220,11 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
     if (cached) {
       setInsightSummary(cached.summary);
       setInsightBullets(cached.insights);
+      if (!cached.summary && !cached.insights.length) {
+        setDataError(true);
+      } else {
+        setDataError(false);
+      }
       return;
     }
     setDataLoading(true);
@@ -249,9 +254,11 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
         setInsightSummary(entry.summary);
         setInsightBullets(entry.insights);
       } else {
+        dataCache.current.set(fp, { summary: '', insights: [] });
         setDataError(true);
       }
     } catch {
+      dataCache.current.set(fp, { summary: '', insights: [] });
       setDataError(true);
     } finally {
       setDataLoading(false);
