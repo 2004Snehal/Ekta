@@ -69,6 +69,7 @@ def get_insights(
 @router.get("/narrator/insights")
 def get_narrator_insights(
     client_id: int = Query(1),
+    profile: Optional[str] = Query(None, description="leadership|client_success|operations|editorial|tech"),
     background_tasks: BackgroundTasks = None,
 ):
     """
@@ -78,48 +79,87 @@ def get_narrator_insights(
     - Serves the last cached result immediately (zero LLM latency).
     - If the cache is older than 24 h and no job is running, fires
       background regeneration so the NEXT request gets fresh data.
-    - If no cache exists at all, runs the pipeline synchronously
-      (first-ever call only).
+    - If no cache exists at all, runs the v2 pipeline synchronously.
     """
     from intelligence.insight_narrator.pipeline import (
-        get_cached, is_stale, run_pipeline,
+        get_cached, is_stale, run_pipeline_v2,
     )
 
     cached = get_cached(client_id)
 
     if cached is None:
-        # First-ever call: run synchronously so we have something to return
-        logger.info("narrator: no cache for client %s — running pipeline now", client_id)
-        result = run_pipeline(client_id)
+        # First-ever call: run v2 pipeline synchronously
+        logger.info("narrator: no cache for client %s — running v2 pipeline now", client_id)
+        result = run_pipeline_v2(client_id, profile=profile)
         if result is None:
             raise HTTPException(status_code=500, detail="Narrator pipeline failed")
-        return result.model_dump()
+        return result.model_dump(mode="json")
 
     # Cache exists: check staleness and optionally trigger background refresh
     if is_stale(cached) and background_tasks is not None:
-        logger.info("narrator: cache stale for client %s — scheduling background refresh", client_id)
-        background_tasks.add_task(run_pipeline, client_id)
+        logger.info("narrator: cache stale for client %s — scheduling v2 background refresh", client_id)
+        background_tasks.add_task(run_pipeline_v2, client_id, profile)
 
     return cached["insights"]
 
 
+@router.get("/narrator/health")
+def get_narrator_health(client_id: int = Query(1)):
+    """Fast endpoint returning only entity health scores from cache."""
+    from intelligence.insight_narrator.pipeline import get_cached
+
+    cached = get_cached(client_id)
+    if cached is None:
+        return {"entity_health": [], "pulse_score": 0}
+
+    insights = cached.get("insights", {})
+    if isinstance(insights, dict):
+        return {
+            "entity_health": insights.get("entity_health", []),
+            "pulse_score": insights.get("pulse_score", 0),
+            "pulse_delta": insights.get("pulse_delta"),
+        }
+    return {"entity_health": [], "pulse_score": 0}
+
+
 @router.post("/narrator/run")
-def trigger_narrator(client_id: int = Query(1), background_tasks: BackgroundTasks = None):
+def trigger_narrator(
+    client_id: int = Query(1),
+    profile: Optional[str] = Query(None),
+    sync: bool = Query(False, description="Run synchronously for debugging"),
+    background_tasks: BackgroundTasks = None,
+):
     """
-    Manually trigger a narrator pipeline run for a client.
+    Manually trigger a narrator v2 pipeline run for a client.
     Runs in background — returns immediately with a 202 Accepted.
+    Pass ?sync=true to run synchronously (blocks, but shows errors directly).
     """
-    from intelligence.insight_narrator.pipeline import run_pipeline
+    from intelligence.insight_narrator.pipeline import run_pipeline_v2
+
+    if sync:
+        # Synchronous mode: blocks and returns actual error details
+        import traceback
+        from intelligence.insight_narrator.pipeline import _RUNNING
+        _RUNNING.discard(client_id)  # clear any stuck lock from previous failed run
+        try:
+            result = run_pipeline_v2(client_id, profile=profile)
+            if result is None:
+                raise HTTPException(status_code=500, detail="Pipeline returned None — check uvicorn terminal for traceback")
+            return result.model_dump(mode="json")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("narrator sync run error")
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
     if background_tasks is not None:
-        background_tasks.add_task(run_pipeline, client_id)
-        return {"status": "accepted", "message": f"Narrator pipeline queued for client {client_id}"}
+        background_tasks.add_task(run_pipeline_v2, client_id, profile)
+        return {"status": "accepted", "message": f"Narrator v2 pipeline queued for client {client_id}"}
     else:
-        # Fallback: run synchronously (e.g. in test)
-        result = run_pipeline(client_id)
+        result = run_pipeline_v2(client_id, profile=profile)
         if result is None:
             raise HTTPException(status_code=500, detail="Narrator pipeline failed")
-        return result.model_dump()
+        return result.model_dump(mode="json")
 
 
 @router.post("/narrator/feedback")

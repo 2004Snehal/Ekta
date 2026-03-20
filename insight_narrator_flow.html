@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Insight Narrator — Pipeline Flow Diagram</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2e3f;
+      --accent: #6c8ef5;
+      --accent2: #7ecfff;
+      --text: #e2e6f0;
+      --muted: #8892a4;
+      --green: #4caf8a;
+      --orange: #f5a623;
+      --red: #e05c5c;
+      --purple: #b87af5;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 32px 24px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      color: var(--muted);
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 32px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .diagram-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px 16px;
+      overflow-x: auto;
+      margin-bottom: 40px;
+    }
+
+    .diagram-container .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    .phases-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+
+    .phase-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .phase-card h3 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+
+    .phase-card .phase-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+
+    .phase-card ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .phase-card ul li {
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .phase-card ul li::before {
+      content: '›';
+      color: var(--accent);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Insight Narrator Pipeline</h1>
+  <p>End-to-end flow from API request → HydratedBundle → 7 Analyzers → LLM Narration → Tabbed Response</p>
+</header>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#6c8ef5"></div>Core flow</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#4caf8a"></div>Parallel execution</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f5a623"></div>Decision / branching</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#b87af5"></div>LLM calls</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e05c5c"></div>DB persistence</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#7ecfff"></div>Frontend output</div>
+</div>
+
+<div class="diagram-container">
+  <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#1e2235',
+  'primaryTextColor': '#e2e6f0',
+  'primaryBorderColor': '#3a3f55',
+  'lineColor': '#5a6080',
+  'secondaryColor': '#252a3d',
+  'tertiaryColor': '#1a1d27',
+  'background': '#1a1d27',
+  'mainBkg': '#1e2235',
+  'nodeBorder': '#3a3f55',
+  'clusterBkg': '#181b28',
+  'titleColor': '#e2e6f0',
+  'edgeLabelBackground': '#1a1d27',
+  'fontFamily': 'Segoe UI, system-ui, sans-serif'
+}}}%%
+
+flowchart TD
+
+  %% ─── Entry ───────────────────────────────────────────────────
+  REQ(["🌐 API Request\n/narrator/insights\n?client_id=X&profile=Y"])
+  REQ --> CACHE{"insight_cache\nexists?"}
+
+  CACHE -- "✅ Fresh\n< 24h" --> HIT(["⚡ Return cached\nNarratorResponseV2"])
+  CACHE -- "⏱ Stale\n> 24h" --> STALE["Return cache now\n+ schedule bg refresh"]
+  CACHE -- "❌ No cache" --> P0
+  STALE --> P0
+
+  %% ─── Phase 0 ─────────────────────────────────────────────────
+  P0[["📦 Phase 0 · Data Hydration\ndata_loader.py — single DB round-trip"]]
+
+  P0 --> DB1[("monthly_kpis\n6 months")]
+  P0 --> DB2[("channel_health\nall-time rollup")]
+  P0 --> DB3[("user_performance\nper-user/channel")]
+  P0 --> DB4[("fact_sample\n90-day raw facts")]
+  P0 --> DB5[("insight_history\n30-day signals")]
+  P0 --> DB6[("dim_* lookups\nchannel/user/type/lang")]
+
+  DB1 & DB2 & DB3 & DB4 & DB5 & DB6 --> BUNDLE[["🗂 HydratedDataBundle"]]
+
+  %% ─── Phase 1 ─────────────────────────────────────────────────
+  BUNDLE --> P1[["⚡ Phase 1 · 7 Parallel Analyzers"]]
+
+  P1 --> A1["🔴 Anomaly Detector\nz-score + IQR + MoM delta\nSeverity: high≥2.5σ / med≥1.5σ"]
+  P1 --> A2["📈 Consecutive Trend\n3+ months same direction\nStreak length → severity"]
+  P1 --> A3["🔽 Funnel Analyzer\nUpload→Processed→Published\nPublish-rate gap vs fleet median"]
+  P1 --> A4["🔀 Cross-Dimension\nKL divergence across dims\nZeros / Over-indexed / Under-indexed"]
+  P1 --> A5["⚠️ Operational Risk\nDormant channels, SPOF users\nConcentration risk, Ghost accounts"]
+  P1 --> A6["🧹 Data Quality\nField completeness, duplicates\nInvalid publish URLs"]
+  P1 --> A7["🏆 Milestone Detector\nRecord-breaking months\nFirst-time thresholds & volume milestones"]
+
+  A1 & A2 & A4 & A5 & A7 --> SIG["📋 all_signals\nFlaggedMetric[]"]
+  A3 --> SIG
+  A3 --> FS["📊 FunnelSummary\n(always populated)"]
+  A6 --> SIG
+  A6 --> DQS["📋 DQScorecard\n(always populated)"]
+
+  %% ─── Phase 1.5 ───────────────────────────────────────────────
+  SIG --> P15[["🔬 Phase 1.5 · Root Cause Decomposition\nroot_cause.py — channel anomalies only"]]
+  P15 --> P15D["Breakdown by output_type / user / language\nContribution % per driver → attached to signal"]
+
+  %% ─── Phase 2 ─────────────────────────────────────────────────
+  P15D --> P2[["🧩 Phase 2 · Entity Synthesizer\nentity_synthesizer.py"]]
+  P2 --> P2D{"3+ signals\nsame entity?"}
+  P2D -- "Yes" --> BUNDLE2["SynthesisBundle\n(grouped context)"]
+  P2D -- "No" --> SINGLES["Single signals\npass-through"]
+
+  %% ─── Phase 3 ─────────────────────────────────────────────────
+  BUNDLE2 & SINGLES --> P3[["🕐 Phase 3 · Follow-Up Tracker\nfollow_up_tracker.py"]]
+  P3 --> P3A["Compare vs pg_insight_history\n(30-day rolling)"]
+  P3A --> P3B["Tag status:\nnew · ongoing · worsening\nSuppress if unchanged < 7d"]
+  P3A --> P3C["Auto-generate resolved signals\n(in history but not in current run)"]
+
+  %% ─── Phase 4 ─────────────────────────────────────────────────
+  P3B & P3C --> P4[["🗺 Phase 4 · Signal Router\nsignal_router.py"]]
+
+  P4 --> TAB1["👁 Watchlist\nanomalies · consecutive trends\ncross-dim · milestones"]
+  P4 --> TAB2["🔧 Pipeline\nfunnel gaps · operational risks\nstalled content"]
+  P4 --> TAB3["📊 Data Governance\ndq_issues"]
+  P4 --> KPIDOTS["💡 kpi_insights\nfor SparkKPI dots\n(high/med severity only)"]
+
+  %% ─── Phase 5 ─────────────────────────────────────────────────
+  TAB1 & TAB2 & TAB3 --> P5[["🤖 Phase 5 · LLM Narration\nnarrator.py — 3 parallel calls"]]
+
+  P5 --> LLM1["🔴 Urgent Batch\nhigh/med anomalies\nworsening follow-ups\nTone: alert/action"]
+  P5 --> LLM2["🔵 Analytical Batch\nconsecutive trends\ncross-dim patterns\nmilestones\nTone: discovery"]
+  P5 --> LLM3["🟠 Operational Batch\nop risks · DQ issues\nfunnel gaps\nTone: risk mitigation"]
+
+  LLM1 & LLM2 & LLM3 --> CARDS["🃏 InsightCard[]\ntitle · body · category\nroot_cause_hint · suggested_action"]
+
+  P5 --> DIGEST["📝 Digest\n3-5 sentence exec summary\n(separate sequential LLM call)"]
+
+  %% Fallback
+  LLM1 & LLM2 & LLM3 -->|"LLM failure"| TMPL["📄 Template Cards\nfactual fallback\n(non-blocking)"]
+  TMPL --> CARDS
+
+  %% ─── Phase 6 ─────────────────────────────────────────────────
+  BUNDLE --> P6[["❤️ Phase 6 · Health Scoring\nhealth_scorer.py"]]
+  CARDS --> P6
+  P6 --> P6D["Per-channel 0–100 score\npublish_rate (40%) + activity (30%)\ntrend (20%) + dq (10%)\nGrade: A / B / C / D"]
+  P6D --> PULSE["pulse_score\nfleet-wide weighted avg"]
+
+  %% ─── Phase 7 ─────────────────────────────────────────────────
+  CARDS & PULSE & DIGEST & FS & DQS & KPIDOTS --> P7[["🏗 Phase 7 · Assemble Response\nNarratorResponseV2"]]
+
+  P7 --> PERSIST[("💾 Persist\ninsight_cache\ninsight_log\npg_insight_history")]
+
+  %% ─── Output tabs ─────────────────────────────────────────────
+  P7 --> OUT1["🟣 Pulse Tab\npulse_score · pulse_delta\ndigest · period_summary\nentity_health · top_signals\nfollow_ups · resolved"]
+  P7 --> OUT2["🔵 Watchlist Tab\nflagged_metrics\nconsecutive_trends\ncross_dimension · milestones"]
+  P7 --> OUT3["🟠 Pipeline Tab\nFunnelSummary\nfunnel_gaps · op_risks\nstalled_content"]
+  P7 --> OUT4["🟢 Data Governance Tab\nDQScorecard\ndq_trend (6-month)\ndq_issues"]
+  P7 --> OUT5["⚫ Dashboard Layer\nSparkKPI dots\nInsightBanner (top 3)"]
+
+  %% ─── Styles ──────────────────────────────────────────────────
+  classDef entry       fill:#1e2e55,stroke:#6c8ef5,color:#c8d8ff,rx:12
+  classDef phase       fill:#1a2640,stroke:#4a6090,color:#aac8f0,rx:8
+  classDef analyzer    fill:#1e3030,stroke:#3a6060,color:#a0d8d0
+  classDef db          fill:#2a1e3a,stroke:#6040a0,color:#c0a8f0
+  classDef bundle      fill:#1e2a1a,stroke:#3a6030,color:#a8d8a0
+  classDef llm         fill:#2e1e40,stroke:#8040c0,color:#d0a8f8
+  classDef output      fill:#1a2e1a,stroke:#3a7040,color:#a8e0a8
+  classDef cache       fill:#3a2020,stroke:#a04040,color:#f0a8a8
+  classDef decision    fill:#302020,stroke:#b06020,color:#f0c080
+  classDef fallback    fill:#2e2a18,stroke:#706020,color:#e0d090
+  classDef persist     fill:#3a1a1a,stroke:#c04040,color:#f0b0b0
+
+  class REQ entry
+  class P0,P1,P15,P2,P3,P4,P5,P6,P7 phase
+  class A1,A2,A3,A4,A5,A6,A7 analyzer
+  class DB1,DB2,DB3,DB4,DB5,DB6 db
+  class BUNDLE,SIG,FS,DQS,BUNDLE2,SINGLES,CARDS,PULSE,DIGEST bundle
+  class LLM1,LLM2,LLM3 llm
+  class OUT1,OUT2,OUT3,OUT4,OUT5,HIT output
+  class CACHE,P2D decision
+  class STALE,TMPL fallback
+  class PERSIST persist
+  class TAB1,TAB2,TAB3,KPIDOTS fallback
+  </div>
+</div>
+
+<!-- Phase reference cards -->
+<div class="phases-grid">
+
+  <div class="phase-card">
+    <h3 style="color:#6c8ef5">Phase 0</h3>
+    <div class="phase-title">Data Hydration</div>
+    <ul>
+      <li>Single DB round-trip collects all data upfront</li>
+      <li>6 months of monthly KPIs (channels, types, languages)</li>
+      <li>All-time channel health + user performance rollups</li>
+      <li>90-day raw fact sample for cross-dim/DQ/op risk</li>
+      <li>30-day insight history for follow-up tracking</li>
+      <li>Dimension lookup tables for human-readable labels</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 1</h3>
+    <div class="phase-title">Anomaly Detector</div>
+    <ul>
+      <li>Z-score ≥ 2.5 → high, ≥ 1.5 → medium, ≥ 1.0 → low</li>
+      <li>MoM delta ≥ 40% → high, ≥ 25% → medium, ≥ 15% → low</li>
+      <li>IQR outlier detection (multiplier 1.5)</li>
+      <li>Severity is Python-assigned — LLM cannot change it</li>
+      <li>Covers: channels, languages, input/output types</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 2</h3>
+    <div class="phase-title">Consecutive Trend Detector</div>
+    <ul>
+      <li>Finds metrics moving same direction for 3+ consecutive months</li>
+      <li>Streak ≥ 5 months AND delta ≥ 40% → high severity</li>
+      <li>Generates contextual suggested_action per signal</li>
+      <li>insight_source = "consecutive"</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 3</h3>
+    <div class="phase-title">Funnel Analyzer</div>
+    <ul>
+      <li>3-stage funnel: uploaded → processed → published</li>
+      <li>Flags channels with publish_rate 15pp below fleet median</li>
+      <li>Always generates FunnelSummary (for Pipeline tab)</li>
+      <li>FunnelByEntity: per-channel rate, gap, and status</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 4</h3>
+    <div class="phase-title">Cross-Dimension Patterns</div>
+    <ul>
+      <li>Pairs: channel×output_type, channel×language, user×output_type</li>
+      <li>KL divergence / entropy-based surprise scoring</li>
+      <li>ZEROS: produces 0 of something popular (expansion opp)</li>
+      <li>OVER-INDEXED: 2x+ fleet average (specialization)</li>
+      <li>UNDER-INDEXED: &lt;50% fleet average (growth opp)</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 5</h3>
+    <div class="phase-title">Operational Risk Detector</div>
+    <ul>
+      <li>Dormant channels: 30+ days no activity (60d → high)</li>
+      <li>SPOF users: sole producer of a content type</li>
+      <li>Concentration risk: top 2 users ≥ 75% of output</li>
+      <li>Ghost users: account exists, 0 output in 60 days</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 6</h3>
+    <div class="phase-title">Data Quality Checker</div>
+    <ul>
+      <li>Checks: team_id, platform_id, published_url, language_id, input/output type</li>
+      <li>Issue threshold: &gt;10% missing/unknown triggers a signal</li>
+      <li>Duplicate detection: ≥ 1% of video_ids repeated</li>
+      <li>Invalid URL: published flag set but no URL present</li>
+      <li>Always generates DQScorecard with overall_score</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#4caf8a">Phase 1 · Analyzer 7</h3>
+    <div class="phase-title">Milestone Detector</div>
+    <ul>
+      <li>Record-breaking months: 10%+ above previous best</li>
+      <li>First-time threshold crossings (e.g., first 500 videos)</li>
+      <li>Volume milestones: 100, 250, 500, 1000, 2500, 5000</li>
+      <li>Perfect publish rates: first time &gt; 80%</li>
+      <li>Always severity = "low" (positive, balancing signal)</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#7ecfff">Phase 1.5</h3>
+    <div class="phase-title">Root Cause Decomposition</div>
+    <ul>
+      <li>Applied only to channel-level anomaly signals</li>
+      <li>Breaks down by: output_type, user, language</li>
+      <li>Calculates contribution % per sub-dimension driver</li>
+      <li>Stored in signal.root_cause_breakdown[]</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#7ecfff">Phase 2</h3>
+    <div class="phase-title">Entity Synthesizer</div>
+    <ul>
+      <li>Groups signals by (entity_type, entity_id)</li>
+      <li>3+ signals on same entity → SynthesisBundle</li>
+      <li>Bundle carries combined context and highest severity</li>
+      <li>1–2 signals → pass through as singles</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#7ecfff">Phase 3</h3>
+    <div class="phase-title">Follow-Up Tracker</div>
+    <ul>
+      <li>Compares current signals against 30-day history</li>
+      <li>new: first time seen · ongoing: seen before</li>
+      <li>worsening: severity increased since last run</li>
+      <li>Unchanged signals seen &lt;7 days ago → suppressed</li>
+      <li>Auto-generates "resolved" signals for recovered issues</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#7ecfff">Phase 4</h3>
+    <div class="phase-title">Signal Router</div>
+    <ul>
+      <li>anomaly / consecutive / cross_dim / milestone → watchlist</li>
+      <li>funnel / op_risk → pipeline</li>
+      <li>dq → data_governance</li>
+      <li>high/med KPI signals → kpi_insights (SparkKPI dots)</li>
+      <li>Auto-generates NLQ queries per signal for "Explore" links</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#b87af5">Phase 5</h3>
+    <div class="phase-title">LLM Narration (3 parallel)</div>
+    <ul>
+      <li><b>Urgent:</b> high/med anomalies + worsening — alert tone</li>
+      <li><b>Analytical:</b> trends, cross-dim, milestones — discovery tone</li>
+      <li><b>Operational:</b> op risks, DQ, funnel gaps — risk tone</li>
+      <li>LLM constraints: no severity changes, no invented causes, title ≤ 12 words</li>
+      <li>Template card fallback if LLM fails (non-blocking)</li>
+      <li>Separate sequential call for executive digest</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#f5a623">Phase 6</h3>
+    <div class="phase-title">Health Scoring</div>
+    <ul>
+      <li>publish_rate_score (40%) — vs fleet median</li>
+      <li>activity_score (30%) — month-to-month consistency</li>
+      <li>trend_score (20%) — direction of last 3 months</li>
+      <li>dq_score (10%) — record completeness</li>
+      <li>Grade: A (≥80) · B (60–79) · C (40–59) · D (&lt;40)</li>
+      <li>pulse_score = fleet-wide weighted average</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#e05c5c">Phase 7</h3>
+    <div class="phase-title">Assembly & Cache</div>
+    <ul>
+      <li>Routes InsightCards to 4 tabs + dashboard layer</li>
+      <li>Builds period_summary (MoM metric comparison)</li>
+      <li>Injects FunnelSummary and DQScorecard (always present)</li>
+      <li>Writes to insight_cache (stale-while-revalidate key)</li>
+      <li>Writes to insight_log (one row per card)</li>
+      <li>Updates pg_insight_history for next run's follow-up tracking</li>
+    </ul>
+  </div>
+
+  <div class="phase-card">
+    <h3 style="color:#7ecfff">Caching Strategy</h3>
+    <div class="phase-title">Stale-While-Revalidate</div>
+    <ul>
+      <li>Cache key: narrator:{client_id}</li>
+      <li>Stale threshold: 24 hours (configurable)</li>
+      <li>Fresh hit → return immediately, zero pipeline cost</li>
+      <li>Stale hit → return cached now + refresh in background</li>
+      <li>Cache miss → run full pipeline synchronously</li>
+    </ul>
+  </div>
+
+</div>
+
+<footer>
+  Insight Narrator · backend/intelligence/insight_narrator/ · Generated 2026-03-20
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#1e2235',
+      primaryTextColor: '#e2e6f0',
+      primaryBorderColor: '#3a3f55',
+      lineColor: '#5a6080',
+      secondaryColor: '#252a3d',
+      tertiaryColor: '#1a1d27',
+      background: '#1a1d27',
+      mainBkg: '#1e2235',
+      nodeBorder: '#3a3f55',
+      clusterBkg: '#181b28',
+      titleColor: '#e2e6f0',
+      edgeLabelBackground: '#1a1d27',
+      fontFamily: 'Segoe UI, system-ui, sans-serif',
+      fontSize: '13px'
+    },
+    flowchart: {
+      curve: 'basis',
+      padding: 20,
+      nodeSpacing: 40,
+      rankSpacing: 55,
+      useMaxWidth: false
+    }
+  });
+</script>
+</body>
+</html>

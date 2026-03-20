@@ -1,50 +1,34 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Newspaper, RefreshCw, AlertCircle, Clock } from 'lucide-react';
+import { Newspaper, RefreshCw, AlertCircle, Clock, Activity, Eye, GitBranch, Shield } from 'lucide-react';
 import { useProfile } from '@/lib/profiles';
-import { InsightCard } from '@/components/InsightCard';
-import type { InsightCardData } from '@/components/InsightCard';
+import type { NarratorResponseV2 } from '@/types/narrator';
+import { PulseTab } from '@/components/narrator/PulseTab';
+import { WatchlistTab } from '@/components/narrator/WatchlistTab';
+import { PipelineTab } from '@/components/narrator/PipelineTab';
+import { DataGovernanceTab } from '@/components/narrator/DataGovernanceTab';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '');
 const CLIENT_ID = 1;
 
-interface NarratorPayload {
-  client_id: number;
-  period: string;
-  generated_at: string;
-  data_as_of: string;
-  digest?: string | null;
-  insights: InsightCardData[];
+type TabId = 'pulse' | 'watchlist' | 'pipeline' | 'data_governance';
+
+interface TabDef {
+  id: TabId;
+  label: string;
+  icon: typeof Activity;
+  countKey?: string;
 }
+
+const TABS: TabDef[] = [
+  { id: 'pulse',           label: 'Pulse',                  icon: Activity },
+  { id: 'watchlist',       label: 'Watchlist & Patterns',   icon: Eye,         countKey: 'watchlist' },
+  { id: 'pipeline',        label: 'Pipeline & Operations',  icon: GitBranch,   countKey: 'pipeline' },
+  { id: 'data_governance', label: 'Data Governance',        icon: Shield,      countKey: 'dq' },
+];
 
 type LoadState = 'idle' | 'loading' | 'refreshing' | 'error';
-
-function SeveritySummary({ insights }: { insights: InsightCardData[] }) {
-  const high   = insights.filter(i => i.severity === 'high').length;
-  const medium = insights.filter(i => i.severity === 'medium').length;
-  const low    = insights.filter(i => i.severity === 'low').length;
-
-  return (
-    <div className="flex gap-3">
-      {high > 0 && (
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
-          {high} high
-        </span>
-      )}
-      {medium > 0 && (
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-          {medium} medium
-        </span>
-      )}
-      {low > 0 && (
-        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-          {low} low
-        </span>
-      )}
-    </div>
-  );
-}
 
 function formatRelativeTime(iso: string): string {
   const dt = new Date(iso);
@@ -59,10 +43,11 @@ function formatRelativeTime(iso: string): string {
 
 export default function NarratorPage() {
   const { profileDef } = useProfile();
-  const [data,        setData]        = useState<NarratorPayload | null>(null);
-  const [loadState,   setLoadState]   = useState<LoadState>('idle');
-  const [errorMsg,    setErrorMsg]    = useState<string>('');
-  const [triggerMsg,  setTriggerMsg]  = useState<string>('');
+  const [data,       setData]       = useState<NarratorResponseV2 | null>(null);
+  const [loadState,  setLoadState]  = useState<LoadState>('idle');
+  const [errorMsg,   setErrorMsg]   = useState('');
+  const [triggerMsg, setTriggerMsg] = useState('');
+  const [activeTab,  setActiveTab]  = useState<TabId>('pulse');
 
   const fetchInsights = useCallback(async (isRefresh = false) => {
     setLoadState(isRefresh ? 'refreshing' : 'loading');
@@ -74,9 +59,7 @@ export default function NarratorPage() {
       );
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const json = await res.json();
-      // The endpoint returns either the full payload or the cached insights dict
-      const payload: NarratorPayload = json.insights ? json : json;
-      setData(payload);
+      setData(json);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to load insights');
     } finally {
@@ -89,8 +72,9 @@ export default function NarratorPage() {
   async function triggerRun() {
     setTriggerMsg('');
     try {
+      const profile = profileDef?.key;
       const res = await fetch(
-        `${API_BASE}/narrator/run?client_id=${CLIENT_ID}`,
+        `${API_BASE}/narrator/run?client_id=${CLIENT_ID}${profile ? `&profile=${profile}` : ''}`,
         { method: 'POST' },
       );
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
@@ -101,30 +85,30 @@ export default function NarratorPage() {
   }
 
   const isLoading = loadState === 'loading';
-  const insights  = data?.insights ?? [];
 
   return (
-    <div className="min-h-screen p-8 space-y-8" style={{ background: 'var(--void)' }}>
+    <div className="min-h-screen p-8 space-y-6" style={{ background: 'var(--void)' }}>
 
-      {/* Page header */}
+      {/* ── Page header ── */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'var(--signal-dim)' }}>
+            <Newspaper className="w-5 h-5" style={{ color: 'var(--signal)' }} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Insight Narrator</h1>
-            <p className="text-muted-foreground text-sm">
-              Automatically surfaced anomalies, trends, and milestones · {profileDef.displayName}
+            <h1 className="text-2xl font-bold text-foreground">Intelligence Hub</h1>
+            <p className="text-sm" style={{ color: 'var(--on-mid)' }}>
+              Proactive fleet intelligence · {profileDef?.displayName ?? 'Default'}
+              {data && <> · Generated {formatRelativeTime(data.generated_at)}</>}
             </p>
           </div>
         </div>
-
         <div className="flex items-center gap-2">
           <button
             onClick={() => fetchInsights(true)}
             disabled={loadState !== 'idle'}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors disabled:opacity-50"
+            style={{ borderColor: 'var(--wire)', color: 'var(--on-mid)' }}
           >
             <RefreshCw className={`w-4 h-4 ${loadState === 'refreshing' ? 'animate-spin' : ''}`} />
             Refresh
@@ -132,7 +116,8 @@ export default function NarratorPage() {
           <button
             onClick={triggerRun}
             disabled={loadState !== 'idle'}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            style={{ background: 'var(--signal)', color: 'var(--on)' }}
           >
             Run Now
           </button>
@@ -140,66 +125,83 @@ export default function NarratorPage() {
       </div>
 
       {triggerMsg && (
-        <p className="text-sm text-muted-foreground bg-secondary/50 border border-border rounded-lg px-4 py-2">
+        <p className="text-sm px-4 py-2 rounded-lg border" style={{ color: 'var(--on-mid)', background: 'var(--surface)', borderColor: 'var(--wire)' }}>
           {triggerMsg}
         </p>
       )}
 
-      {/* Loading skeleton */}
+      {/* ── Loading skeleton ── */}
       {isLoading && (
         <div className="space-y-4">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-32 rounded-lg bg-secondary/30 animate-pulse" />
+            <div key={i} className="h-32 rounded-lg animate-pulse" style={{ background: 'var(--surface)' }} />
           ))}
         </div>
       )}
 
-      {/* Error */}
+      {/* ── Error ── */}
       {!isLoading && errorMsg && (
-        <div className="flex items-center gap-3 p-4 rounded-lg border border-red-500/30 bg-red-950/20 text-red-400">
+        <div className="flex items-center gap-3 p-4 rounded-lg border" style={{ borderColor: 'rgba(229,0,26,0.3)', background: 'rgba(229,0,26,0.05)', color: 'var(--signal)' }}>
           <AlertCircle className="w-5 h-5 shrink-0" />
           <p className="text-sm">{errorMsg}</p>
         </div>
       )}
 
-      {/* Content */}
+      {/* ── Content with tabs ── */}
       {!isLoading && !errorMsg && data && (
         <>
-          {/* Meta bar */}
-          <div className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-lg bg-secondary/30 border border-border/40">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="w-4 h-4" />
-              Generated {formatRelativeTime(data.generated_at)} · Period: {data.period}
-            </div>
-            <SeveritySummary insights={insights} />
+          {/* Tab navigation */}
+          <div className="flex items-center gap-1 border-b" style={{ borderColor: 'var(--wire)' }}>
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const Icon = tab.icon;
+              const count = tab.countKey ? ((data.summary_counts ?? {})[tab.countKey] ?? 0) : null;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className="relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors"
+                  style={{
+                    color: isActive ? 'var(--on)' : 'var(--on-low)',
+                    fontFamily: 'var(--font-condensed)',
+                    fontWeight: 600,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    fontSize: '0.7rem',
+                  }}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                  {count != null && count > 0 && (
+                    <span
+                      className="text-[0.55rem] font-mono font-bold px-1.5 py-0.5 rounded-full"
+                      style={{
+                        background: isActive ? 'var(--signal-dim)' : 'var(--surface-raise)',
+                        color: isActive ? 'var(--signal)' : 'var(--on-low)',
+                      }}
+                    >
+                      {count}
+                    </span>
+                  )}
+                  {/* Active underline */}
+                  {isActive && (
+                    <span
+                      className="absolute bottom-0 left-4 right-4 h-[2px]"
+                      style={{ background: 'var(--signal)' }}
+                    />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Weekly digest card */}
-          {data.digest && (
-            <div className="p-4 rounded-lg border border-primary/20 bg-primary/5 space-y-1">
-              <p className="text-xs font-semibold text-primary uppercase tracking-wide">Weekly Digest</p>
-              <p className="text-sm text-foreground leading-relaxed">{data.digest}</p>
-            </div>
-          )}
-
-          {/* Insight cards */}
-          {insights.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <Newspaper className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p className="font-medium">No new insights this period</p>
-              <p className="text-sm mt-1">Everything looks normal, or all recent anomalies were already surfaced.</p>
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {insights.map((card) => (
-                <InsightCard
-                  key={card.id}
-                  card={card}
-                  apiBaseUrl={API_BASE}
-                />
-              ))}
-            </div>
-          )}
+          {/* Tab content */}
+          <div className="pt-2">
+            {activeTab === 'pulse' && <PulseTab data={data} apiBaseUrl={API_BASE} />}
+            {activeTab === 'watchlist' && <WatchlistTab data={data} apiBaseUrl={API_BASE} />}
+            {activeTab === 'pipeline' && <PipelineTab data={data} apiBaseUrl={API_BASE} />}
+            {activeTab === 'data_governance' && <DataGovernanceTab data={data} apiBaseUrl={API_BASE} />}
+          </div>
         </>
       )}
     </div>

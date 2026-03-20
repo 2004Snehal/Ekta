@@ -1,17 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { ThumbsUp, ThumbsDown, TrendingUp, TrendingDown, AlertTriangle, GitCompare, Flag } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, TrendingUp, TrendingDown, AlertTriangle, GitCompare, Flag, Activity, Database, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface InsightCardData {
   id: string;
   title: string;
   body: string;
-  category: 'anomaly' | 'trend' | 'comparison' | 'milestone';
+  category: 'anomaly' | 'trend' | 'comparison' | 'milestone' | 'operational' | 'data_quality';
   severity: 'high' | 'medium' | 'low';
   metric_name: string;
-  entity_type: 'channel' | 'user' | 'language' | 'input_type';
+  entity_type: 'channel' | 'user' | 'language' | 'input_type' | 'output_type' | 'team' | 'fleet';
   entity_id: string;
   current_value: number;
   reference_value: number;
@@ -19,6 +19,13 @@ export interface InsightCardData {
   period: string;
   confidence: 'statistical' | 'contextual';
   root_cause_hint?: string | null;
+  // v2 fields (optional for backward compat)
+  status?: string;
+  suggested_action?: string | null;
+  insight_source?: string;
+  tab_destination?: string;
+  consecutive_periods?: number | null;
+  nlq_query?: string | null;
 }
 
 interface InsightCardProps {
@@ -39,18 +46,22 @@ const SEVERITY_BADGE = {
   low:    'bg-blue-500/20  text-blue-400  border border-blue-500/30',
 };
 
-const CATEGORY_BADGE = {
-  anomaly:    'bg-purple-500/20 text-purple-300 border border-purple-500/30',
-  trend:      'bg-cyan-500/20   text-cyan-300   border border-cyan-500/30',
-  comparison: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
-  milestone:  'bg-green-500/20  text-green-300  border border-green-500/30',
+const CATEGORY_BADGE: Record<string, string> = {
+  anomaly:      'bg-purple-500/20 text-purple-300 border border-purple-500/30',
+  trend:        'bg-cyan-500/20   text-cyan-300   border border-cyan-500/30',
+  comparison:   'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
+  milestone:    'bg-green-500/20  text-green-300  border border-green-500/30',
+  operational:  'bg-orange-500/20 text-orange-300 border border-orange-500/30',
+  data_quality: 'bg-teal-500/20   text-teal-300   border border-teal-500/30',
 };
 
-const CATEGORY_ICON = {
-  anomaly:    AlertTriangle,
-  trend:      TrendingUp,
-  comparison: GitCompare,
-  milestone:  Flag,
+const CATEGORY_ICON: Record<string, typeof AlertTriangle> = {
+  anomaly:      AlertTriangle,
+  trend:        TrendingUp,
+  comparison:   GitCompare,
+  milestone:    Flag,
+  operational:  Activity,
+  data_quality: Database,
 };
 
 function DeltaBadge({ delta_pct }: { delta_pct: number }) {
@@ -73,7 +84,7 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
   const [feedback, setFeedback] = useState<1 | -1 | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const CategoryIcon = CATEGORY_ICON[card.category];
+  const CategoryIcon = CATEGORY_ICON[card.category] ?? AlertTriangle;
 
   async function submitFeedback(value: 1 | -1) {
     if (feedback !== null || !insightId) return;
@@ -100,13 +111,23 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', CATEGORY_BADGE[card.category])}>
+          <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', CATEGORY_BADGE[card.category] ?? CATEGORY_BADGE.anomaly)}>
             <CategoryIcon className="w-3 h-3" />
             {card.category}
           </span>
           <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide', SEVERITY_BADGE[card.severity])}>
             {card.severity}
           </span>
+          {card.status && card.status !== 'new' && (
+            <span className={cn('text-[0.6rem] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider',
+              card.status === 'worsening' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+              card.status === 'ongoing' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
+              card.status === 'resolved' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+              'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+            )}>
+              {card.status}
+            </span>
+          )}
         </div>
         <DeltaBadge delta_pct={card.delta_pct} />
       </div>
@@ -141,12 +162,28 @@ export function InsightCard({ card, insightId, apiBaseUrl = '' }: InsightCardPro
         </p>
       )}
 
+      {/* Suggested action (v2) */}
+      {card.suggested_action && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded border-l-2" style={{ borderLeftColor: 'var(--ok)', background: 'var(--surface-raise)' }}>
+          <span className="text-xs font-semibold shrink-0" style={{ color: 'var(--on-low)', fontFamily: 'var(--font-condensed)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Action</span>
+          <p className="text-xs text-foreground">{card.suggested_action}</p>
+        </div>
+      )}
+
       {/* Footer: confidence + feedback */}
       <div className="flex items-center justify-between pt-1">
-        <span className="text-xs text-muted-foreground/60">
-          {card.confidence === 'statistical' ? 'Statistically detected' : 'Pattern-inferred'}
-          {' · '}{card.period}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground/60">
+            {card.confidence === 'statistical' ? 'Statistically detected' : 'Pattern-inferred'}
+            {' · '}{card.period}
+          </span>
+          {card.nlq_query && (
+            <a href={`/nlq?q=${encodeURIComponent(card.nlq_query)}`} className="inline-flex items-center gap-1 text-xs transition-colors" style={{ color: 'var(--uplink)' }}>
+              <ExternalLink className="w-3 h-3" />
+              Explore
+            </a>
+          )}
+        </div>
         {insightId && (
           <div className="flex gap-1">
             <button

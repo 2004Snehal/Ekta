@@ -72,25 +72,39 @@ export default function Dashboard() {
   const [shareStatus, setShareStatus] = useState<ShareStatus>('idle');
   const lastSavedState = useRef('');
 
-  // New: narrator insights for InsightBanner
+  // Narrator v2 data for InsightBanner + SparkKPI dots
   const [narratorInsights, setNarratorInsights] = useState<{ title: string; severity: 'high' | 'medium' | 'low'; body?: string }[]>([]);
+  const [kpiInsightMap, setKpiInsightMap] = useState<Record<string, 'high' | 'medium' | 'low'>>({});
 
-  // New: period comparison data for delta values on SparkKPIs
+  // Period comparison data for delta values on SparkKPIs
   const [periodDeltas, setPeriodDeltas] = useState<Record<string, number>>({});
 
-  /* ── Fetch narrator insights ─────────────────────────────── */
+  /* ── Fetch narrator insights (v2) ──────────────────────────── */
   useEffect(() => {
     if (!apiBaseUrl) return;
     fetch(`${apiBaseUrl}/narrator/insights?client_id=1`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
-        const raw = Array.isArray(data) ? data : (data.insights ?? []);
-        setNarratorInsights(raw.slice(0, 3).map((ins: any) => ({
-          title: ins.title ?? ins.headline ?? String(ins),
-          severity: ins.severity ?? ins.priority ?? 'medium',
-          body: ins.body ?? ins.description ?? undefined,
-        })));
+        // v2: use dashboard_banner for banner, kpi_insights for dots
+        const banner = data.dashboard_banner ?? data.insights ?? [];
+        setNarratorInsights(
+          (Array.isArray(banner) ? banner : []).slice(0, 3).map((ins: any) => ({
+            title: ins.title ?? ins.headline ?? String(ins),
+            severity: ins.severity ?? ins.priority ?? 'medium',
+            body: ins.body ?? ins.description ?? undefined,
+          }))
+        );
+        // Build KPI insight severity map from kpi_insights
+        const kpiIns = data.kpi_insights ?? [];
+        const kpiMap: Record<string, 'high' | 'medium' | 'low'> = {};
+        for (const ins of kpiIns) {
+          const key = ins.metric_name;
+          if (key && (!kpiMap[key] || ins.severity === 'high' || (ins.severity === 'medium' && kpiMap[key] === 'low'))) {
+            kpiMap[key] = ins.severity;
+          }
+        }
+        setKpiInsightMap(kpiMap);
       })
       .catch(() => {});
   }, [apiBaseUrl]);
@@ -312,6 +326,7 @@ export default function Dashboard() {
                 sparkData={sparklines[kpi.id] ?? []}
                 active={selectedKpiId === kpi.id}
                 onClick={() => setSelectedKpiId(kpi.id === selectedKpiId ? null : kpi.id)}
+                insightSeverity={kpiInsightMap[kpi.id] ?? null}
               />
             </div>
           ))
