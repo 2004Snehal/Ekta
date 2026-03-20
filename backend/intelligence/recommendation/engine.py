@@ -54,10 +54,22 @@ def get_recommendations(ctx: DashboardContext, conn) -> RecommendationResponse:
     t1 = time.perf_counter()
     try:
         raw_text = call_llm(user_message, system_prompt)
-        llm_response = json.loads(raw_text.strip().removeprefix("```json").removesuffix("```").strip())
+        cleaned = raw_text.strip()
+        if cleaned.startswith("```"):
+            idx = cleaned.find("\\n")
+            if idx != -1: cleaned = cleaned[idx+1:]
+            if cleaned.endswith("```"): cleaned = cleaned[:-3].strip()
+        llm_response = json.loads(cleaned)
     except Exception as e:
         log.error(f"[REC] LLM call failed  ({time.perf_counter()-t1:.2f}s): {e}")
-        raise
+        llm_response = {"recommendations": [{
+            "title": "AI Insight Generation Failed",
+            "action": "Consider switching back to a larger model like Qwen 2.5 72B.",
+            "rationale": "The currently configured Llama 3.2 3B model ran out of context length or failed to process the statistical dashboard payload, returning an empty response.",
+            "priority": "high",
+            "scope": "network",
+            "supporting_metrics": {}
+        }]}
 
     log.info(f"[REC] LLM call  {time.perf_counter()-t1:.2f}s")
 

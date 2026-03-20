@@ -254,7 +254,7 @@ export function IntelligencePanel({
       )}
 
       {/* ── Actions header with inline role selector ── */}
-      <div className="flex items-center gap-2" style={{ marginBottom: '12px', position: 'relative' }}>
+      <div className="flex items-center gap-2" style={{ marginBottom: '12px', position: 'relative', zIndex: 10 }}>
         <span style={{
           fontFamily: 'var(--font-condensed)',
           fontSize: '0.55rem',
