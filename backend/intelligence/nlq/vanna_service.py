@@ -17,7 +17,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from backend_config import VANNA_CHROMA_PATH
-from llm_config import QWEN_CODER_MODEL, LLM_API_KEY, LLM_BASE_URL
+from llm_config import (
+    QWEN_CODER_MODEL, LLM_API_KEY, LLM_BASE_URL,
+    LLM_MAX_TOKENS, LLM_TEMPERATURE
+)
 
 from intelligence.nlq.context import fetch_live_schema
 
@@ -52,6 +55,17 @@ def _build_vanna():
                 api_key=config.get("api_key"),
                 base_url=config.get("base_url"),
             )
+
+        def submit_prompt(self, prompt, **kwargs) -> str:
+            if prompt is None:
+                return ""
+            response = self.client.chat.completions.create(
+                model=self.config.get("model", "gpt-3.5-turbo"),
+                messages=prompt,
+                max_tokens=LLM_MAX_TOKENS,
+                temperature=self.config.get("temperature", LLM_TEMPERATURE),
+            )
+            return response.choices[0].message.content
 
         def extract_sql(self, llm_response: str) -> str:
             # Return the full LLM response so _parse_vanna_output can

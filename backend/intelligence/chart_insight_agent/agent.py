@@ -20,7 +20,7 @@ import sys
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from llm_config import QWEN_INSIGHT_MODEL, make_openai_client
+from llm_config import QWEN_INSIGHT_MODEL, make_openai_client, LLM_MAX_TOKENS
 
 from intelligence.chart_insight_agent.schemas import (
     ChartInsightRequest, ChartInsightResponse,
@@ -88,6 +88,7 @@ def _call_openrouter(user_message: str) -> dict[str, Any]:
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
+        max_tokens=LLM_MAX_TOKENS,
     )
     logger.debug("chart_insight_agent: OpenRouter responded")
     raw = json.loads(response.choices[0].message.content)

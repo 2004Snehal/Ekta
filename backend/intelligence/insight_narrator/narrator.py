@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from llm_config import QWEN_INSIGHT_MODEL, make_openai_client
+from llm_config import QWEN_INSIGHT_MODEL, make_openai_client, LLM_MAX_TOKENS
 
 from intelligence.insight_narrator.schemas import FlaggedMetric, InsightCard
 
@@ -121,6 +121,7 @@ def _openrouter_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTE
             {"role": "user",   "content": user_message},
         ],
         response_format={"type": "json_object"},
+        max_tokens=LLM_MAX_TOKENS,
     ))
     raw = json.loads(response.choices[0].message.content)
     # json_object may wrap the array in a top-level key

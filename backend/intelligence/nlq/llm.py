@@ -10,7 +10,7 @@ import os
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from llm_config import QWEN_CODER_MODEL, make_openai_client
+from llm_config import QWEN_CODER_MODEL, make_openai_client, LLM_MAX_TOKENS, LLM_TEMPERATURE
 
 logger = logging.getLogger("nlq.llm")
 
@@ -61,7 +61,8 @@ def _call_openrouter_text(prompt: str, system: str = None) -> str:
     response = client.chat.completions.create(
         model=QWEN_CODER_MODEL,
         messages=messages,
-        temperature=0.2,
+        temperature=LLM_TEMPERATURE,
+        max_tokens=LLM_MAX_TOKENS,
     )
     return response.choices[0].message.content.strip()
 

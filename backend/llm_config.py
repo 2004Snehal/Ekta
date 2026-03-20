@@ -19,10 +19,14 @@ LLM_BASE_URL = "https://openrouter.ai/api/v1"
 # ── Change model names here ───────────────────────────────────────────────────
 
 # NLQ / SQL generation (Vanna), LIDA, KPI registry, answer generation
-QWEN_CODER_MODEL   = "qwen/qwen3-next-80b-a3b-instruct:free"
+QWEN_CODER_MODEL   = "qwen/qwen3-coder-next"
 
 # Insight Narrator, Chart Insight Agent
-QWEN_INSIGHT_MODEL = "qwen/qwen3-next-80b-a3b-instruct:free"
+QWEN_INSIGHT_MODEL = "qwen/qwen3.5-9b"
+
+# Global Parameters
+LLM_MAX_TOKENS     = 4096
+LLM_TEMPERATURE    = 0.2
 
 # ─────────────────────────────────────────────────────────────────────────────
 
