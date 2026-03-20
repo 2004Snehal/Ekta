@@ -96,8 +96,9 @@ export default function NarratorPage() {
   const [severityFilter, setSeverityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [entityFilter,   setEntityFilter]   = useState<string | null>(null);
-  const [expandedIds,    setExpandedIds]    = useState<Set<string>>(new Set());
-  const [dqExpanded,     setDqExpanded]     = useState(false);
+  const [expandedIds,      setExpandedIds]      = useState<Set<string>>(new Set());
+  const [periodExpanded,   setPeriodExpanded]   = useState(false);
+  const [dqExpanded,       setDqExpanded]       = useState(false);
 
   const fetchInsights = useCallback(async (isRefresh = false) => {
     setLoadState(isRefresh ? 'refreshing' : 'loading');
@@ -627,7 +628,7 @@ export default function NarratorPage() {
           {(resolved.length > 0 || data.period_summary) && (
             <div style={{ border: '1px solid var(--wire)' }}>
               <button
-                onClick={() => setDqExpanded(p => !p)}
+                onClick={() => setPeriodExpanded(p => !p)}
                 className="flex items-center justify-between w-full px-4 py-3"
                 style={{
                   background: 'var(--surface)',
@@ -646,10 +647,10 @@ export default function NarratorPage() {
                 }}>
                   Period Summary {resolved.length > 0 && `· ${resolved.length} resolved`}
                 </span>
-                {dqExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                {periodExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               </button>
 
-              {dqExpanded && (
+              {periodExpanded && (
                 <div style={{ padding: '16px', borderTop: '1px solid var(--wire)' }}>
                   {/* Period metrics comparison */}
                   {data.period_summary?.metrics && data.period_summary.metrics.length > 0 && (

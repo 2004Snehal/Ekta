@@ -90,7 +90,11 @@ def _call_openrouter(user_message: str, system_prompt: str = _SYSTEM_PROMPT) -> 
         max_tokens=LLM_MAX_TOKENS,
     )
     logger.debug("chart_insight_agent: OpenRouter responded")
-    raw = json.loads(response.choices[0].message.content)
+    content = response.choices[0].message.content
+    if not content:
+        finish = response.choices[0].finish_reason
+        raise ValueError(f"LLM returned empty content (finish_reason={finish!r})")
+    raw = json.loads(content)
     if isinstance(raw.get("insights"), list):
         return raw
     for val in raw.values():
@@ -127,7 +131,11 @@ def _call_openrouter_description(user_message: str) -> dict:
         ],
         response_format={"type": "json_object"},
     )
-    return json.loads(response.choices[0].message.content)
+    content = response.choices[0].message.content
+    if not content:
+        finish = response.choices[0].finish_reason
+        raise ValueError(f"LLM returned empty content for description (finish_reason={finish!r})")
+    return json.loads(content)
 
 
 def generate_chart_description(req: ChartDescriptionRequest) -> ChartDescriptionResponse:
