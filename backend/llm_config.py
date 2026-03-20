@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 LLM_API_KEY  = os.getenv("LLM_API_KEY", "")
-LLM_BASE_URL = "https://api.together.xyz/v1"
+LLM_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ── Change model names here ───────────────────────────────────────────────────
 
