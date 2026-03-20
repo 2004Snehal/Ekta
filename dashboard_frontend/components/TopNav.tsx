@@ -19,6 +19,7 @@ const TOOL_LINKS = [
   { href: '/query',    label: 'NLQ' },
   { href: '/narrator', label: 'Insights' },
   { href: '/kpi-lab',  label: 'KPI Lab' },
+  { href: '/workspace', label: 'Workspace' },
 ];
 
 export function TopNav() {

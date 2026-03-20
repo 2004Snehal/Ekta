@@ -7,6 +7,7 @@ import { KPIDetailModal } from '@/components/KPIDetailModal';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { Filters } from '@/components/Filters';
 import { IntelligencePanel } from '@/components/IntelligencePanel';
+import { WorkspacePanel } from '@/components/WorkspacePanel';
 import {
   buildDashboardCharts,
   buildDashboardKpiDetails,
@@ -30,9 +31,20 @@ import type {
   DashboardStatePayload,
 } from '@/types/dashboard';
 
-const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
-const USER_ID    = process.env.NEXT_PUBLIC_DASHBOARD_USER_ID ?? 'demo-user';
-const STORAGE_KEY = `dashboard-state:${USER_ID}`;
+const API          = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
+const USER_ID      = process.env.NEXT_PUBLIC_DASHBOARD_USER_ID ?? 'demo-user';
+const STORAGE_KEY  = `dashboard-state:${USER_ID}`;
+
+const DEFAULT_VISIBLE_KPI_IDS: string[] = [
+  'uploaded_videos', 'processed_videos', 'published_videos', 'publish_rate', 'average_duration',
+];
+
+const BUILTIN_CHART_NAMES = [
+  'Videos by Channel', 'Daily Upload Trend', 'Language Distribution', 'Content by Type',
+];
+
+interface CtxMenu { x: number; y: number; type: 'kpi' | 'chart'; targetId: string | number }
+interface RegistryKpi { id: string; name: string; current_value: unknown; unit?: string; }
 
 type ShareStatus = 'idle' | 'saving' | 'copied';
 
@@ -40,7 +52,6 @@ function getRequiredDataRange(range: DashboardDateRange): DashboardDateRange {
   return range === 'all-time' ? 'all-time' : 'last-90-days';
 }
 
-/** Build a simple 12-point sparkline from filtered records bucketed by the last N periods */
 function buildSparkline(records: DashboardRecord[], key: 'uploadedVideos' | 'processedVideos' | 'publishedVideos', buckets = 12): number[] {
   if (records.length === 0) return [];
   const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date));
@@ -54,30 +65,42 @@ function buildSparkline(records: DashboardRecord[], key: 'uploadedVideos' | 'pro
 }
 
 export default function Dashboard() {
-  const router = useRouter();
+  const router     = useRouter();
   const apiBaseUrl = API;
-  const [filters, setFilters]         = useState<DashboardFilters>(DEFAULT_FILTERS);
+
+  // Core state
+  const [filters, setFilters]               = useState<DashboardFilters>(DEFAULT_FILTERS);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [allRecords, setAllRecords]   = useState<DashboardRecord[]>([]);
-  const [loadedRange, setLoadedRange] = useState<DashboardDateRange | null>(null);
-  const [filterFields, setFilterFields] = useState(() => normalizeFilterFields(createMockDashboardRecords('last-90-days')));
-  const [dataSource, setDataSource]   = useState<'live' | 'mock'>('mock');
-  const [stateSource, setStateSource] = useState<'api' | 'local'>('local');
-  const [isLoading, setIsLoading]     = useState(true);
-  const [selectedKpiId, setSelectedKpiId] = useState<DashboardKpiId | null>(null);
-  const [stateReady, setStateReady]   = useState(false);
-  const [shareStatus, setShareStatus] = useState<ShareStatus>('idle');
+  const [allRecords, setAllRecords]         = useState<DashboardRecord[]>([]);
+  const [loadedRange, setLoadedRange]       = useState<DashboardDateRange | null>(null);
+  const [filterFields, setFilterFields]     = useState(() => normalizeFilterFields(createMockDashboardRecords('last-90-days')));
+  const [dataSource, setDataSource]         = useState<'live' | 'mock'>('mock');
+  const [isLoading, setIsLoading]           = useState(true);
+  const [selectedKpiId, setSelectedKpiId]   = useState<DashboardKpiId | null>(null);
+  const [stateReady, setStateReady]         = useState(false);
+  const [shareStatus, setShareStatus]       = useState<ShareStatus>('idle');
   const lastSavedState = useRef('');
 
-  // Narrator v2 data for InsightBanner + SparkKPI dots
-  const [narratorInsights, setNarratorInsights] = useState<{ title: string; severity: 'high' | 'medium' | 'low'; body?: string }[]>([]);
+  // Narrator
   const [kpiInsightMap, setKpiInsightMap] = useState<Record<string, 'high' | 'medium' | 'low'>>({});
-  const [narratorData, setNarratorData] = useState<{ digest?: string | null; dashboard_banner?: any[] } | null>(null);
+  const [narratorData, setNarratorData]   = useState<{ digest?: string | null; dashboard_banner?: unknown[] } | null>(null);
+  const [periodDeltas, setPeriodDeltas]   = useState<Record<string, number>>({});
 
-  // Period comparison data for delta values on SparkKPIs
-  const [periodDeltas, setPeriodDeltas] = useState<Record<string, number>>({});
+  // Workspace / customisation
+  const [visibleKpiIds, setVisibleKpiIds]             = useState<string[]>(DEFAULT_VISIBLE_KPI_IDS);
+  const [visibleGraphIndices, setVisibleGraphIndices] = useState<number[]>([0, 1, 2, 3]);
+  const [showWorkspace, setShowWorkspace]             = useState(false);
+  const [registryKpiMap, setRegistryKpiMap]           = useState<Record<string, RegistryKpi>>({});
 
-  /* ── Fetch narrator insights (v2) ──────────────────────────── */
+  // KPI picker
+  const [showKpiPicker, setShowKpiPicker]     = useState(false);
+  const [allRegistryKpis, setAllRegistryKpis] = useState<RegistryKpi[]>([]);
+  const [kpiPickerLoading, setKpiPickerLoading] = useState(false);
+
+  // Context menu
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+
+  /* ── Narrator insights ───────────────────────────────── */
   useEffect(() => {
     if (!apiBaseUrl) return;
     fetch(`${apiBaseUrl}/narrator/insights?client_id=1`)
@@ -85,30 +108,19 @@ export default function Dashboard() {
       .then(data => {
         if (!data) return;
         setNarratorData(data);
-        // v2: use dashboard_banner for banner, kpi_insights for dots
-        const banner = data.dashboard_banner ?? data.insights ?? [];
-        setNarratorInsights(
-          (Array.isArray(banner) ? banner : []).slice(0, 3).map((ins: any) => ({
-            title: ins.title ?? ins.headline ?? String(ins),
-            severity: ins.severity ?? ins.priority ?? 'medium',
-            body: ins.body ?? ins.description ?? undefined,
-          }))
-        );
-        // Build KPI insight severity map from kpi_insights
         const kpiIns = data.kpi_insights ?? [];
         const kpiMap: Record<string, 'high' | 'medium' | 'low'> = {};
         for (const ins of kpiIns) {
           const key = ins.metric_name;
-          if (key && (!kpiMap[key] || ins.severity === 'high' || (ins.severity === 'medium' && kpiMap[key] === 'low'))) {
+          if (key && (!kpiMap[key] || ins.severity === 'high' || (ins.severity === 'medium' && kpiMap[key] === 'low')))
             kpiMap[key] = ins.severity;
-          }
         }
         setKpiInsightMap(kpiMap);
       })
       .catch(() => {});
   }, [apiBaseUrl]);
 
-  /* ── Fetch period deltas for SparkKPI ────────────────────── */
+  /* ── Period deltas ───────────────────────────────────── */
   useEffect(() => {
     if (!apiBaseUrl) return;
     fetch(`${apiBaseUrl}/analytics/period-compare?client_id=1&period=month`)
@@ -116,17 +128,25 @@ export default function Dashboard() {
       .then(data => {
         if (!data?.deltas) return;
         setPeriodDeltas({
-          uploaded_videos:  data.deltas.count_pct ?? 0,
+          uploaded_videos: data.deltas.count_pct ?? 0,
           processed_videos: data.deltas.count_pct ?? 0,
           published_videos: data.deltas.published_pct ?? 0,
-          publish_rate:     data.deltas.publish_rate_delta ?? 0,
+          publish_rate: data.deltas.publish_rate_delta ?? 0,
           average_duration: data.deltas.duration_pct ?? 0,
         });
       })
       .catch(() => {});
   }, [apiBaseUrl]);
 
-  /* ── Share ──────────────────────────────────────────── */
+  /* ── Close context menu on outside click ────────────── */
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const h = () => setCtxMenu(null);
+    window.addEventListener('click', h);
+    return () => window.removeEventListener('click', h);
+  }, [ctxMenu]);
+
+  /* ── Share ───────────────────────────────────────────── */
   async function handleShare() {
     if (!apiBaseUrl || shareStatus !== 'idle') return;
     setShareStatus('saving');
@@ -135,7 +155,7 @@ export default function Dashboard() {
       const res = await fetch(`${apiBaseUrl}/dashboard/state`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('save failed');
+      if (!res.ok) throw new Error();
       const { state_id } = await res.json() as { state_id: string };
       await navigator.clipboard.writeText(`${window.location.origin}/dashboard?state=${state_id}`);
       setShareStatus('copied');
@@ -143,48 +163,53 @@ export default function Dashboard() {
     } catch { setShareStatus('idle'); }
   }
 
-  /* ── State hydration ────────────────────────────────── */
+  /* ── Hydration ───────────────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
     const hydrate = async () => {
       let restored: DashboardStatePayload | null = null;
-
       if (typeof window !== 'undefined' && apiBaseUrl) {
-        const stateId = new URLSearchParams(window.location.search).get('state');
+        const params = new URLSearchParams(window.location.search);
+        const stateId     = params.get('state');
+        const loadDashId  = params.get('load_dashboard');
+
         if (stateId) {
           try {
             const res = await fetch(`${apiBaseUrl}/dashboard/state/${stateId}`, { cache: 'no-store' });
-            if (res.ok) { restored = await res.json() as DashboardStatePayload; if (!cancelled) setStateSource('api'); }
+            if (res.ok) { restored = await res.json() as DashboardStatePayload; if (!cancelled) {} }
           } catch { /* fallthrough */ }
         }
-      }
 
+        if (loadDashId && !cancelled) {
+          try {
+            const res = await fetch(`${apiBaseUrl}/workspace/dashboards/${loadDashId}`, { cache: 'no-store' });
+            if (res.ok) {
+              const d = await res.json() as { visible_kpi_ids: string[]; graphs: { source: string; index: number }[] };
+              const indices = d.graphs.filter(g => g.source === 'builtin' && typeof g.index === 'number').map(g => g.index);
+              if (d.visible_kpi_ids.length > 0) setVisibleKpiIds(d.visible_kpi_ids);
+              if (indices.length > 0) setVisibleGraphIndices(indices);
+            }
+          } catch { /* ignore */ }
+        }
+      }
       if (!restored && typeof window !== 'undefined') {
         const local = window.localStorage.getItem(STORAGE_KEY);
         if (local) {
-          try { restored = JSON.parse(local) as DashboardStatePayload; if (!cancelled) setStateSource('local'); }
+          try { restored = JSON.parse(local) as DashboardStatePayload; }
           catch { window.localStorage.removeItem(STORAGE_KEY); }
         }
       }
-
       if (!restored && apiBaseUrl) {
         try {
           const res = await fetch(`${apiBaseUrl}/dashboard/state?user_id=${encodeURIComponent(USER_ID)}`, { cache: 'no-store' });
           if (res.ok) {
             const p = await res.json() as DashboardStatePayload | { state?: DashboardStatePayload };
             restored = 'state' in p && p.state ? p.state : (p as DashboardStatePayload);
-            if (!cancelled) setStateSource('api');
           }
         } catch { /* no remote state */ }
       }
-
       if (!cancelled && restored) {
-        const restoredFilters = {
-          ...DEFAULT_FILTERS,
-          ...restored.filters,
-          extraFilters: (restored.filters?.extraFilters ?? []).filter((ef) => ef.value && ef.value !== 'all'),
-        };
-        setFilters(restoredFilters);
+        setFilters({ ...DEFAULT_FILTERS, ...restored.filters, extraFilters: (restored.filters?.extraFilters ?? []).filter(ef => ef.value && ef.value !== 'all') });
         setFiltersExpanded(restored.filtersExpanded);
         setSelectedKpiId(restored.selectedKpiId ?? null);
       }
@@ -194,27 +219,20 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [apiBaseUrl]);
 
-  /* ── Data load ──────────────────────────────────────── */
+  /* ── Data load ───────────────────────────────────────── */
   useEffect(() => {
     if (!stateReady) return;
     const reqRange = getRequiredDataRange(filters.dateRange);
     if (supportsRange(loadedRange, reqRange) && allRecords.length > 0) return;
-
     let cancelled = false;
     const load = async () => {
       setIsLoading(true);
       if (apiBaseUrl) {
         try {
           const res = await fetch(`${apiBaseUrl}/dashboard?user_id=${encodeURIComponent(USER_ID)}&date_range=${encodeURIComponent(reqRange)}`, { cache: 'no-store' });
-          if (!res.ok) throw new Error('failed');
+          if (!res.ok) throw new Error();
           const payload = await res.json() as DashboardDatasetResponse;
-          if (!cancelled) {
-            setAllRecords(payload.records ?? []);
-            setFilterFields(normalizeFilterFields(payload.records ?? [], payload.filter_fields));
-            setLoadedRange(payload.requested_range ?? reqRange);
-            setDataSource('live');
-            setIsLoading(false);
-          }
+          if (!cancelled) { setAllRecords(payload.records ?? []); setFilterFields(normalizeFilterFields(payload.records ?? [], payload.filter_fields)); setLoadedRange(payload.requested_range ?? reqRange); setDataSource('live'); setIsLoading(false); }
           return;
         } catch { if (!cancelled) setDataSource('mock'); }
       }
@@ -225,7 +243,7 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [allRecords.length, apiBaseUrl, filters.dateRange, loadedRange, stateReady]);
 
-  /* ── State persistence ──────────────────────────────── */
+  /* ── State persistence — localStorage only ───────────── */
   useEffect(() => {
     if (!stateReady || !loadedRange) return;
     const next = createDashboardState(USER_ID, filters, filtersExpanded, loadedRange, selectedKpiId ?? undefined);
@@ -233,197 +251,262 @@ export default function Dashboard() {
     if (ser === lastSavedState.current) return;
     lastSavedState.current = ser;
     if (typeof window !== 'undefined') window.localStorage.setItem(STORAGE_KEY, ser);
-    if (apiBaseUrl) void fetch(`${apiBaseUrl}/dashboard/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ser }).catch(() => undefined);
-  }, [apiBaseUrl, filters, filtersExpanded, loadedRange, selectedKpiId, stateReady]);
+    // NOT auto-saved to API — use Workspace to save dashboards explicitly
+  }, [filters, filtersExpanded, loadedRange, selectedKpiId, stateReady]);
 
-  /* ── Derived data ───────────────────────────────────── */
+  /* ── KPI picker ──────────────────────────────────────── */
+  async function openKpiPicker() {
+    setShowKpiPicker(true);
+    if (allRegistryKpis.length > 0 || !apiBaseUrl) return;
+    setKpiPickerLoading(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/kpi-lab/registry`);
+      if (res.ok) { const d = await res.json() as { kpis: RegistryKpi[] }; setAllRegistryKpis(d.kpis ?? []); }
+    } catch { /* ignore */ }
+    setKpiPickerLoading(false);
+  }
+
+  function addKpiFromRegistry(kpi: RegistryKpi) {
+    if (visibleKpiIds.includes(kpi.id)) return;
+    setRegistryKpiMap(prev => ({ ...prev, [kpi.id]: kpi }));
+    setVisibleKpiIds(prev => [...prev, kpi.id]);
+  }
+
+  /* ── Load saved workspace dashboard ─────────────────── */
+  function handleLoadDashboard(kpiIds: string[], graphIndices: number[]) {
+    setVisibleKpiIds(kpiIds.length > 0 ? kpiIds : DEFAULT_VISIBLE_KPI_IDS);
+    setVisibleGraphIndices(graphIndices.length > 0 ? graphIndices : [0, 1, 2, 3]);
+    const registryIds = kpiIds.filter(id => !DEFAULT_VISIBLE_KPI_IDS.includes(id));
+    registryIds.forEach(id => {
+      if (registryKpiMap[id] || !apiBaseUrl) return;
+      fetch(`${apiBaseUrl}/kpi-lab/registry/${id}`).then(r => r.ok ? r.json() : null).then(k => { if (k) setRegistryKpiMap(prev => ({ ...prev, [id]: k as RegistryKpi })); }).catch(() => {});
+    });
+  }
+
+  /* ── Derived data ────────────────────────────────────── */
   const filteredRecords = useMemo(() => filterDashboardRecords(allRecords, filters), [allRecords, filters]);
   const filterOptions   = useMemo(() =>
-    Object.fromEntries(filterFields.map((f) => [f.key, getFilterOptions(filterDashboardRecords(allRecords, filters, { ignoreField: f.key }), f.key)])),
+    Object.fromEntries(filterFields.map(f => [f.key, getFilterOptions(filterDashboardRecords(allRecords, filters, { ignoreField: f.key }), f.key)])),
     [allRecords, filterFields, filters]);
-  const kpis            = useMemo(() => buildDashboardKpis(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
-  const kpiDetails      = useMemo(() => buildDashboardKpiDetails(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
-  const charts          = useMemo(() => buildDashboardCharts(filteredRecords), [filteredRecords]);
+  const kpis         = useMemo(() => buildDashboardKpis(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
+  const kpiDetails   = useMemo(() => buildDashboardKpiDetails(allRecords, filteredRecords, filters), [allRecords, filteredRecords, filters]);
+  const charts       = useMemo(() => buildDashboardCharts(filteredRecords), [filteredRecords]);
   const selectedKpiDetail = selectedKpiId ? kpiDetails[selectedKpiId] ?? null : null;
-  const dataReady       = !isLoading && filteredRecords.length > 0;
+  const dataReady    = !isLoading && filteredRecords.length > 0;
 
-  // Build sparklines per KPI from filtered records
   const sparklines = useMemo(() => ({
     uploaded_videos:  buildSparkline(filteredRecords, 'uploadedVideos'),
     processed_videos: buildSparkline(filteredRecords, 'processedVideos'),
     published_videos: buildSparkline(filteredRecords, 'publishedVideos'),
     publish_rate:     buildSparkline(filteredRecords, 'publishedVideos'),
-    average_duration: [],
+    average_duration: [] as number[],
   }), [filteredRecords]);
 
-  // Enrich charts with drill-down metadata and ref links
-  const enrichedCharts = useMemo(() => {
-    return charts.map((chart, idx) => {
-      const enriched = { ...chart };
-      if (idx < 2) {
-        enriched.refLinks = [
-          { label: 'View in Usage', href: '/dashboard/usage?from=summary' },
-        ];
-      } else {
-        const xKey = chart.axes?.x?.field ?? chart.x ?? chart.category ?? '';
-        if (xKey) {
-          enriched.drillDown = {
-            dimensionKey: xKey,
-            targetPage: '/dashboard/analysis',
-            targetParam: 'dim1',
-          };
-        }
-        enriched.refLinks = [
-          { label: 'See Funnel', href: buildDrillUrl('/dashboard/funnel', { group_by: xKey || 'channel', from: 'summary' }) },
-        ];
-      }
-      return enriched;
-    });
-  }, [charts]);
+  const enrichedCharts = useMemo(() => charts.map((chart, idx) => {
+    const enriched = { ...chart };
+    if (idx < 2) {
+      enriched.refLinks = [{ label: 'View in Usage', href: '/dashboard/usage?from=summary' }];
+    } else {
+      const xKey = chart.axes?.x?.field ?? chart.x ?? chart.category ?? '';
+      if (xKey) enriched.drillDown = { dimensionKey: xKey, targetPage: '/dashboard/analysis', targetParam: 'dim1' };
+      enriched.refLinks = [{ label: 'See Funnel', href: buildDrillUrl('/dashboard/funnel', { group_by: xKey || 'channel', from: 'summary' }) }];
+    }
+    return enriched;
+  }), [charts]);
+
+  const visibleBuiltinKpis   = useMemo(() => kpis.filter(k => visibleKpiIds.includes(k.id)), [kpis, visibleKpiIds]);
+  const visibleRegistryKpis  = useMemo(() => visibleKpiIds.filter(id => !DEFAULT_VISIBLE_KPI_IDS.includes(id)).map(id => registryKpiMap[id]).filter((k): k is RegistryKpi => !!k), [visibleKpiIds, registryKpiMap]);
+  const hiddenChartIndices   = useMemo(() => [0, 1, 2, 3].filter(i => !visibleGraphIndices.includes(i)), [visibleGraphIndices]);
 
   const handleChartClick = useCallback((dimensionKey: string, value: string) => {
-    router.push(buildDrillUrl('/dashboard/analysis', {
-      dim1: dimensionKey,
-      filter: { [dimensionKey]: value },
-      from: 'summary',
-    }));
+    router.push(buildDrillUrl('/dashboard/analysis', { dim1: dimensionKey, filter: { [dimensionKey]: value }, from: 'summary' }));
   }, [router]);
+
+  const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--void)' }}>
 
-      {/* ── Filter strip (sticky) ──────────────────────── */}
+      {/* Workspace panel */}
+      <WorkspacePanel isOpen={showWorkspace} onClose={() => setShowWorkspace(false)}
+        apiBaseUrl={apiBaseUrl} currentUserId={USER_ID}
+        visibleKpiIds={visibleKpiIds} visibleGraphIndices={visibleGraphIndices}
+        onLoadDashboard={handleLoadDashboard} />
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <div onClick={e => e.stopPropagation()} style={{
+          position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, background: 'var(--surface-raise)',
+          border: '1px solid var(--wire-hi)', zIndex: 2000, borderRadius: '2px', minWidth: '160px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        }}>
+          <button
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--surface-hi)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; }}
+            onClick={() => {
+              if (ctxMenu.type === 'kpi') {
+                setVisibleKpiIds(prev => prev.filter(id => id !== ctxMenu.targetId));
+                if (selectedKpiId === ctxMenu.targetId) setSelectedKpiId(null);
+              } else {
+                setVisibleGraphIndices(prev => prev.filter(i => i !== ctxMenu.targetId));
+              }
+              setCtxMenu(null);
+            }}
+            style={{ width: '100%', padding: '8px 14px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--on)', textAlign: 'left', ...mono, fontSize: '0.65rem', display: 'block' }}
+          >
+            Remove from Dashboard
+          </button>
+        </div>
+      )}
+
+      {/* KPI Picker */}
+      {showKpiPicker && (
+        <>
+          <div onClick={() => setShowKpiPicker(false)} style={{ position: 'fixed', inset: 0, zIndex: 998, background: 'rgba(0,0,0,0.4)' }} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+            background: 'var(--surface)', border: '1px solid var(--wire)', zIndex: 999,
+            width: '380px', maxHeight: '480px', display: 'flex', flexDirection: 'column', borderRadius: '2px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--wire)' }}>
+              <span style={{ ...mono, fontSize: '0.65rem', letterSpacing: '0.12em', color: 'var(--on-mid)', textTransform: 'uppercase' }}>Add KPI from Registry</span>
+              <button onClick={() => setShowKpiPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--on-mid)', ...mono, fontSize: '0.8rem' }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {kpiPickerLoading && <p style={{ padding: '12px 16px', fontSize: '0.75rem', color: 'var(--on-low)' }}>Loading registry…</p>}
+              {!kpiPickerLoading && allRegistryKpis.length === 0 && <p style={{ padding: '12px 16px', fontSize: '0.75rem', color: 'var(--on-low)' }}>No KPIs in registry. Create one in KPI Lab.</p>}
+              {allRegistryKpis.map(kpi => {
+                const already = visibleKpiIds.includes(kpi.id);
+                return (
+                  <div key={kpi.id} onClick={() => { if (!already) { addKpiFromRegistry(kpi); setShowKpiPicker(false); } }}
+                    style={{ padding: '9px 16px', cursor: already ? 'default' : 'pointer', opacity: already ? 0.45 : 1, borderBottom: '1px solid var(--wire)' }}
+                    onMouseEnter={e => { if (!already) (e.currentTarget as HTMLElement).style.background = 'var(--surface-hi)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; }}>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--on)', marginBottom: '2px' }}>{kpi.name}</div>
+                    <div style={{ ...mono, fontSize: '0.55rem', color: 'var(--on-low)' }}>
+                      {kpi.current_value != null ? `${String(kpi.current_value)}${kpi.unit ? ' ' + kpi.unit : ''}` : 'no value'}{already ? ' · already on dashboard' : ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Filter strip */}
       <div className="sticky top-11 z-40" style={{ background: 'var(--void)' }}>
-        <Filters
-          filters={filters}
-          filterFields={filterFields}
-          filterOptions={filterOptions}
-          isExpanded={filtersExpanded}
-          onExpandedChange={setFiltersExpanded}
-          onApply={setFilters}
-        />
+        <Filters filters={filters} filterFields={filterFields} filterOptions={filterOptions}
+          isExpanded={filtersExpanded} onExpandedChange={setFiltersExpanded} onApply={setFilters} />
       </div>
 
-      {/* ── KPI strip ─────────────────────────────────── */}
-      <div
-        className="flex"
-        style={{ borderBottom: '1px solid var(--wire)' }}
-      >
+      {/* KPI strip */}
+      <div className="flex" style={{ borderBottom: '1px solid var(--wire)' }}>
         {isLoading ? (
-          <div className="flex-1 px-6 py-8">
-            <div className="scan-loader" />
-          </div>
+          <div className="flex-1 px-6 py-8"><div className="scan-loader" /></div>
         ) : (
-          kpis.map((kpi, i) => (
-            <div key={kpi.id} className="flex" style={{ flex: 1 }}>
-              {i > 0 && <div className="wire-v" />}
-              <SparkKPI
-                title={kpi.title}
-                value={kpi.value}
-                delta={periodDeltas[kpi.id] ?? kpi.change ?? null}
-                sparkData={sparklines[kpi.id] ?? []}
-                active={selectedKpiId === kpi.id}
-                onClick={() => setSelectedKpiId(kpi.id === selectedKpiId ? null : kpi.id)}
-                insightSeverity={kpiInsightMap[kpi.id] ?? null}
-              />
+          <>
+            {visibleBuiltinKpis.map((kpi, i) => (
+              <div key={kpi.id} className="flex" style={{ flex: 1 }}
+                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, type: 'kpi', targetId: kpi.id }); }}
+                title="Right-click to remove">
+                {i > 0 && <div className="wire-v" />}
+                <SparkKPI title={kpi.title} value={kpi.value}
+                  delta={periodDeltas[kpi.id] ?? kpi.change ?? null}
+                  sparkData={sparklines[kpi.id as keyof typeof sparklines] ?? []}
+                  active={selectedKpiId === kpi.id}
+                  onClick={() => setSelectedKpiId(kpi.id === selectedKpiId ? null : kpi.id)}
+                  insightSeverity={kpiInsightMap[kpi.id] ?? null} />
+              </div>
+            ))}
+            {visibleRegistryKpis.map(kpi => (
+              <div key={kpi.id} className="flex" style={{ flex: 1 }}
+                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, type: 'kpi', targetId: kpi.id }); }}
+                title="Right-click to remove">
+                <div className="wire-v" />
+                <SparkKPI title={kpi.name} value={kpi.current_value != null ? String(kpi.current_value) : '—'} insightSeverity={null} />
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', padding: '0 10px', flexShrink: 0 }}>
+              <button onClick={() => void openKpiPicker()} title="Add a KPI from the registry"
+                style={{ background: 'none', border: '1px dashed var(--wire-hi)', cursor: 'pointer', color: 'var(--on-low)', padding: '4px 8px', borderRadius: '2px', ...mono, fontSize: '0.55rem', letterSpacing: '0.12em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                + KPI
+              </button>
             </div>
-          ))
+          </>
         )}
       </div>
 
-      {/* ── Status bar ────────────────────────────────── */}
-      <div
-        className="flex items-center gap-4 px-6 py-1.5 flex-wrap"
-        style={{ borderBottom: '1px solid var(--wire)' }}
-      >
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
-          USER:{USER_ID}
-        </span>
+      {/* Status bar */}
+      <div className="flex items-center gap-4 px-6 py-1.5 flex-wrap" style={{ borderBottom: '1px solid var(--wire)' }}>
+        <span style={{ ...mono, fontSize: '0.6rem', color: 'var(--on-low)' }}>USER:{USER_ID}</span>
         <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: dataSource === 'live' ? 'var(--ok)' : 'var(--on-low)' }}>
-          {dataSource === 'live' ? 'LIVE' : 'MOCK'}
-        </span>
+        <span style={{ ...mono, fontSize: '0.6rem', color: dataSource === 'live' ? 'var(--ok)' : 'var(--on-low)' }}>{dataSource === 'live' ? 'LIVE' : 'MOCK'}</span>
         <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
-          {filteredRecords.length.toLocaleString()} ROWS
-        </span>
+        <span style={{ ...mono, fontSize: '0.6rem', color: 'var(--on-low)' }}>{filteredRecords.length.toLocaleString()} ROWS</span>
         <span style={{ color: 'var(--wire-mid)', fontSize: '0.55rem' }}>·</span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
-          {getDisplayRangeLabel(filters.dateRange).toUpperCase()}
-        </span>
-
+        <span style={{ ...mono, fontSize: '0.6rem', color: 'var(--on-low)' }}>{getDisplayRangeLabel(filters.dateRange).toUpperCase()}</span>
         <div className="flex-1" />
-
         {apiBaseUrl && (
-          <span
-            className="action-text"
-            onClick={() => void handleShare()}
-            style={{ color: shareStatus === 'copied' ? 'var(--ok)' : shareStatus === 'saving' ? 'var(--warn)' : undefined }}
-          >
+          <span className="action-text" onClick={() => void handleShare()}
+            style={{ color: shareStatus === 'copied' ? 'var(--ok)' : shareStatus === 'saving' ? 'var(--warn)' : undefined }}>
             {shareStatus === 'copied' ? 'COPIED ✓' : shareStatus === 'saving' ? 'SAVING…' : 'SHARE ↗'}
           </span>
         )}
+        <span className="action-text" onClick={() => setShowWorkspace(true)}>WORKSPACE ↗</span>
       </div>
 
-      {/* ── Main content ──────────────────────────────── */}
+      {/* Empty state */}
       {!isLoading && filteredRecords.length === 0 && (
         <div className="px-6 py-12">
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--on-low)' }}>
-            — no rows match active filters. clear filters to repopulate.
-          </p>
+          <p style={{ ...mono, fontSize: '0.75rem', color: 'var(--on-low)' }}>— no rows match active filters. clear filters to repopulate.</p>
         </div>
       )}
 
+      {/* Main content */}
       {!isLoading && filteredRecords.length > 0 && (
         <div className="flex" style={{ minHeight: '600px' }}>
 
-          {/* Left: charts (65%) */}
+          {/* Charts (65%) */}
           <div style={{ flex: '0 0 65%', borderRight: '1px solid var(--wire)', padding: '24px 28px' }}>
 
-            {/* Section: Trends */}
-            <div style={{ marginBottom: '32px' }}>
-              {enrichedCharts.slice(0, 2).map((chart, i) => (
-                <div key={i} style={{ marginBottom: i === 0 ? '32px' : '0' }}>
-                  <ChartRenderer chart={chart} onElementClick={handleChartClick} />
-                </div>
-              ))}
+            {/* Hidden chart restore buttons */}
+            {hiddenChartIndices.length > 0 && (
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                {hiddenChartIndices.map(idx => (
+                  <button key={idx} onClick={() => setVisibleGraphIndices(prev => [...prev, idx].sort((a, b) => a - b))}
+                    style={{ border: '1px dashed var(--wire-hi)', background: 'none', cursor: 'pointer', color: 'var(--on-low)', padding: '4px 10px', borderRadius: '2px', ...mono, fontSize: '0.55rem', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                    + {BUILTIN_CHART_NAMES[idx]}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Charts */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+              {enrichedCharts.map((chart, idx) => {
+                if (!visibleGraphIndices.includes(idx)) return null;
+                return (
+                  <div key={idx}
+                    onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, type: 'chart', targetId: idx }); }}
+                    title="Right-click to remove">
+                    <ChartRenderer chart={chart} onElementClick={handleChartClick} />
+                  </div>
+                );
+              })}
             </div>
-
-            <div className="wire-h" style={{ marginBottom: '32px' }} />
-
-            {/* Section: Distribution */}
-            <div
-              className="grid"
-              style={{ gridTemplateColumns: '1fr 1fr', gap: '28px' }}
-            >
-              {enrichedCharts.slice(2, 4).map((chart, i) => (
-                <ChartRenderer key={i + 2} chart={chart} onElementClick={handleChartClick} />
-              ))}
-            </div>
-
           </div>
 
-          {/* Right: InsightBanner + recommendations (35%) */}
+          {/* Intelligence panel (35%) */}
           <div style={{ flex: '0 0 35%', padding: '24px 24px', position: 'sticky', top: '88px', alignSelf: 'flex-start', maxHeight: 'calc(100vh - 88px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-
-            <IntelligencePanel
-              apiBaseUrl={apiBaseUrl}
-              filters={filters}
-              kpis={kpis}
-              selectedKpiId={selectedKpiId}
-              dataReady={dataReady}
-              narratorData={narratorData}
-            />
+            <IntelligencePanel apiBaseUrl={apiBaseUrl} filters={filters} kpis={kpis}
+              selectedKpiId={selectedKpiId} dataReady={dataReady} narratorData={narratorData} />
           </div>
         </div>
       )}
 
-      {/* ── KPI detail modal ──────────────────────────── */}
-      <KPIDetailModal
-        open={Boolean(selectedKpiId && selectedKpiDetail)}
-        detail={selectedKpiDetail}
-        onOpenChange={(open) => { if (!open) setSelectedKpiId(null); }}
-      />
+      <KPIDetailModal open={Boolean(selectedKpiId && selectedKpiDetail)} detail={selectedKpiDetail}
+        onOpenChange={open => { if (!open) setSelectedKpiId(null); }} />
     </div>
   );
 }

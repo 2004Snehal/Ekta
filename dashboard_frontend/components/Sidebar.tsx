@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   LogOut,
   LogIn,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -54,6 +55,7 @@ export function Sidebar() {
     { href: '/query',      label: 'Natural Language Query',   icon: MessageSquare },
     { href: '/kpi-lab',    label: 'KPI Lab',                  icon: Zap },
     { href: '/data',       label: 'Data Manager',             icon: Database },
+    { href: '/workspace',  label: 'Workspace',                icon: Users },
   ];
 
   return (

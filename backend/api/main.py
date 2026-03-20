@@ -32,6 +32,7 @@ from api.routes import profiles
 from api.routes import auth as auth_route
 from api.routes import admin as admin_route
 from api.routes import kpi_registry as kpi_registry_route
+from api.routes import workspace as workspace_route
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ app.include_router(analytics.router,       tags=["Analytics"])
 app.include_router(auth_route.router,          tags=["Auth"])          # signup / login
 app.include_router(admin_route.router,         tags=["Admin"])         # admin console
 app.include_router(kpi_registry_route.router,  tags=["KPI Lab"])       # KPI registry CRUD + manual/agent creation
+app.include_router(workspace_route.router,     tags=["Workspace"])     # team directory + saved dashboards
 
 
 @app.get("/health")
