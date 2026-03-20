@@ -41,7 +41,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className={`${barlow.variable} ${barlowCondensed.variable} ${ibmPlexMono.variable} antialiased`}
-            style={{ background: 'var(--void)', color: 'var(--on)' }}>
+            style={{ background: 'var(--void)', color: 'var(--on)' }}
+            suppressHydrationWarning>
         <AuthProvider>
           <ProfileProvider>
             <TopNav />
