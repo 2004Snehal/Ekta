@@ -50,6 +50,7 @@ RULES (non-negotiable):
   "summary": string,
   "insights": [string, ...]
 }
+7. IMPORTANT: Ensure all strings use properly escaped quotes and avoid unescaped characters.
 """
 
 
@@ -94,7 +95,31 @@ def _call_openrouter(user_message: str, system_prompt: str = _SYSTEM_PROMPT) -> 
     if not content:
         finish = response.choices[0].finish_reason
         raise ValueError(f"LLM returned empty content (finish_reason={finish!r})")
-    raw = json.loads(content)
+    
+    # Clean markdown blocks if present (common with smaller/instruct models)
+    cleaned_content = content.strip()
+    if cleaned_content.startswith("```"):
+        # find the first newline to skip ```json
+        first_newline = cleaned_content.find("\\n")
+        if first_newline != -1:
+            cleaned_content = cleaned_content[first_newline+1:]
+        if cleaned_content.endswith("```"):
+            cleaned_content = cleaned_content[:-3].strip()
+            
+    try:
+        raw = json.loads(cleaned_content)
+    except Exception as e:
+        logger.warning("LLM JSON decode failed. Error: %s. Content: %s", e, cleaned_content)
+        # Fallback to prevent 500 error on the frontend
+        return {
+            "summary": "Model output formatting issue detected.",
+            "insights": [
+                "The Llama 3.2 3B model returned a malformed response.",
+                "Smaller models occasionally struggle with strict JSON formatting on complex charts.",
+                "Please retry or switch to a larger reasoning model."
+            ]
+        }
+        
     if isinstance(raw.get("insights"), list):
         return raw
     for val in raw.values():
@@ -135,7 +160,16 @@ def _call_openrouter_description(user_message: str) -> dict:
     if not content:
         finish = response.choices[0].finish_reason
         raise ValueError(f"LLM returned empty content for description (finish_reason={finish!r})")
-    return json.loads(content)
+    
+    cleaned_content = content.strip()
+    if cleaned_content.startswith("```"):
+        first_newline = cleaned_content.find("\\n")
+        if first_newline != -1:
+            cleaned_content = cleaned_content[first_newline+1:]
+        if cleaned_content.endswith("```"):
+            cleaned_content = cleaned_content[:-3].strip()
+            
+    return json.loads(cleaned_content)
 
 
 def generate_chart_description(req: ChartDescriptionRequest) -> ChartDescriptionResponse:
