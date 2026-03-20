@@ -173,16 +173,38 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
 
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // description is per-chart-mount — fetched once
   const descFetched = useRef(false);
-  // data insights keyed by data fingerprint — re-fetched when data changes
-  const dataCache = useRef<
-    Map<string, { summary: string; insights: string[] }>
-  >(new Map());
 
+  // ── sessionStorage-backed cache helpers ──────────────────────────────────
   function dataFingerprint(data: Record<string, unknown>[]): string {
     if (!data.length) return "empty";
     return `${data.length}|${JSON.stringify(data[0])}|${JSON.stringify(data[data.length - 1])}`;
+  }
+
+  function cacheKey(prefix: string, extra: string): string {
+    return `ci_${prefix}_${extra}`;
+  }
+
+  function getSessionCache(key: string): { summary: string; insights: string[] } | null {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  }
+
+  function setSessionCache(key: string, val: { summary: string; insights: string[] }) {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(val));
+    } catch {}
+  }
+
+  function getDescCache(key: string): string | null {
+    try { return sessionStorage.getItem(key); } catch { return null; }
+  }
+
+  function setDescCache(key: string, val: string) {
+    try { sessionStorage.setItem(key, val); } catch {}
   }
 
   const chartTitle = chart.title ?? chart.chart_type;
@@ -190,6 +212,15 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const fetchDescription = useCallback(async () => {
     if (descFetched.current) return;
     descFetched.current = true;
+
+    // Check sessionStorage first
+    const descCacheKey = cacheKey("desc", chartTitle);
+    const cachedDesc = getDescCache(descCacheKey);
+    if (cachedDesc) {
+      setDescription(cachedDesc);
+      return;
+    }
+
     setDescLoading(true);
     setDescError(false);
     try {
@@ -202,7 +233,9 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       const res = await fetch(`${API_BASE}/chart/description?${params}`);
       if (res.ok) {
         const json = await res.json();
-        setDescription(json.description ?? "");
+        const desc = json.description ?? "";
+        setDescription(desc);
+        setDescCache(descCacheKey, desc);
       } else {
         setDescError(true);
       }
@@ -216,17 +249,17 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const fetchDataInsights = useCallback(async () => {
     if (!chart.data?.length) return;
     const fp = dataFingerprint(chart.data as Record<string, unknown>[]);
-    const cached = dataCache.current.get(fp);
-    if (cached) {
+    const insightCacheKey = cacheKey("data", `${chartTitle}|${fp}`);
+
+    // Check sessionStorage first (skip empty/error entries)
+    const cached = getSessionCache(insightCacheKey);
+    if (cached && (cached.summary || cached.insights.length > 0) && !cached.summary?.startsWith("AI Insights temporarily")) {
       setInsightSummary(cached.summary);
       setInsightBullets(cached.insights);
-      if (!cached.summary && !cached.insights.length) {
-        setDataError(true);
-      } else {
-        setDataError(false);
-      }
+      setDataError(false);
       return;
     }
+
     setDataLoading(true);
     setDataError(false);
     setInsightSummary("");
@@ -250,15 +283,16 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
           summary: json.summary ?? "",
           insights: json.insights ?? [],
         };
-        dataCache.current.set(fp, entry);
+        // Only cache successful non-error responses
+        if (!entry.summary.startsWith("AI Insights temporarily")) {
+          setSessionCache(insightCacheKey, entry);
+        }
         setInsightSummary(entry.summary);
         setInsightBullets(entry.insights);
       } else {
-        dataCache.current.set(fp, { summary: '', insights: [] });
         setDataError(true);
       }
     } catch {
-      dataCache.current.set(fp, { summary: '', insights: [] });
       setDataError(true);
     } finally {
       setDataLoading(false);

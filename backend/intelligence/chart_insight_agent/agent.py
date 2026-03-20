@@ -219,8 +219,17 @@ def generate_chart_insights(req: ChartInsightRequest) -> ChartInsightResponse:
     )
 
     user_message = _format_data(req)
-    raw = _call_openrouter(user_message, system_prompt=effective_prompt)
-
+    try:
+        raw = _call_openrouter(user_message, system_prompt=effective_prompt)
+    except Exception as e:
+        logger.error("OpenRouter API error in chart_insight_agent: %s", e)
+        return ChartInsightResponse(
+            summary="AI Insights temporarily unavailable.",
+            insights=[
+                "The AI model failed to generate insights (API or billing error).",
+                str(e).split('\n')[0][:100] + "..."
+            ]
+        )
     n_insights = len(raw.get("insights", []))
     logger.info("chart_insight_agent: produced %d insight(s) for '%s'", n_insights, req.chart_title)
 
