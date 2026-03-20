@@ -48,11 +48,11 @@ def _retry(fn, retries: int = 3, backoff: float = 5.0):
 
 # ── LLM call (JSON array) ─────────────────────────────────────────────────────
 
-def _call_llm_json_array(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
+def _call_llm_json_array(user_message: str, system_prompt: str) -> list[dict]:
     return _openrouter_narrator(user_message, system_prompt=system_prompt)
 
 
-def _openrouter_narrator(user_message: str, system_prompt: str = _NARRATOR_SYSTEM) -> list[dict]:
+def _openrouter_narrator(user_message: str, system_prompt: str) -> list[dict]:
     client = make_openai_client()
     response = _retry(lambda: client.chat.completions.create(
         model=QWEN_INSIGHT_MODEL,

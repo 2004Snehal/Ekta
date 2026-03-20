@@ -33,19 +33,19 @@ def score_entity_health(
 
     # Build signal counts per entity
     signal_counts: dict[str, int] = defaultdict(int)
-    signal_top: dict[str, str] = {}  # entity_id → highest severity signal title
+    signal_top: dict[str, str] = {}       # entity_id → top signal title/action
+    signal_top_sev: dict[str, str] = {}   # entity_id → severity of top signal
     severity_rank = {"high": 3, "medium": 2, "low": 1}
 
     for sig in signals:
         key = sig.entity_id
         signal_counts[key] += 1
-        if key not in signal_top or severity_rank.get(sig.severity, 0) > severity_rank.get(
-            signal_top.get(key, {}).get("severity", "low"), 0
-        ):
+        if key not in signal_top or severity_rank.get(sig.severity, 0) > severity_rank.get(signal_top_sev.get(key, "low"), 0):
             signal_top[key] = sig.suggested_action or sig.metric_name
+            signal_top_sev[key] = sig.severity
 
     # Fleet-level stats for normalization
-    fleet_rates = [ch.get("publish_rate_pct", 0) or 0 for ch in bundle.channel_health]
+    fleet_rates = [float(ch.get("publish_rate_pct", 0) or 0) for ch in bundle.channel_health]
     fleet_median = sorted(fleet_rates)[len(fleet_rates) // 2] if fleet_rates else 50
 
     # Build monthly volumes per channel for consistency scoring
@@ -57,7 +57,7 @@ def score_entity_health(
     for ch in bundle.channel_health:
         ch_id = str(ch.get("channel_id"))
         ch_name = ch.get("channel_name", ch_id)
-        rate = ch.get("publish_rate_pct", 0) or 0
+        rate = float(ch.get("publish_rate_pct", 0) or 0)
 
         # Component 1: publish_rate_score (40%)
         pr_score = min(100, rate / max(fleet_median, 1) * 50 + 25)
