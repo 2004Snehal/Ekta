@@ -35,6 +35,7 @@ class VannaResult:
     y_column: Optional[str] = None
     title: Optional[str] = None
     answer_strategy: Optional[dict] = None
+    routing: Optional[dict] = None
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
@@ -209,15 +210,19 @@ _QUERY_OUTPUT_SUFFIX = """
 
 After writing the SQL, also output a JSON block fenced with ```json ... ``` containing:
 {
-  "chart_type": "line|bar|pie|table|stacked_bar",
-  "x": "<exact column alias from SELECT list for x-axis>",
-  "y": "<exact column alias from SELECT list for y-axis>",
-  "title": "<short descriptive chart title>",
-  "description": "<one sentence describing what the chart shows>",
-  "answer_strategy": {
-    "type": "time_series_trend|top_n_ranked|distribution|single_aggregate|detail_sample",
-    "focus": ["<aspect1>", "<aspect2>"]
-  }
+    "chart_type": "line|bar|pie|table|stacked_bar",
+    "x": "<exact column alias from SELECT list for x-axis>",
+    "y": "<exact column alias from SELECT list for y-axis>",
+    "title": "<short descriptive chart title>",
+    "description": "<one sentence describing what the chart shows>",
+    "answer_strategy": {
+        "type": "time_series_trend|top_n_ranked|distribution|single_aggregate|detail_sample",
+        "focus": ["<aspect1>", "<aspect2>"]
+    },
+    "routing": {
+        "requires_sql": true | false,
+        "direct_answer": "<short plain-English answer to return DIRECTLY when requires_sql is false>"
+    }
 }
 
 Chart type rules:
@@ -262,8 +267,9 @@ def generate_sql(
     Convert a natural language question to SQL using Vanna RAG.
     Returns VannaResult with sql + chart metadata + answer_strategy.
     """
+    logger.info("getting vanna")
     vn = get_vanna()
-
+    logger.info("vanna instance ready, building prompt")
     augmented = question
 
     # Inject previous SQL for follow-up questions
@@ -292,8 +298,9 @@ def generate_sql(
     logger.info("Vanna generating SQL for: '%s'", question)
     raw = _with_retry(vn, full_question)
     logger.info("Raw Vanna output:\n%s", raw)
-
+    print(f"[NLQ] Vanna raw output:\n{raw}")
     sql, chart_meta = _parse_vanna_output(raw)
+    print(f"[NLQ] Parsed SQL:\n{sql}\nChart metadata: {chart_meta}")
     return VannaResult(
         sql=sql,
         chart_type=chart_meta.get("chart_type"),
@@ -301,6 +308,7 @@ def generate_sql(
         y_column=chart_meta.get("y"),
         title=chart_meta.get("title"),
         answer_strategy=chart_meta.get("answer_strategy"),
+        routing=chart_meta.get("routing"),
     )
 
 
@@ -339,6 +347,18 @@ def _parse_vanna_output(raw: str) -> tuple:
         sql = re.sub(r"```\s*", "", sql)
         # If model added preamble text, try to find the SELECT statement
         select_match = re.search(r"(SELECT\b.*)", sql, re.DOTALL | re.IGNORECASE)
-        sql = select_match.group(1).strip() if select_match else sql.strip()
+        if select_match:
+            sql = select_match.group(1).strip()
+        else:
+            sql = sql.strip()
+
+    # If we still don't see any SELECT in the parsed SQL, assume this is a
+    # general/direct answer rather than executable SQL and set routing hints
+    if not re.search(r"\bSELECT\b", sql, re.IGNORECASE):
+        routing = chart_meta.get("routing") or {}
+        routing.setdefault("requires_sql", False)
+        # Use the raw (JSON-stripped) text as the direct answer payload
+        routing.setdefault("direct_answer", raw.strip())
+        chart_meta["routing"] = routing
 
     return sql, chart_meta
