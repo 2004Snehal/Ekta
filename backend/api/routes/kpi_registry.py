@@ -42,7 +42,7 @@ if _BACKEND_ROOT not in sys.path:
 
 def _call_llm_json(system_prompt: str, user_message: str) -> dict:
     """Call Qwen (via OpenRouter) and return a parsed JSON dict."""
-    from llm_config import QWEN_CODER_MODEL, make_openai_client  # noqa: PLC0415
+    from llm_config import QWEN_CODER_MODEL, make_openai_client, LLM_MAX_TOKENS  # noqa: PLC0415
     client = make_openai_client()
     resp = client.chat.completions.create(
         model=QWEN_CODER_MODEL,
@@ -51,8 +51,17 @@ def _call_llm_json(system_prompt: str, user_message: str) -> dict:
             {"role": "user", "content": user_message},
         ],
         response_format={"type": "json_object"},
+        max_tokens=LLM_MAX_TOKENS,
     )
-    return json.loads(resp.choices[0].message.content)
+    content = resp.choices[0].message.content
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        # Fallback: sometimes models wrap JSON in markdown blocks
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+            return json.loads(content)
+        raise
 
 
 # ================================================================== #
@@ -477,7 +486,7 @@ def list_registry():
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, name, description, formula, columns_used, tables_used,
+            SELECT id, name, description, formula, sql_expression, columns_used, tables_used,
                    category, current_value, unit, usefulness_score, source,
                    (expand_page IS NOT NULL) AS has_expand,
                    created_at
@@ -727,6 +736,7 @@ def create_manual_kpi(req: ManualKPIRequest):
         "sql": sql,
         "current_value": current_value,
         "unit": req.unit,
+        "formula": req.formula,
         "message": "KPI created and saved to registry",
     }
 
