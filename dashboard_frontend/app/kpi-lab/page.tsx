@@ -8,6 +8,7 @@ import {
   Plus, Table2, Copy, CornerDownLeft, Star, RotateCcw,
 } from 'lucide-react';
 import { FALLBACK_KPIS } from '@/lib/fallback-kpis';
+import type { FallbackExpandPage } from '@/lib/fallback-kpis';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -302,9 +303,78 @@ function KPIExpandPanel({ registryId }: { registryId: string }) {
   );
 }
 
-function KPICard({ name, value, unit, description, formula, category, usefulness_score, sql, registryId, index }:
+function FallbackExpandPanel({ data }: { data: FallbackExpandPage }) {
+  return (
+    <div className="space-y-5 pt-4 border-t border-border mt-2">
+      {data.interpretation && (
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <BookOpen className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed pt-1">{data.interpretation}</p>
+        </div>
+      )}
+      {(data.high_value_means || data.low_value_means) && (
+        <div className="grid grid-cols-2 gap-3">
+          {data.high_value_means && (
+            <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-3 space-y-1">
+              <div className="flex items-center gap-1.5"><ArrowUp className="w-3 h-3 text-green-400" /><span className="text-xs font-semibold text-green-400">High value</span></div>
+              <p className="text-xs text-muted-foreground leading-snug">{data.high_value_means}</p>
+            </div>
+          )}
+          {data.low_value_means && (
+            <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3 space-y-1">
+              <div className="flex items-center gap-1.5"><ArrowDown className="w-3 h-3 text-destructive" /><span className="text-xs font-semibold text-destructive">Low value</span></div>
+              <p className="text-xs text-muted-foreground leading-snug">{data.low_value_means}</p>
+            </div>
+          )}
+        </div>
+      )}
+      {data.stat_queries?.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {data.stat_queries.map((s, i) => (
+            <div key={i} className="bg-secondary/40 rounded-xl p-3 space-y-1">
+              <p className="text-xs text-muted-foreground leading-tight">{s.label}</p>
+              <p className="text-xs font-mono text-muted-foreground/60 truncate" title={s.sql}>SQL query</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {data.chart_configs?.map((chart, i) => (
+        <div key={i} className="space-y-2">
+          <p className="text-xs font-semibold text-foreground">{chart.title}</p>
+          <div className="bg-secondary/20 rounded-xl p-3">
+            <ResponsiveContainer width="100%" height={180}>
+              {chart.chart_type === 'line' ? (
+                <LineChart data={[]} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey={chart.axes.x.field} tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} label={{ value: chart.axes.x.label, position: 'insideBottom', fill: 'rgba(255,255,255,0.3)', fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} width={45} label={{ value: chart.axes.y.label, angle: -90, position: 'insideLeft', fill: 'rgba(255,255,255,0.3)', fontSize: 10 }} />
+                  <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                  <Line type="monotone" dataKey={chart.axes.y.field} stroke="#FF4D5A" strokeWidth={2} dot={false} />
+                </LineChart>
+              ) : (
+                <BarChart data={[]} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                  <XAxis dataKey={chart.axes.x.field} tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} width={45} />
+                  <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                  <Bar dataKey={chart.axes.y.field} fill="#FF4D5A" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+            <p className="text-[10px] text-muted-foreground/40 mt-1 text-center">Live data not available for fallback KPIs — chart shows structure only</p>
+          </div>
+        </div>
+      ))}
+      {data.value_range && <p className="text-xs text-muted-foreground/60 italic">{data.value_range}</p>}
+    </div>
+  );
+}
+
+function KPICard({ name, value, unit, description, formula, category, usefulness_score, sql, registryId, expandPage, index }:
   { name: string; value?: unknown; unit?: string; description?: string; formula?: string; category?: string;
-    usefulness_score?: number; sql?: string; registryId?: string; index: number }) {
+    usefulness_score?: number; sql?: string; registryId?: string; expandPage?: FallbackExpandPage; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const [sqlOpen, setSqlOpen]   = useState(false);
   const [pinned, setPinned]     = useState(false);
@@ -370,7 +440,7 @@ function KPICard({ name, value, unit, description, formula, category, usefulness
           {sqlOpen && <pre className="mt-2 text-xs bg-secondary/50 rounded-lg p-3 overflow-x-auto text-muted-foreground font-mono leading-relaxed whitespace-pre-wrap">{sql}</pre>}
         </div>
       )}
-      {registryId && (
+      {(registryId || expandPage) && (
         <button onClick={() => setExpanded(o => !o)}
           className={`flex items-center gap-2 text-xs font-medium transition-colors mt-1 ${expanded ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}>
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -379,6 +449,7 @@ function KPICard({ name, value, unit, description, formula, category, usefulness
         </button>
       )}
       {expanded && registryId && <KPIExpandPanel registryId={registryId} />}
+      {expanded && !registryId && expandPage && <FallbackExpandPanel data={expandPage} />}
     </div>
   );
 }
@@ -883,7 +954,9 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
                   key={kpi.id} index={i} name={kpi.name}
                   value={kpi.current_value} unit={kpi.unit}
                   description={kpi.description} category={kpi.category}
+                  formula={(kpi as { formula?: string }).formula}
                   registryId={isFallback ? undefined : kpi.id}
+                  expandPage={isFallback ? FALLBACK_KPIS[i]?.expand_page : undefined}
                 />
               ))}
             </div>
