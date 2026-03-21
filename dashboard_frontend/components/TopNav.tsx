@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { useProfile, PROFILES, PROFILE_KEYS, type ProfileKey } from '@/lib/profiles';
-import { useAuth } from '@/context/AuthContext';
 
 const SECTION_LINKS = [
   { href: '/dashboard',          label: 'Summary' },
@@ -15,17 +14,10 @@ const SECTION_LINKS = [
   { href: '/dashboard/explorer', label: 'Explorer' },
 ];
 
-const TOOL_LINKS = [
-  { href: '/query',    label: 'NLQ' },
-  { href: '/narrator', label: 'Insights' },
-  { href: '/kpi-lab',  label: 'KPI Lab' },
-  { href: '/workspace', label: 'Workspace' },
-];
 
 export function TopNav() {
   const pathname = usePathname();
   const { profile, profileDef, setProfile } = useProfile();
-  const { user } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -184,7 +176,7 @@ export function TopNav() {
         )}
       </div>
 
-      {/* Section tabs */}
+      {/* Section tabs — dashboard sub-pages only */}
       <nav className="flex items-center gap-5 px-5 flex-1">
         {SECTION_LINKS.map((link) => (
           <Link
@@ -195,40 +187,6 @@ export function TopNav() {
             {link.label}
           </Link>
         ))}
-
-        <div className="wire-v" style={{ height: '14px' }} />
-
-        {TOOL_LINKS.map((link, idx) => {
-          let id = '';
-          if (link.label === 'NLQ') id = 'nav-link-query';
-          if (link.label === 'Insights') id = 'nav-link-insights';
-          if (link.label === 'KPI Lab') id = 'nav-link-kpi-lab';
-          if (link.label === 'Workspace') id = 'nav-link-workspace';
-          
-          return (
-            <Link
-              id={id}
-              key={link.href}
-              href={link.href}
-              className={cn('nav-link', pathname.startsWith(link.href) && 'active')}
-            >
-              {link.label}
-            </Link>
-          );
-        })}
-
-        {user?.role === 'admin' && (
-          <>
-            <div className="wire-v" style={{ height: '14px' }} />
-            <Link
-              href="/admin"
-              className={cn('nav-link', pathname.startsWith('/admin') && 'active')}
-              style={{ color: 'var(--signal)' }}
-            >
-              Admin
-            </Link>
-          </>
-        )}
       </nav>
 
       {/* Right: live indicator */}

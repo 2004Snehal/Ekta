@@ -27,19 +27,20 @@ export function TutorialProvider({ children }: { children: React.ReactNode }) {
     const instance = driver({
       showProgress: true,
       animate: true,
-      opacity: 0.6, // Slightly darken background for better contrast
-      steps: steps, // Pass the steps here
-      popoverClass: 'driverjs-theme', // Custom class for styling
-      allowClose: true, 
-      stagePadding: 4, // Add padding around the highlighted element
-      doneBtnText: 'Finish', 
+      opacity: 0.6,
+      steps: steps,
+      popoverClass: 'driverjs-theme',
+      allowClose: true,
+      stagePadding: 6,
+      popoverOffset: 14,       // consistent gap between highlight box and popover arrow
+      smoothScroll: false,     // sidebar links are position:fixed — scrolling shifts coords
+      doneBtnText: 'Finish',
       nextBtnText: 'Next',
       prevBtnText: 'Back',
       onDestroyStarted: () => {
-        if (!instance.hasNextStep() || confirm("Skip the rest of the tutorial?")) {
-          instance.destroy();
-          localStorage.setItem("frammer_tutorial_seen", "true");
-        }
+        // Automatically mark as seen when skipped or finished, without manual confirmation
+        instance.destroy();
+        localStorage.setItem("frammer_tutorial_seen", "true");
       },
     });
 

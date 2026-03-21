@@ -40,17 +40,17 @@ def get_team():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, profile, role
+                SELECT id, name, email, profile, role
                 FROM internal.users
                 ORDER BY profile, name
             """)
             rows = cur.fetchall()
 
     grouped: dict[str, list] = {}
-    for user_id, name, profile, role in rows:
+    for user_id, name, email, profile, role in rows:
         member = {
             "id": user_id,
-            "name": name or user_id,
+            "name": name or email or user_id,
             "profile": profile or "user",
             "role": role or "user",
         }

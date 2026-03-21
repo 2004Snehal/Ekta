@@ -44,6 +44,15 @@ def get_conn():
     conn = _pool.getconn()
     try:
         yield conn
+    except Exception:
+        # Roll back any failed transaction so the connection is clean
+        # when returned to the pool. Without this, poisoned connections
+        # cause every subsequent request on that connection to fail.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         _pool.putconn(conn)
 
