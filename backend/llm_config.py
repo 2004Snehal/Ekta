@@ -22,7 +22,7 @@ LLM_BASE_URL = "https://openrouter.ai/api/v1"
 QWEN_CODER_MODEL   = "qwen/qwen3-coder-next"
 
 # Insight Narrator, Chart Insight Agent
-QWEN_INSIGHT_MODEL = "qwen/qwen3.5-397b-a17b"
+QWEN_INSIGHT_MODEL = "qwen/qwen-2.5-72b-instruct"
 
 # Global Parameters
 LLM_MAX_TOKENS     = 4096

@@ -30,19 +30,19 @@ def _parse_retry_delay(exc: Exception, fallback: float = 5.0) -> float:
 
 # ── Plain-text LLM call ───────────────────────────────────────────────────────
 
-def call_llm_text(prompt: str, system: str = None) -> str:
+def call_llm_text(prompt: str, system: str = None, model: str = None) -> str:
     """
     Send a prompt to Qwen (via OpenRouter) and return plain text.
     Used by self-healing (SQL correction) and answer generation.
     Automatically retries on quota errors.
     """
-    return _call_with_retry(_call_openrouter_text, prompt, system)
+    return _call_with_retry(_call_openrouter_text, prompt, system, model)
 
 
-def _call_with_retry(fn, prompt: str, system: str = None, max_retries: int = 3) -> str:
+def _call_with_retry(fn, prompt: str, system: str = None, model: str = None, max_retries: int = 3) -> str:
     for attempt in range(max_retries):
         try:
-            return fn(prompt, system)
+            return fn(prompt, system, model)
         except Exception as exc:
             if _is_quota_error(exc) and attempt < max_retries - 1:
                 wait = _parse_retry_delay(exc, fallback=5.0 * (2 ** attempt))
@@ -52,14 +52,14 @@ def _call_with_retry(fn, prompt: str, system: str = None, max_retries: int = 3) 
                 raise
 
 
-def _call_openrouter_text(prompt: str, system: str = None) -> str:
+def _call_openrouter_text(prompt: str, system: str = None, model: str = None) -> str:
     client = make_openai_client()
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     response = client.chat.completions.create(
-        model=QWEN_CODER_MODEL,
+        model=model or QWEN_CODER_MODEL,
         messages=messages,
         temperature=LLM_TEMPERATURE,
         max_tokens=LLM_MAX_TOKENS,
