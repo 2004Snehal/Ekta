@@ -8,6 +8,22 @@ import type { NarratorResponseV2, InsightCardData, EntityHealthScore, DQScorecar
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '');
 const CLIENT_ID = 1;
+const CACHE_KEY = `narrator-insights-${CLIENT_ID}`;
+const CACHE_TTL = 5 * 60 * 1000;
+
+function readNarratorCache(): NarratorResponseV2 | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw) as { ts: number; data: NarratorResponseV2 };
+    return Date.now() - ts > CACHE_TTL ? null : data;
+  } catch { return null; }
+}
+
+function writeNarratorCache(data: NarratorResponseV2) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); }
+  catch { /* quota */ }
+}
 
 type LoadState = 'idle' | 'loading' | 'refreshing' | 'error';
 
@@ -87,8 +103,14 @@ function nlqUrl(query: string): string {
 export default function NarratorPage() {
   const router = useRouter();
   const { profileDef } = useProfile();
-  const [data,       setData]       = useState<NarratorResponseV2 | null>(null);
-  const [loadState,  setLoadState]  = useState<LoadState>('idle');
+  const [data,       setData]       = useState<NarratorResponseV2 | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return readNarratorCache();
+  });
+  const [loadState,  setLoadState]  = useState<LoadState>(() => {
+    if (typeof window === 'undefined') return 'loading';
+    return readNarratorCache() ? 'idle' : 'loading';
+  });
   const [errorMsg,   setErrorMsg]   = useState('');
   const [triggerMsg, setTriggerMsg] = useState('');
 
@@ -101,7 +123,14 @@ export default function NarratorPage() {
   const [dqExpanded,       setDqExpanded]       = useState(false);
 
   const fetchInsights = useCallback(async (isRefresh = false) => {
-    setLoadState(isRefresh ? 'refreshing' : 'loading');
+    const cached = readNarratorCache();
+    if (cached && !isRefresh) {
+      setData(cached);
+      setLoadState('idle');
+      // still re-fetch in background to stay fresh
+    } else {
+      setLoadState(isRefresh ? 'refreshing' : 'loading');
+    }
     setErrorMsg('');
     try {
       const res = await fetch(
@@ -109,13 +138,17 @@ export default function NarratorPage() {
         { cache: 'no-store' },
       );
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      setData(await res.json());
+      const json = await res.json() as NarratorResponseV2;
+      writeNarratorCache(json);
+      setData(json);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to load insights');
+      if (!data) {
+        setErrorMsg(err instanceof Error ? err.message : 'Failed to load insights');
+      }
     } finally {
       setLoadState('idle');
     }
-  }, []);
+  }, [data]);
 
   useEffect(() => { fetchInsights(); }, [fetchInsights]);
 
@@ -514,7 +547,7 @@ export default function NarratorPage() {
                             fontWeight: 700,
                             color: delta >= 0 ? 'var(--ok)' : 'var(--signal)',
                           }}>
-                            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}%
+                            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(4)}%
                           </span>
                         )}
                       </div>
@@ -600,10 +633,10 @@ export default function NarratorPage() {
                         {/* Metrics row */}
                         <div className="flex gap-4 flex-wrap">
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
-                            Current: <span style={{ color: 'var(--on)' }}>{card.current_value?.toFixed(1)}</span>
+                            Current: <span style={{ color: 'var(--on)' }}>{card.current_value?.toFixed(4)}</span>
                           </span>
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
-                            Baseline: <span style={{ color: 'var(--on)' }}>{card.reference_value?.toFixed(1)}</span>
+                            Baseline: <span style={{ color: 'var(--on)' }}>{card.reference_value?.toFixed(4)}</span>
                           </span>
                           {card.consecutive_periods && card.consecutive_periods > 1 && (
                             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--on-low)' }}>
@@ -670,7 +703,7 @@ export default function NarratorPage() {
                               fontWeight: 700,
                               color: m.direction === 'improved' ? 'var(--ok)' : m.direction === 'declined' ? 'var(--signal)' : 'var(--on-low)',
                             }}>
-                              {m.delta_pct > 0 ? '▲' : m.delta_pct < 0 ? '▼' : '—'} {Math.abs(m.delta_pct).toFixed(1)}%
+                              {m.delta_pct > 0 ? '▲' : m.delta_pct < 0 ? '▼' : '—'} {Math.abs(m.delta_pct).toFixed(4)}%
                             </div>
                           </div>
                         ))}
@@ -761,7 +794,7 @@ export default function NarratorPage() {
                             fontSize: '0.6rem',
                             color: f.pct_complete >= 90 ? 'var(--ok)' : f.pct_complete >= 70 ? 'var(--warn)' : 'var(--signal)',
                           }}>
-                            {f.pct_complete.toFixed(0)}%
+                            {f.pct_complete.toFixed(4)}%
                           </span>
                         </div>
                         <div style={{ height: '3px', background: 'var(--surface-raise)', borderRadius: '1px' }}>

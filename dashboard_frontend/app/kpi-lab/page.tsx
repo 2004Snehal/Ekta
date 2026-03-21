@@ -5,8 +5,9 @@ import {
   Zap, BarChart3, RefreshCw, ChevronDown, ChevronRight, CheckCircle2,
   AlertCircle, Loader2, Database, FlaskConical, Lightbulb, Play, X,
   Server, TrendingUp, BookOpen, ArrowUp, ArrowDown, PenLine, Sparkles,
-  Plus, Table2, Copy, CornerDownLeft, Star,
+  Plus, Table2, Copy, CornerDownLeft, Star, RotateCcw,
 } from 'lucide-react';
+import { FALLBACK_KPIS } from '@/lib/fallback-kpis';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -124,16 +125,25 @@ const AGENT_LABELS = [
   'Generating KPI candidates','Building SQL','Executing queries','Evaluating KPIs','Generating insights',
 ];
 
+const AI_GEN_STEPS = [
+  'Reading database schema',
+  'Analyzing business context',
+  'Generating KPI candidates',
+  'Building SQL expressions',
+  'Computing current values',
+  'Saving to registry',
+];
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmt(val: number | string | undefined | null): string {
   if (val === undefined || val === null) return '—';
   const n = typeof val === 'string' ? parseFloat(val) : val;
   if (isNaN(n)) return String(val);
-  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
-  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(4) + 'M';
+  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(4) + 'K';
   if (Number.isInteger(n))      return n.toLocaleString();
-  return n.toFixed(2);
+  return n.toFixed(4);
 }
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
@@ -680,32 +690,108 @@ interface AgentResult {
   kpis: { id: string; name: string; description?: string; category?: string; current_value?: unknown; unit?: string; formula?: string; }[];
 }
 
+function AIStepProgress({ stepIndex, statusMsg }: { stepIndex: number; statusMsg: string }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground font-medium">{statusMsg}</p>
+      <div className="space-y-2">
+        {AI_GEN_STEPS.map((label, i) => (
+          <div key={label} className="flex items-center gap-3">
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+              i < stepIndex ? 'bg-green-500/20 text-green-400' :
+              i === stepIndex ? 'bg-primary/20 text-primary' :
+              'bg-secondary text-muted-foreground/40'}`}>
+              {i < stepIndex ? <CheckCircle2 className="w-3 h-3" /> :
+               i === stepIndex ? <Loader2 className="w-3 h-3 animate-spin" /> :
+               <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+            </div>
+            <span className={`text-xs ${i < stepIndex ? 'text-green-400' : i === stepIndex ? 'text-foreground font-medium' : 'text-muted-foreground/50'}`}>{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
   const [context, setContext]       = useState('');
   const [selectedTables, setTables] = useState<string[]>([]);
   const [formState, setFormState]   = useState<FormState>('idle');
   const [formError, setFormError]   = useState('');
   const [result, setResult]         = useState<AgentResult | null>(null);
+  const [stepIndex, setStepIndex]   = useState(0);
+  const [statusMsg, setStatusMsg]   = useState('');
+  const [isFallback, setIsFallback] = useState(false);
+  const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function startSteps(msg: string) {
+    setStepIndex(0); setStatusMsg(msg);
+    let idx = 0;
+    stepTimer.current = setInterval(() => {
+      idx++;
+      setStepIndex(idx);
+      if (idx >= AI_GEN_STEPS.length) { clearInterval(stepTimer.current!); stepTimer.current = null; }
+    }, 2000);
+  }
+
+  function stopSteps() {
+    if (stepTimer.current) { clearInterval(stepTimer.current); stepTimer.current = null; }
+    setStepIndex(AI_GEN_STEPS.length);
+  }
 
   function toggleTable(tbl: string) {
     setTables(ts => ts.includes(tbl) ? ts.filter(t => t !== tbl) : [...ts, tbl]);
   }
 
+  async function runGenerate(ctx: string, attempt: number): Promise<AgentResult | null> {
+    const res = await fetch(`${BASE}/kpi/agent-create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: ctx, tables: selectedTables.length > 0 ? selectedTables : undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail ?? 'Generation failed');
+    return data as AgentResult;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!context.trim()) return;
-    setFormState('loading'); setFormError(''); setResult(null);
+    setFormState('loading'); setFormError(''); setResult(null); setIsFallback(false);
+
+    startSteps('Generating KPIs…');
     try {
-      const res = await fetch(`${BASE}/kpi/agent-create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context: context.trim(), tables: selectedTables.length > 0 ? selectedTables : undefined }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? 'Generation failed');
-      setResult(data as AgentResult);
+      // Attempt 1
+      let data = await runGenerate(context.trim(), 1);
+
+      if (!data || data.kpis_created === 0) {
+        // Retry attempt 2 with broader context
+        stopSteps();
+        startSteps('No KPIs found — retrying with broader context…');
+        try {
+          data = await runGenerate(context.trim() + ' Be creative and generate at least 3 KPIs.', 2);
+        } catch { data = null; }
+      }
+
+      stopSteps();
+
+      if (!data || data.kpis_created === 0) {
+        // Use fallback KPIs from codebase
+        setIsFallback(true);
+        setResult({
+          kpis_created: FALLBACK_KPIS.length,
+          kpis: FALLBACK_KPIS.map(k => ({
+            id: k.id, name: k.name, description: k.description,
+            formula: k.formula, category: k.category, unit: k.unit,
+            current_value: k.current_value,
+          })),
+        });
+      } else {
+        setResult(data);
+      }
       setFormState('success');
     } catch (err: unknown) {
+      stopSteps();
       setFormError(err instanceof Error ? err.message : String(err));
       setFormState('error');
     }
@@ -759,9 +845,13 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
             <button type="submit" disabled={!context.trim() || formState === 'loading'}
               className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
               {formState === 'loading'
-                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating KPIs…</>
+                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating…</>
                 : <><Sparkles className="w-4 h-4" />Generate KPIs</>}
             </button>
+
+            {formState === 'loading' && (
+              <AIStepProgress stepIndex={stepIndex} statusMsg={statusMsg} />
+            )}
 
             {formState === 'error' && (
               <div className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
@@ -775,22 +865,16 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
 
       {/* ── Right: Results ────────────────────────────────────────── */}
       <div className="lg:col-span-2">
-        {formState === 'loading' && (
-          <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
-            <Loader2 className="w-10 h-10 text-primary animate-spin" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Generating KPIs…</p>
-              <p className="text-xs text-muted-foreground mt-1">The AI is analysing your schema and creating meaningful KPIs</p>
-            </div>
-          </div>
-        )}
-
         {result && formState === 'success' && (
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-green-400" />
+              {isFallback
+                ? <RotateCcw className="w-4 h-4 text-yellow-400" />
+                : <CheckCircle2 className="w-4 h-4 text-green-400" />}
               <p className="text-sm font-semibold text-foreground">
-                {result.kpis_created} KPI{result.kpis_created !== 1 ? 's' : ''} generated and saved to registry
+                {isFallback
+                  ? `Showing ${result.kpis_created} default KPIs — AI generation returned no results`
+                  : `${result.kpis_created} KPI${result.kpis_created !== 1 ? 's' : ''} generated and saved to registry`}
               </p>
             </div>
             <div className="space-y-3">
@@ -799,7 +883,7 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
                   key={kpi.id} index={i} name={kpi.name}
                   value={kpi.current_value} unit={kpi.unit}
                   description={kpi.description} category={kpi.category}
-                  registryId={kpi.id}
+                  registryId={isFallback ? undefined : kpi.id}
                 />
               ))}
             </div>

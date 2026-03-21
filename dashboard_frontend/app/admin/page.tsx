@@ -8,7 +8,7 @@ import {
   Users, Database, Plus, UserCheck,
   Link2, Link2Off, FlaskConical, Edit3,
   ZoomIn, ZoomOut, Maximize2, X, Save,
-  Columns3, Table2,
+  Columns3, Table2, Copy, Terminal,
 } from 'lucide-react';
 
 // ────────────────────────────────────────────────────────────────────────── //
@@ -95,11 +95,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     const raw = localStorage.getItem('auth_user');
-    if (!raw) { router.replace('/login'); return; }
+    if (!raw) { router.replace('/signin'); return; }
     try {
       const user = JSON.parse(raw);
       if (user.role !== 'admin') { router.replace('/dashboard'); return; }
-    } catch { router.replace('/login'); return; }
+    } catch { router.replace('/signin'); return; }
     setAuthChecked(true);
   }, [router]);
 
@@ -1234,45 +1234,64 @@ function CreateTablePanel({ onCreated }: { onCreated: () => void }) {
 // Add Columns Panel
 // ────────────────────────────────────────────────────────────────────────── //
 
-function AddColumnsPanel({ tables, onAdded }: { tables: TableInfo[]; onAdded: () => void }) {
+function AddColumnsPanel({ tables }: { tables: TableInfo[]; onAdded: () => void }) {
   const [selectedTable, setSelectedTable] = useState('');
   const [columns, setColumns] = useState<ColumnDef[]>([
     { name: '', type: 'TEXT', nullable: true, is_pk: false },
   ]);
-  const [status, setStatus] = useState<StatusState>({ type: 'idle' });
+  const [copied, setCopied] = useState(false);
 
   function updateCol(i: number, field: keyof ColumnDef, value: string | boolean) {
     setColumns((prev) => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
   }
 
-  async function handleAdd() {
-    if (!selectedTable) { setStatus({ type: 'error', message: 'Select a table first.' }); return; }
+  const dbUrl = process.env.NEXT_PUBLIC_DATABASE_URL ?? 'postgresql://USER:PASSWORD@HOST:PORT/DATABASE';
+
+  function buildScript(): string {
     const valid = columns.filter((c) => c.name.trim());
-    if (valid.length === 0) { setStatus({ type: 'error', message: 'Add at least one column.' }); return; }
-    setStatus({ type: 'loading' });
-    try {
-      const res = await fetch(`${API_BASE}/admin/table/${selectedTable}/add-columns`, {
-        method: 'POST',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ columns: valid }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? 'Add columns failed');
-      setStatus({ type: 'success', message: `Added [${data.columns_added.join(', ')}] to '${data.altered}'.` });
-      setColumns([{ name: '', type: 'TEXT', nullable: true, is_pk: false }]);
-      onAdded();
-    } catch (e) { setStatus({ type: 'error', message: (e as Error).message }); }
+    const alters = valid.map((c) => {
+      const nullClause = c.nullable ? '' : " NOT NULL DEFAULT ''";
+      return `cur.execute('ALTER TABLE data."${selectedTable}" ADD COLUMN IF NOT EXISTS "${c.name}" ${c.type}${nullClause}')`;
+    }).join('\n');
+
+    return `import psycopg2
+
+conn = psycopg2.connect("${dbUrl}")
+cur = conn.cursor()
+
+${alters}
+
+conn.commit()
+cur.close()
+conn.close()
+print("Done — columns added to data.${selectedTable}")
+`;
+  }
+
+  function copyScript() {
+    navigator.clipboard.writeText(buildScript()).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   }
 
   const existingCols = tables.find((t) => t.name === selectedTable)?.columns ?? [];
+  const validCols = columns.filter((c) => c.name.trim());
+  const canGenerate = !!selectedTable && validCols.length > 0;
 
   return (
-    <div className="bg-card border border-border rounded-xl p-6">
-      <h2 className="font-semibold text-foreground mb-4 flex items-center gap-2">
-        <Columns3 className="w-4 h-4" /> Add Columns to Existing Table
-      </h2>
+    <div className="bg-card border border-border rounded-xl p-6 space-y-5">
+      <div>
+        <h2 className="font-semibold text-foreground mb-1 flex items-center gap-2">
+          <Columns3 className="w-4 h-4" /> Add Columns to Existing Table
+        </h2>
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Terminal className="w-3 h-3" />
+          Session poolers cannot run DDL. This generates a Python script — copy and run it on a direct DB connection.
+        </p>
+      </div>
 
-      <div className="mb-5">
+      <div>
         <label className="block text-sm font-medium text-foreground mb-1">Table</label>
         <select value={selectedTable} onChange={(e) => setSelectedTable(e.target.value)}
           className="w-full max-w-xs bg-background border border-border rounded-lg px-4 py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary">
@@ -1282,7 +1301,7 @@ function AddColumnsPanel({ tables, onAdded }: { tables: TableInfo[]; onAdded: ()
       </div>
 
       {selectedTable && existingCols.length > 0 && (
-        <div className="mb-5 p-3 bg-muted/20 rounded-lg border border-border">
+        <div className="p-3 bg-muted/20 rounded-lg border border-border">
           <p className="text-xs text-muted-foreground mb-2">Existing columns:</p>
           <div className="flex flex-wrap gap-1.5">
             {existingCols.map((c) => (
@@ -1294,9 +1313,9 @@ function AddColumnsPanel({ tables, onAdded }: { tables: TableInfo[]; onAdded: ()
         </div>
       )}
 
-      <div className="mb-4">
+      <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-sm font-medium text-foreground">New columns to add</label>
+          <label className="text-sm font-medium text-foreground">New columns</label>
           <button onClick={() => setColumns((prev) => [...prev, { name: '', type: 'TEXT', nullable: true, is_pk: false }])}
             className="flex items-center gap-1 text-xs text-primary hover:underline">
             <Plus className="w-3 h-3" /> Add row
@@ -1329,13 +1348,24 @@ function AddColumnsPanel({ tables, onAdded }: { tables: TableInfo[]; onAdded: ()
         </div>
       </div>
 
-      <StatusBanner status={status} className="mb-4" />
-
-      <button onClick={handleAdd} disabled={status.type === 'loading' || !selectedTable}
-        className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2.5 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 text-sm">
-        {status.type === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-        {status.type === 'loading' ? 'Adding…' : 'Add Columns'}
-      </button>
+      {canGenerate && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-foreground">Generated Python script</p>
+            <button onClick={copyScript}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
+              <Copy className="w-3 h-3" />
+              {copied ? 'Copied!' : 'Copy script'}
+            </button>
+          </div>
+          <pre className="bg-background border border-border rounded-lg p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre leading-relaxed">
+            {buildScript()}
+          </pre>
+          <p className="text-xs text-muted-foreground">
+            Run with: <code className="bg-muted px-1.5 py-0.5 rounded font-mono">python script.py</code> (requires psycopg2 and a direct DB URL)
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1356,13 +1386,50 @@ function SchemaLinksPanel({
   });
   const [status, setStatus] = useState<StatusState>({ type: 'idle' });
   const [deleteStatus, setDeleteStatus] = useState<Record<string, StatusState>>({});
+  const [fkCopied, setFkCopied] = useState(false);
 
   const fromCols = tables.find((t) => t.name === form.from_table)?.columns ?? [];
   const toCols = tables.find((t) => t.name === form.to_table)?.columns ?? [];
+  const dbUrl = process.env.NEXT_PUBLIC_DATABASE_URL ?? 'postgresql://USER:PASSWORD@HOST:PORT/DATABASE';
+
+  function buildFkScript(): string {
+    const constraint = `fk_${form.from_table}_${form.from_column}_${form.to_table}`;
+    return `import psycopg2
+
+conn = psycopg2.connect("${dbUrl}")
+cur = conn.cursor()
+
+cur.execute('''
+    ALTER TABLE data."${form.from_table}"
+    ADD CONSTRAINT "${constraint}"
+    FOREIGN KEY ("${form.from_column}")
+    REFERENCES data."${form.to_table}" ("${form.to_column}")
+''')
+
+conn.commit()
+cur.close()
+conn.close()
+print("Done — FK constraint '${constraint}' created")
+`;
+  }
+
+  function copyFkScript() {
+    navigator.clipboard.writeText(buildFkScript()).then(() => {
+      setFkCopied(true);
+      setTimeout(() => setFkCopied(false), 2000);
+    });
+  }
+
+  const fkReady = form.from_table && form.from_column && form.to_table && form.to_column;
 
   async function handleCreate() {
     if (!form.from_table || !form.from_column || !form.to_table || !form.to_column) {
       setStatus({ type: 'error', message: 'Fill in all fields.' }); return;
+    }
+    if (form.link_type === 'fk') {
+      // FK constraints run DDL — show script instead
+      setStatus({ type: 'success', message: 'FK script generated below — copy and run it on a direct DB connection.' });
+      return;
     }
     setStatus({ type: 'loading' });
     try {
@@ -1527,11 +1594,35 @@ function SchemaLinksPanel({
 
         <StatusBanner status={status} className="mb-4" />
 
-        <button onClick={handleCreate} disabled={status.type === 'loading'}
-          className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2.5 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 text-sm">
-          {status.type === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-          {status.type === 'loading' ? 'Creating…' : 'Create Link'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={handleCreate} disabled={status.type === 'loading'}
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2.5 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 text-sm">
+            {status.type === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+            {status.type === 'loading' ? 'Creating…' : form.link_type === 'fk' ? 'Generate FK Script' : 'Create Link'}
+          </button>
+          {form.link_type === 'fk' && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Terminal className="w-3 h-3" /> FK constraints require DDL — a script will be generated
+            </p>
+          )}
+        </div>
+
+        {/* FK Script output */}
+        {form.link_type === 'fk' && fkReady && status.type === 'success' && (
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-foreground">Generated FK script</p>
+              <button onClick={copyFkScript}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90">
+                <Copy className="w-3 h-3" />
+                {fkCopied ? 'Copied!' : 'Copy script'}
+              </button>
+            </div>
+            <pre className="bg-background border border-border rounded-lg p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre leading-relaxed">
+              {buildFkScript()}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );
