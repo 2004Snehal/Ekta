@@ -23,13 +23,21 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from api.deps import get_conn
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kpi-lab", tags=["KPI Registry"])
+
+VALID_CATEGORIES = {
+    'Founders and Executive Leadership',
+    'Client Success Teams',
+    'Operations Teams',
+    'Editorial and Production Teams',
+    'Technology and Product Teams',
+}
 
 # ================================================================== #
 # LLM helpers — reuse main backend config (Gemini / OpenAI)
@@ -379,7 +387,7 @@ Return a JSON object with key "kpis" — an array where each element has:
   "sql_expression": "PostgreSQL query returning ONE ROW with column 'value'",
   "columns_used": ["col1", "col2"],
   "tables_used": ["data.table1"],
-  "category": "growth | quality | efficiency | engagement | volume",
+  "category": "Founders and Executive Leadership | Client Success Teams | Operations Teams | Editorial and Production Teams | Technology and Product Teams",
   "unit": "% | count | ratio | seconds"
 }}
 
@@ -415,6 +423,13 @@ class SaveKPIRequest(BaseModel):
     usefulness_score: Optional[float] = None
     source: str = "manual"
 
+    @field_validator('category')
+    @classmethod
+    def category_must_be_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v and v not in VALID_CATEGORIES:
+            raise ValueError(f"category must be one of: {', '.join(sorted(VALID_CATEGORIES))}")
+        return v
+
 
 class ManualKPIRequest(BaseModel):
     name: str
@@ -423,6 +438,13 @@ class ManualKPIRequest(BaseModel):
     columns_used: List[str] = []
     category: Optional[str] = None
     unit: Optional[str] = None
+
+    @field_validator('category')
+    @classmethod
+    def category_must_be_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v and v not in VALID_CATEGORIES:
+            raise ValueError(f"category must be one of: {', '.join(sorted(VALID_CATEGORIES))}")
+        return v
 
 
 class AgentKPIRequest(BaseModel):

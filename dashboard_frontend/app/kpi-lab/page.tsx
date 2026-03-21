@@ -111,7 +111,13 @@ const FORMULA_TEMPLATES = [
   },
 ];
 
-const CATEGORIES = ['growth', 'quality', 'efficiency', 'engagement', 'volume'];
+const CATEGORIES = [
+  'Founders and Executive Leadership',
+  'Client Success Teams',
+  'Operations Teams',
+  'Editorial and Production Teams',
+  'Technology and Product Teams',
+];
 const UNITS      = ['%', 'count', 'ratio', 'seconds', 'minutes', 'hours'];
 const AGENT_LABELS = [
   'Reading schema','Discovering relationships','Grouping tables','Extracting statistics',
