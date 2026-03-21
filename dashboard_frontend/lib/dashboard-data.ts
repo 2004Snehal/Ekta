@@ -30,6 +30,7 @@ const RANGE_DAYS: Record<DashboardDateRange, number> = {
 
 export const DEFAULT_FILTERS: DashboardFilters = {
   dateRange:    'last-30-days',
+  client_type:  '',
   client:       '',
   channel:      '',
   user:         '',
@@ -40,7 +41,7 @@ export const DEFAULT_FILTERS: DashboardFilters = {
 };
 
 const KNOWN_FILTER_FIELDS: DashboardFilterField[] = [
-  { key: 'client',         label: 'Client',         defaultVisible: true  },
+  { key: 'client_type',    label: 'Client Type',    defaultVisible: true  },
   { key: 'channel',        label: 'Channel',        defaultVisible: true  },
   { key: 'user',           label: 'User',           defaultVisible: true  },
   { key: 'language',       label: 'Language',       defaultVisible: true  },
@@ -116,7 +117,7 @@ export function filterDashboardRecords(
     }
 
     const simple: Array<[keyof DashboardFilters, string]> = [
-      ['client', 'client'],
+      ['client_type', 'client_type'],
       ['channel', 'channel'],
       ['user', 'user'],
       ['language', 'language'],

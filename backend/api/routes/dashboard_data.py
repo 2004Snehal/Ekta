@@ -14,7 +14,7 @@ DashboardRecord shape (matches frontend types/dashboard.ts):
 """
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Query
 
@@ -30,7 +30,7 @@ _RANGE_DAYS: dict[str, Optional[int]] = {
 }
 
 _DIM_LABELS = {
-    "client":         "Client",
+    "client_type":    "Client Type",
     "channel":        "Channel",
     "user":           "User",
     "language":       "Language",
@@ -45,6 +45,7 @@ _DIM_LABELS = {
 _SQL = """
     SELECT
         f.uploaded_at::date                                               AS date,
+        COALESCE(dc_cl.client_type, 'unknown')                           AS client_type,
         dc_cl.client_name                                                 AS client,
         dc.channel_name                                                   AS channel,
         du.user_name                                                      AS "user",
@@ -74,10 +75,10 @@ _SQL = """
     LEFT JOIN data.dim_output_type dot ON dot.output_type_id = f.output_type_id
     LEFT JOIN data.dim_platform   dp  ON dp.platform_id    = f.platform_id
 
-    WHERE f.client_id = %s
-      AND f.uploaded_at::date >= %s
+    WHERE f.uploaded_at::date >= %s
+      {client_filter}
 
-    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
     ORDER BY 1 DESC
     LIMIT 100000
 """
@@ -87,23 +88,30 @@ _SQL = """
 def get_dashboard_data(
     user_id: str = Query("demo-user"),
     date_range: str = Query("last-90-days"),
-    client_id: int = Query(1),
+    client_id: Optional[int] = Query(None),
 ):
     """
     Return a DashboardDatasetResponse the frontend caches and filters client-side.
     Narrower ranges (7d, 30d) can reuse a cached 90-day dataset without re-fetching.
+    When client_id is omitted, data for all clients is returned (filterable by client_type).
     """
     days = _RANGE_DAYS.get(date_range, 90)
     now = datetime.now(timezone.utc)
     start_date: date = (now - timedelta(days=days)).date() if days else date(2000, 1, 1)
 
+    # Build optional client filter
+    client_filter_sql = "AND f.client_id = %s" if client_id is not None else ""
+    sql = _SQL.format(client_filter=client_filter_sql)
+
     with get_conn() as conn:
         cur = conn.cursor()
 
         # Data window metadata
+        bounds_params: List = [client_id] if client_id is not None else []
+        bounds_where = "WHERE client_id = %s" if client_id is not None else ""
         cur.execute(
-            "SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM data.fact_created_videos WHERE client_id = %s",
-            (client_id,),
+            f"SELECT MIN(uploaded_at::date), MAX(uploaded_at::date) FROM data.fact_created_videos {bounds_where}",
+            bounds_params,
         )
         bounds = cur.fetchone()
         db_min: date = bounds[0] or start_date
@@ -113,7 +121,10 @@ def get_dashboard_data(
         coverage_days = max((db_max - effective_start).days + 1, 0)
 
         # Main data query
-        cur.execute(_SQL, (client_id, effective_start))
+        data_params: List = [effective_start]
+        if client_id is not None:
+            data_params.append(client_id)
+        cur.execute(sql, data_params)
         cols = [d[0] for d in cur.description]
         raw_rows = cur.fetchall()
 
@@ -122,6 +133,7 @@ def get_dashboard_data(
         r = dict(zip(cols, row))
         records.append({
             "date":               r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"]),
+            "client_type":        r["client_type"] or "",
             "client":             r["client"] or "",
             "channel":            r["channel"] or "",
             "user":               r["user"] or "",
