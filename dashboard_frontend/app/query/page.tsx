@@ -325,6 +325,7 @@ function AssistantBubble({ msg }: { msg: Message }) {
           <div className="mb-2">
             <button
               onClick={() => setThinkOpen((v) => !v)}
+<<<<<<< HEAD
               className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium select-none w-full text-left"
             >
               {thinkOpen ? (
@@ -343,6 +344,21 @@ function AssistantBubble({ msg }: { msg: Message }) {
               {r.processing_time_ms && (
                  <span className="text-[10px] text-muted-foreground/40 ml-auto shrink-0 pl-2">
                     {Math.round(r.processing_time_ms / 100) / 10}s
+=======
+              className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium select-none"
+            >
+              {thinkOpen ? (
+                <ChevronDown className="w-3 h-3" />
+              ) : (
+                <ChevronRight className="w-3 h-3" />
+              )}
+              <span className="flex items-center gap-1.5">
+                Thought Process
+              </span>
+              {r.processing_time_ms && (
+                 <span className="text-[10px] text-muted-foreground/60 ml-1">
+                    Wait time: {Math.round(r.processing_time_ms / 100) / 10}s
+>>>>>>> a72a7be (nlq session added)
                  </span>
               )}
             </button>
@@ -387,8 +403,11 @@ function AssistantBubble({ msg }: { msg: Message }) {
             </button>
           </>
         )}
+<<<<<<< HEAD
         
         {/* r.thinking removed from here as it is moved up */}
+=======
+>>>>>>> a72a7be (nlq session added)
 
         {r.sql && (
           <div className="bg-card border border-border rounded-xl overflow-hidden">
