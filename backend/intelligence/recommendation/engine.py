@@ -5,6 +5,7 @@ Recommendation engine — orchestrates:
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -27,51 +28,63 @@ log = logging.getLogger("recommendation.engine")
 _SEP = "─" * 52
 
 
-def get_recommendations(ctx: DashboardContext, conn) -> RecommendationResponse:
+def _extract_json(text: str) -> dict:
+    """
+    Robustly extract a JSON object from an LLM response that may contain
+    conversational text, markdown code fences, or Qwen3 thinking tags.
+    Priority: fenced block → brace scan.
+    """
+    # 1. Try ```json ... ``` or ``` ... ``` fences
+    fence = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
+    if fence:
+        return json.loads(fence.group(1))
+
+    # 2. Scan for the outermost { ... } block
+    start = text.find("{")
+    if start != -1:
+        end = text.rfind("}")
+        if end > start:
+            return json.loads(text[start:end + 1])
+
+    raise ValueError(f"No JSON object found in LLM response: {text[:200]!r}")
+
+
+def expand_only(ctx: DashboardContext, conn) -> tuple[ExpandedContext, bool]:
+    """
+    Phase 1 (needs DB): cache check + context expansion.
+    Returns (expanded_context, cache_hit).  If cache_hit is True the caller
+    can skip the LLM phase entirely.
+    """
+    cached = rec_cache.get(ctx)
+    if cached:
+        return cached, True  # type: ignore[return-value]
+
+    t0 = time.perf_counter()
+    expanded = expand_context(ctx, conn)
+    log.info(f"[REC] Context expand  {time.perf_counter()-t0:.2f}s")
+    return expanded, False
+
+
+def get_recommendations(ctx: DashboardContext, expanded: ExpandedContext) -> RecommendationResponse:
+    """
+    Phase 2 (no DB needed): LLM call + response build.
+    Accepts the pre-expanded context so the caller can release the DB conn first.
+    """
     log.info(_SEP)
     log.info(f"[REC] view={ctx.view}  entity={ctx.entity_name}  role={ctx.user_role}")
     t_start = time.perf_counter()
 
-    # ── 1. Cache check ────────────────────────────────────────────────────────
-    cached = rec_cache.get(ctx)
-    if cached:
-        log.info(f"[REC] Cache hit  ({time.perf_counter()-t_start:.2f}s)")
-        result = cached.model_copy()
-        result.cached = True
-        return result
-
-    # ── 2. Context expansion (SQL queries) ────────────────────────────────────
-    t0 = time.perf_counter()
-    expanded = expand_context(ctx, conn)
-    log.info(f"[REC] Context expand  {time.perf_counter()-t0:.2f}s")
-
-    # ── 3. Build system prompt ────────────────────────────────────────────────
+    # ── 1. Build prompts (no DB needed) ────────────────────────────────────
     system_prompt = build_recommendation_prompt(ctx)
-
-    # ── 4. Format expanded context as the user message ────────────────────────
     user_message = _format_context(expanded)
 
-    # ── 5. LLM call ───────────────────────────────────────────────────────────
+    # ── 2. LLM call (slow — no DB conn held) ──────────────────────────────
     t1 = time.perf_counter()
     try:
         raw_text = call_llm(user_message, system_prompt, model=QWEN_INSIGHT_MODEL)
-        cleaned = raw_text.strip()
-        
-        # Robustly extract JSON block
-        if "```" in cleaned:
-            parts = cleaned.split("```")
-            if len(parts) >= 3:
-                cleaned = parts[1].strip()
-                if cleaned.lower().startswith("json"):
-                    cleaned = cleaned[4:].strip()
-        else:
-            # Fallback: find first { or [ and last } or ]
-            first_brace = min((i for i in [cleaned.find("{"), cleaned.find("[")] if i != -1), default=-1)
-            last_brace = max(cleaned.rfind("}"), cleaned.rfind("]"))
-            if first_brace != -1 and last_brace > first_brace:
-                cleaned = cleaned[first_brace:last_brace+1]
-                
-        llm_response = json.loads(cleaned)
+        # Strip Qwen3 thinking-mode tags before parsing
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+        llm_response = _extract_json(cleaned)
     except Exception as e:
         log.error(f"[REC] LLM call failed  ({time.perf_counter()-t1:.2f}s): {e}")
         llm_response = {"recommendations": [{
@@ -85,10 +98,10 @@ def get_recommendations(ctx: DashboardContext, conn) -> RecommendationResponse:
 
     log.info(f"[REC] LLM call  {time.perf_counter()-t1:.2f}s")
 
-    # ── 6. Parse recommendations ──────────────────────────────────────────────
+    # ── 3. Parse recommendations ──────────────────────────────────────────────
     recs = _parse_recommendations(llm_response)
 
-    # ── 7. Build response, cache, return ─────────────────────────────────────
+    # ── 4. Build response, cache, return ─────────────────────────────────────
     response = RecommendationResponse(
         recommendations=recs,
         context_view=ctx.view,

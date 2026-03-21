@@ -33,14 +33,17 @@ function UsagePageInner() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetch(`${API}/analytics/time-series?client_id=1&metric=count&granularity=${granularity}`).then(r => r.json()),
-      fetch(`${API}/analytics/time-series?client_id=1&metric=duration&granularity=${granularity}`).then(r => r.json()),
-      fetch(`${API}/analytics/period-compare?client_id=1&period=month`).then(r => r.json()),
+      fetch(`${API}/analytics/time-series?client_id=1&metric=count&granularity=${granularity}`)
+        .then((r): Promise<any> => r.ok ? r.json() : Promise.resolve({ series: [] })).catch(() => ({ series: [] })),
+      fetch(`${API}/analytics/time-series?client_id=1&metric=duration&granularity=${granularity}`)
+        .then((r): Promise<any> => r.ok ? r.json() : Promise.resolve({ series: [] })).catch(() => ({ series: [] })),
+      fetch(`${API}/analytics/period-compare?client_id=1&period=month`)
+        .then((r): Promise<any> => r.ok ? r.json() : Promise.resolve({})).catch(() => ({})),
     ]).then(([ts, dur, period]) => {
       setTimeSeries(ts.series ?? []);
       setDurationSeries(dur.series ?? []);
       setPeriodData(period);
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).finally(() => setLoading(false));
   }, [granularity]);
 
   function handlePeriodClick(_dimKey: string, periodValue: string) {

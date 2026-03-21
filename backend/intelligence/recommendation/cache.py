@@ -6,7 +6,7 @@ No external dependencies — uses a plain dict + timestamps.
 import time
 from intelligence.recommendation.models import DashboardContext, RecommendationResponse
 
-TTL_SECONDS = 300  # 5 minutes
+TTL_SECONDS = 900  # 15 minutes
 
 _cache: dict[str, tuple[float, RecommendationResponse]] = {}
 

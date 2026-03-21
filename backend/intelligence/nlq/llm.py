@@ -63,8 +63,9 @@ def _call_openrouter_text(prompt: str, system: str = None, model: str = None) ->
         messages=messages,
         temperature=LLM_TEMPERATURE,
         max_tokens=LLM_MAX_TOKENS,
+        timeout=90,
     )
-    return response.choices[0].message.content.strip()
+    return (response.choices[0].message.content or "").strip()
 
 
 # ── Statistical pre-summarization (Python, no LLM) ───────────────────────────
