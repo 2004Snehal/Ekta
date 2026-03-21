@@ -289,8 +289,14 @@ _SYSTEM_BASE = (
 
 _SQL_SUFFIX = """
 
-After writing the SQL, also output a JSON block fenced with ```json ... ``` containing:
+First, decide if this question requires a database query:
+- If it is greetings, small talk, or unrelated to analytics/video data → set "requires_sql": false, write a short friendly "direct_answer", and skip SQL.
+- If it requires data → set "requires_sql": true and write the SQL query.
+
+Then output a JSON block fenced with ```json ... ``` containing:
 {
+  "requires_sql": true,
+  "direct_answer": null,
   "chart_type": "line|bar|horizontal_bar|pie|scatter|radar|stacked_bar|table",
   "x": "<exact column alias from SELECT list — entity/category column>",
   "y": "<exact column alias from SELECT list — primary numeric column>",
@@ -299,6 +305,12 @@ After writing the SQL, also output a JSON block fenced with ```json ... ``` cont
     "type": "time_series_trend|top_n_ranked|distribution|single_aggregate|detail_sample",
     "focus": ["<aspect1>", "<aspect2>"]
   }
+}
+
+If requires_sql is false, only these fields matter — omit the rest:
+{
+  "requires_sql": false,
+  "direct_answer": "<friendly plain-text response>"
 }
 
 Chart type rules:
@@ -557,10 +569,16 @@ def _parse_candidate(raw: str) -> RAGResult:
     if not isinstance(strategy, dict) or "type" not in strategy:
         strategy = None
 
-    # routing must be a dict; discard anything else
-    routing = chart_meta.get("routing")
-    if not isinstance(routing, dict):
-        routing = None
+    # Build routing from the LLM's top-level requires_sql / direct_answer fields.
+    # requires_sql=False means the question doesn't need a DB query (greetings, off-topic, etc.)
+    requires_sql = chart_meta.get("requires_sql")
+    if requires_sql is False:
+        routing = {
+            "requires_sql": False,
+            "direct_answer": _str(chart_meta.get("direct_answer")) or "I can only answer questions about your analytics data.",
+        }
+    else:
+        routing = None  # normal SQL path
 
     return RAGResult(
         sql=sql,
