@@ -107,10 +107,44 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
-// ── API helpers ───────────────────────────────────────────────────────────────
+// ── localStorage helpers (primary session store) ──────────────────────────────
+
+const LS_LIST_KEY = 'nlq_session_list';
+const LS_MSG_PREFIX = 'nlq_msg_';
+
+function lsGetList(): SessionSummary[] {
+  try { return JSON.parse(localStorage.getItem(LS_LIST_KEY) ?? '[]'); }
+  catch { return []; }
+}
+
+function lsSetList(list: SessionSummary[]) {
+  try { localStorage.setItem(LS_LIST_KEY, JSON.stringify(list)); }
+  catch { /* storage quota */ }
+}
+
+function lsGetMessages(id: string): Message[] | null {
+  try {
+    const v = localStorage.getItem(LS_MSG_PREFIX + id);
+    return v ? JSON.parse(v) : null;
+  } catch { return null; }
+}
+
+function lsSetMessages(id: string, msgs: Message[]) {
+  try { localStorage.setItem(LS_MSG_PREFIX + id, JSON.stringify(msgs)); }
+  catch { /* storage quota */ }
+}
+
+function lsDeleteSession(id: string) {
+  try {
+    lsSetList(lsGetList().filter(s => s.session_id !== id));
+    localStorage.removeItem(LS_MSG_PREFIX + id);
+  } catch { /* ignore */ }
+}
+
+// ── API helpers (secondary/backup) ────────────────────────────────────────────
 
 async function apiSaveSession(
-  sessionId: string | null,
+  sessionId: string,
   messages: Message[],
   title?: string,
 ) {
@@ -133,15 +167,11 @@ async function apiLoadSession(sessionId: string) {
   }>;
 }
 
-async function apiListSessions() {
-  const res = await fetch(`${API_URL}/nlq/sessions?user_id=${USER_ID}`);
-  if (!res.ok) return [];
-  return res.json() as Promise<SessionSummary[]>;
-}
-
 async function apiDeleteSession(sessionId: string) {
   await fetch(`${API_URL}/nlq/sessions/${sessionId}`, { method: "DELETE" });
 }
+
+// (apiListSessions removed — sessions list now lives in localStorage)
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -418,17 +448,28 @@ function QueryPageInner() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Load sessions list ───────────────────────────────────────────────────
+  // ── Load sessions list (localStorage first, API as backup) ─────────────
 
   const refreshSessions = useCallback(async () => {
+    // Always load from localStorage first — instant and reliable
+    const local = lsGetList();
+    setSessions(local);
+    setSessionsLoading(false);
+    // Optionally sync from API in background
     try {
-      const list = await apiListSessions();
-      setSessions(list);
-    } catch {
-      /* ignore */
-    } finally {
-      setSessionsLoading(false);
-    }
+      const res = await fetch(`${API_URL}/nlq/sessions?user_id=${USER_ID}`);
+      if (res.ok) {
+        const apiList = (await res.json()) as SessionSummary[];
+        if (apiList.length > 0) {
+          // Merge: API is authoritative, but keep any local-only sessions
+          const apiIds = new Set(apiList.map(s => s.session_id));
+          const localOnly = lsGetList().filter(s => !apiIds.has(s.session_id));
+          const merged = [...apiList, ...localOnly];
+          lsSetList(merged);
+          setSessions(merged);
+        }
+      }
+    } catch { /* backend unavailable – localStorage is sufficient */ }
   }, []);
 
   // ── Hydrate from URL ?session= param ────────────────────────────────────
@@ -436,14 +477,20 @@ function QueryPageInner() {
   useEffect(() => {
     const urlSession = searchParams.get("session");
     if (urlSession) {
-      apiLoadSession(urlSession)
-        .then((data) => {
-          setSessionId(data.session_id);
-          setMessages(data.messages.filter((m) => !m.loading));
-        })
-        .catch(() => {
-          /* session not found, start fresh */
-        });
+      // Try localStorage first, then API
+      const localMsgs = lsGetMessages(urlSession);
+      if (localMsgs) {
+        setSessionId(urlSession);
+        setMessages(localMsgs.filter((m) => !m.loading));
+      } else {
+        apiLoadSession(urlSession)
+          .then((data) => {
+            setSessionId(data.session_id);
+            setMessages(data.messages.filter((m) => !m.loading));
+            lsSetMessages(data.session_id, data.messages.filter((m) => !m.loading));
+          })
+          .catch(() => { /* session not found, start fresh */ });
+      }
     }
     void refreshSessions();
   }, [searchParams, refreshSessions]);
@@ -460,25 +507,38 @@ function QueryPageInner() {
     (msgs: Message[], sid: string | null) => {
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
       saveTimeout.current = setTimeout(async () => {
-        try {
-          const persistable = msgs.filter((m) => !m.loading);
-          if (persistable.length === 0) return;
-          const { session_id } = await apiSaveSession(sid, persistable);
-          if (!sid) {
-            // New session created — update URL without full navigation
-            setSessionId(session_id);
-            window.history.replaceState({}, "", `/query?session=${session_id}`);
-            void refreshSessions();
-          } else {
-            // Update title in sidebar
-            void refreshSessions();
-          }
-        } catch {
-          /* non-critical */
+        const persistable = msgs.filter((m) => !m.loading);
+        if (persistable.length === 0) return;
+
+        // Use existing ID or generate one locally — no backend round-trip needed
+        const resolvedId = sid ?? uid();
+        const firstUser = persistable.find(m => m.role === 'user');
+        const title = firstUser?.question?.slice(0, 80) ?? 'New Chat';
+
+        // 1. Save to localStorage immediately (always works)
+        const summary: SessionSummary = {
+          session_id: resolvedId,
+          title,
+          messageCount: persistable.length,
+          updatedAt: new Date().toISOString(),
+        };
+        const updatedList = [summary, ...lsGetList().filter(s => s.session_id !== resolvedId)];
+        lsSetList(updatedList);
+        lsSetMessages(resolvedId, persistable);
+        setSessions(updatedList);
+
+        if (!sid) {
+          setSessionId(resolvedId);
+          window.history.replaceState({}, "", `/query?session=${resolvedId}`);
         }
+
+        // 2. Also save to backend (best-effort)
+        try {
+          await apiSaveSession(resolvedId, persistable, title);
+        } catch { /* backend unavailable – localStorage version is fine */ }
       }, 600);
     },
-    [refreshSessions],
+    [],
   );
 
   // ── Send question ────────────────────────────────────────────────────────
@@ -578,24 +638,35 @@ function QueryPageInner() {
 
   async function openSession(sid: string) {
     if (sid === sessionId) return;
+    // Try localStorage first
+    const localMsgs = lsGetMessages(sid);
+    if (localMsgs) {
+      setSessionId(sid);
+      setMessages(localMsgs.filter((m) => !m.loading));
+      setActiveHistoryId(null);
+      window.history.replaceState({}, "", `/query?session=${sid}`);
+      return;
+    }
+    // Fallback to API
     try {
       const data = await apiLoadSession(sid);
       setSessionId(data.session_id);
       setMessages(data.messages.filter((m) => !m.loading));
+      lsSetMessages(sid, data.messages.filter((m) => !m.loading));
       setActiveHistoryId(null);
       window.history.replaceState({}, "", `/query?session=${sid}`);
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   }
 
   // ── Delete session ───────────────────────────────────────────────────────
 
   async function deleteSession(e: React.MouseEvent, sid: string) {
     e.stopPropagation();
-    await apiDeleteSession(sid);
+    lsDeleteSession(sid);
     setSessions((prev) => prev.filter((s) => s.session_id !== sid));
     if (sid === sessionId) startNewChat();
+    // Best-effort backend delete
+    apiDeleteSession(sid).catch(() => {});
   }
 
   // ── Share ────────────────────────────────────────────────────────────────
@@ -606,9 +677,14 @@ function QueryPageInner() {
       // Save first if unsaved
       const persistable = messages.filter((m) => !m.loading);
       if (persistable.length === 0) return;
-      const { session_id } = await apiSaveSession(null, persistable);
-      sid = session_id;
+      sid = uid();
+      const firstUser = persistable.find(m => m.role === 'user');
+      const title = firstUser?.question?.slice(0, 80) ?? 'New Chat';
+      lsSetMessages(sid, persistable);
+      const summary: SessionSummary = { session_id: sid, title, messageCount: persistable.length, updatedAt: new Date().toISOString() };
+      lsSetList([summary, ...lsGetList()]);
       setSessionId(sid);
+      apiSaveSession(sid, persistable, title).catch(() => {});
     }
     const url = `${window.location.origin}/query?session=${sid}`;
     await navigator.clipboard.writeText(url);

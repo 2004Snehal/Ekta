@@ -598,6 +598,15 @@ def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries:
             reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
             logger.info("[LLM raw] finish_reason=%s len=%d reasoning_len=%d preview=%r",
                         response.choices[0].finish_reason, len(raw), len(reasoning), raw[:300])
+
+            # Empty content (model returned nothing) — retry before giving up
+            if not raw.strip() and attempt < max_retries - 1:
+                logger.warning(
+                    "[LLM] Empty response on attempt %d/%d — retrying.",
+                    attempt + 1, max_retries,
+                )
+                continue
+
             return raw, reasoning
         except Exception as exc:
             if _is_quota_error(exc) and attempt < max_retries - 1:

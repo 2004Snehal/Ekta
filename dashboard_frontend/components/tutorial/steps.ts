@@ -8,68 +8,68 @@ export const getTutorialSteps = (pathname: string): DriveStep[] => {
   // 1. DASHBOARD (Main View) - Detailed
   if (path === "/" || path === "/dashboard") {
     return [
-      { 
-        element: "#nav-link-query", 
-        popover: { 
-          title: "Natural Language Query", 
-          description: "Ask questions in plain English here (e.g., 'Show me error rates for last week').", 
-          side: "bottom", 
-          align: "center" 
-        } 
+      {
+        element: "#sidebar-link-natural-language-query",
+        popover: {
+          title: "Natural Language Query",
+          description: "Ask questions in plain English here (e.g., 'Show me error rates for last week').",
+          side: "right",
+          align: "start",
+        }
       },
-      { 
-        element: "#nav-link-insights", 
-        popover: { 
-          title: "Insight Narrator", 
-          description: "Access AI-generated data stories and anomaly reports.", 
-          side: "bottom", 
-          align: "center" 
-        } 
+      {
+        element: "#sidebar-link-insight-narrator",
+        popover: {
+          title: "Insight Narrator",
+          description: "Access AI-generated data stories and anomaly reports.",
+          side: "right",
+          align: "start",
+        }
       },
-      { 
-        element: "#nav-link-kpi-lab", 
-        popover: { 
-          title: "KPI Laboratory", 
-          description: "Deep dive into specific metrics and analyze trends.", 
-          side: "bottom", 
-          align: "center" 
-        } 
+      {
+        element: "#sidebar-link-kpi-lab",
+        popover: {
+          title: "KPI Laboratory",
+          description: "Deep dive into specific metrics and analyze trends.",
+          side: "right",
+          align: "start",
+        }
       },
-      { 
-        element: "#nav-link-workspace", 
-        popover: { 
-          title: "Workspace", 
-          description: "Manage your saved reports, team settings, and preferences.", 
-          side: "bottom", 
-          align: "center" 
-        } 
+      {
+        element: "#sidebar-link-workspace",
+        popover: {
+          title: "Workspace",
+          description: "Manage your saved reports, team settings, and preferences.",
+          side: "right",
+          align: "start",
+        }
       },
-      { 
-        element: "#dashboard-filters-section", 
-        popover: { 
-          title: "Global Filters", 
-          description: "Filter all dashboard data by Client, Platform, Language, and more here.", 
-          side: "bottom", 
-          align: "start" 
-        } 
+      {
+        element: "#dashboard-filters-section",
+        popover: {
+          title: "Global Filters",
+          description: "Filter all dashboard data by Client, Platform, Language, and more here.",
+          side: "bottom",
+          align: "start",
+        }
       },
-      { 
-        element: "#dashboard-kpis-strip", 
-        popover: { 
-          title: "Key Performance Indicators", 
-          description: "Track critical metrics like <b>Published Videos</b>, <b>Processing Time</b>, and <b>Error Rates</b> at a glance.", 
-          side: "bottom", 
-          align: "start" 
-        } 
+      {
+        element: "#dashboard-kpis-strip",
+        popover: {
+          title: "Key Performance Indicators",
+          description: "Track critical metrics like <b>Published Videos</b>, <b>Processing Time</b>, and <b>Error Rates</b> at a glance.",
+          side: "bottom",
+          align: "start",
+        }
       },
-      { 
-        element: "#tutorial-restart-btn", 
-        popover: { 
-          title: "Replay Tutorial", 
-          description: "Click here anytime to see these tips again.", 
-          side: "right", 
-          align: "end" 
-        } 
+      {
+        element: "#tutorial-restart-btn",
+        popover: {
+          title: "Replay Tutorial",
+          description: "Click here anytime to see these tips again.",
+          side: "top",
+          align: "start",
+        }
       }
     ];
   }
@@ -121,14 +121,14 @@ export const getTutorialSteps = (pathname: string): DriveStep[] => {
 
   // Default Fallback
   return [
-    { 
-      element: "#sidebar-brand", 
-      popover: { 
-        title: "Navigation", 
-        description: "Use the sidebar to explore different modules.", 
-        side: "right", 
-        align: "start" 
-      } 
+    {
+      element: "#sidebar-nav",
+      popover: {
+        title: "Navigation",
+        description: "Use the sidebar to explore different modules.",
+        side: "right",
+        align: "start"
+      }
     }
   ];
 };

@@ -8,7 +8,6 @@ import {
   MessageSquare,
   Newspaper,
   Zap,
-  Database,
   ShieldCheck,
   LogOut,
   LogIn,
@@ -66,25 +65,11 @@ export function Sidebar() {
     { href: '/narrator',   label: 'Insight Narrator',         icon: Newspaper },
     { href: '/query',      label: 'Natural Language Query',   icon: MessageSquare },
     { href: '/kpi-lab',    label: 'KPI Lab',                  icon: Zap },
-    { href: '/data',       label: 'Data Manager',             icon: Database },
     { href: '/workspace',  label: 'Workspace',                icon: Users },
   ];
 
   return (
     <div id="app-sidebar" className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col fixed left-0 top-11 bottom-0 z-40">
-      {/* Logo */}
-      <div id="sidebar-brand" className="p-6 border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-            <div className="text-primary-foreground font-bold text-lg">F</div>
-          </div>
-          <div className="flex flex-col">
-            <span className="font-bold text-sidebar-foreground">Frammer</span>
-            <span className="text-xs text-muted-foreground">AI Analytics</span>
-          </div>
-        </div>
-      </div>
-
       {/* Navigation */}
       <nav id="sidebar-nav" className="flex-1 p-6 space-y-2 overflow-y-auto">
         {links.map((link) => {

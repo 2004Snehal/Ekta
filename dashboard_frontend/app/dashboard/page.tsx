@@ -52,7 +52,7 @@ function uid() { return Math.random().toString(36).slice(2); }
 type ShareStatus = 'idle' | 'saving' | 'copied';
 
 function getRequiredDataRange(range: DashboardDateRange): DashboardDateRange {
-  return range === 'all-time' ? 'all-time' : 'last-90-days';
+  return range; // fetch exactly what's needed; supportsRange handles cache reuse
 }
 
 function buildSparkline(records: DashboardRecord[], key: 'uploadedVideos' | 'processedVideos' | 'publishedVideos', buckets = 12): number[] {

@@ -3,8 +3,9 @@
 /* Highlighted Element: Ensure visibility */
 .driver-highlighted-element {
   background-color: transparent !important;
-  z-index: 100003 !important;
-  box-shadow: 0 0 0 4px #aaa, 0 0 0 2px #fff !important; /* Visual focus */
+  /* z-index intentionally omitted — sidebar links live inside a fixed stacking
+     context (z-40); overriding z-index here has no effect and can cause glitches.
+     Driver.js positions its own stage overlay independently. */
 }
 
 /* Ensure Overlay doesn't hide content completely */

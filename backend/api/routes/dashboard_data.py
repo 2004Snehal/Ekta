@@ -39,7 +39,6 @@ _DIM_LABELS = {
     "workflow":       "Workflow",
     "publisher":      "Publisher",
     "content_bucket": "Content Bucket",
-    "status":         "Status",
 }
 
 _SQL = """
@@ -55,10 +54,9 @@ _SQL = """
         COALESCE(dot.type_name,     'unknown')                           AS workflow,
         CASE WHEN du.is_bot THEN 'Auto' ELSE 'Manual' END               AS publisher,
         COALESCE(dit.category,      'uncategorized')                     AS content_bucket,
-        CASE WHEN f.published_flag
-             THEN 'published' ELSE 'processed' END                       AS status,
 
         -- metrics (aggregated per date+dimension row)
+        -- status removed from GROUP BY: published/processed split via separate counters
         COUNT(DISTINCT f.video_id)                                        AS uploaded_videos,
         COUNT(*)                                                          AS processed_videos,
         COUNT(*) FILTER (WHERE f.published_flag)                         AS published_videos,
@@ -78,9 +76,8 @@ _SQL = """
     WHERE f.uploaded_at::date >= %s
       {client_filter}
 
-    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
     ORDER BY 1 DESC
-    LIMIT 100000
 """
 
 
@@ -131,6 +128,8 @@ def get_dashboard_data(
     records = []
     for row in raw_rows:
         r = dict(zip(cols, row))
+        published = int(r["published_videos"] or 0)
+        processed = int(r["processed_videos"] or 0)
         records.append({
             "date":               r["date"].isoformat() if hasattr(r["date"], "isoformat") else str(r["date"]),
             "client_type":        r["client_type"] or "",
@@ -143,11 +142,12 @@ def get_dashboard_data(
             "workflow":           r["workflow"] or "",
             "publisher":          r["publisher"] or "",
             "content_bucket":     r["content_bucket"] or "",
-            "status":             r["status"] or "",
+            # status derived: 'published' when all videos in the group are published, else 'mixed'
+            "status":             "published" if published == processed else "processed",
             "uploadedVideos":     int(r["uploaded_videos"] or 0),
-            "processedVideos":    int(r["processed_videos"] or 0),
-            "publishedVideos":    int(r["published_videos"] or 0),
-            "promotedVideos":     int(r["promoted_videos"] or 0),
+            "processedVideos":    processed,
+            "publishedVideos":    published,
+            "promotedVideos":     published,
             "engagement":         0,
             "avgDurationSeconds": int(r["avg_duration_seconds"] or 0),
         })
