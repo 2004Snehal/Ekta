@@ -488,6 +488,9 @@
     border-radius: 5px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     animation: fade-up 0.4s ease-out both;
+    overflow: visible;
+    position: relative;
+    z-index: 1;
   }
 
   /* Insight row */

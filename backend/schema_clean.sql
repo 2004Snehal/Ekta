@@ -73,7 +73,13 @@ CREATE TABLE IF NOT EXISTS internal.kpi_registry (
     sql_expression   TEXT NOT NULL,
     columns_used     JSONB NOT NULL DEFAULT '[]',
     tables_used      JSONB NOT NULL DEFAULT '[]',
-    category         TEXT,
+    category         TEXT CHECK (category IN (
+                         'Founders and Executive Leadership',
+                         'Client Success Teams',
+                         'Operations Teams',
+                         'Editorial and Production Teams',
+                         'Technology and Product Teams'
+                     )),
     current_value    JSONB,
     unit             TEXT,
     usefulness_score FLOAT8,

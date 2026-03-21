@@ -71,7 +71,16 @@ Do NOT generate placeholder SQL like SELECT 0 or SELECT 'not available'.
 If the required data does not exist, return a SELECT that produces 0 rows (e.g. WHERE 1=0).
 Return ONLY the corrected SQL — no explanation, no markdown fences, no extra text.
 """
-    corrected = call_llm_text(prompt, system="You are a PostgreSQL SQL expert.")
+    corrected = call_llm_text(
+        prompt,
+        system=(
+            "You are a PostgreSQL expert for the Frammer AI analytics platform. "
+            "Return ONLY the corrected SQL — no explanation, no markdown fences, no JSON, no extra text."
+        ),
+    )
+    # Strip think blocks (Qwen3 chain-of-thought)
+    corrected = re.sub(r"<think>.*?</think>", "", corrected, flags=re.DOTALL)
+    corrected = re.sub(r"<think>.*", "", corrected, flags=re.DOTALL)  # truncated block
     corrected = re.sub(r"```sql\s*", "", corrected)
     corrected = re.sub(r"```\s*", "", corrected)
     return corrected.strip()

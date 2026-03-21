@@ -20,6 +20,11 @@ import {
   ScatterChart,
   Scatter,
   Brush,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
 } from "recharts";
 import type { UniversalChartSpec } from "@/types/chart";
 import { ChartInsightPanel } from "@/components/ChartInsightPanel";
@@ -115,6 +120,26 @@ function pivotStackedData(
   };
 }
 
+function pivotRadarData(
+  data: Record<string, unknown>[],
+  entityField: string,
+): { pivoted: Record<string, unknown>[]; entityKeys: string[] } {
+  if (!data.length) return { pivoted: [], entityKeys: [] };
+  const first = data[0];
+  const metricCols = Object.keys(first).filter(
+    (k) => k !== entityField && typeof first[k] === "number",
+  );
+  const entityKeys = data.map((r) => String(r[entityField]));
+  const pivoted = metricCols.map((col) => {
+    const entry: Record<string, unknown> = { subject: col };
+    data.forEach((row) => {
+      entry[String(row[entityField])] = row[col];
+    });
+    return entry;
+  });
+  return { pivoted, entityKeys };
+}
+
 function RefLinks({
   links,
 }: {
@@ -150,9 +175,10 @@ function RefLinks({
 interface ChartRendererProps {
   chart: UniversalChartSpec;
   onElementClick?: (dimensionKey: string, value: string) => void;
+  disableInsights?: boolean;
 }
 
-export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
+export function ChartRenderer({ chart, onElementClick, disableInsights = false }: ChartRendererProps) {
   const colors = chart.colors ?? COLORS;
   const { xField, yField } = resolveFields(chart);
   const hasDrill = Boolean(chart.drillDown);
@@ -173,16 +199,38 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
 
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // description is per-chart-mount — fetched once
   const descFetched = useRef(false);
-  // data insights keyed by data fingerprint — re-fetched when data changes
-  const dataCache = useRef<
-    Map<string, { summary: string; insights: string[] }>
-  >(new Map());
 
+  // ── sessionStorage-backed cache helpers ──────────────────────────────────
   function dataFingerprint(data: Record<string, unknown>[]): string {
     if (!data.length) return "empty";
     return `${data.length}|${JSON.stringify(data[0])}|${JSON.stringify(data[data.length - 1])}`;
+  }
+
+  function cacheKey(prefix: string, extra: string): string {
+    return `ci_${prefix}_${extra}`;
+  }
+
+  function getSessionCache(key: string): { summary: string; insights: string[] } | null {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  }
+
+  function setSessionCache(key: string, val: { summary: string; insights: string[] }) {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(val));
+    } catch {}
+  }
+
+  function getDescCache(key: string): string | null {
+    try { return sessionStorage.getItem(key); } catch { return null; }
+  }
+
+  function setDescCache(key: string, val: string) {
+    try { sessionStorage.setItem(key, val); } catch {}
   }
 
   const chartTitle = chart.title ?? chart.chart_type;
@@ -190,6 +238,15 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const fetchDescription = useCallback(async () => {
     if (descFetched.current) return;
     descFetched.current = true;
+
+    // Check sessionStorage first
+    const descCacheKey = cacheKey("desc", chartTitle);
+    const cachedDesc = getDescCache(descCacheKey);
+    if (cachedDesc) {
+      setDescription(cachedDesc);
+      return;
+    }
+
     setDescLoading(true);
     setDescError(false);
     try {
@@ -202,7 +259,9 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       const res = await fetch(`${API_BASE}/chart/description?${params}`);
       if (res.ok) {
         const json = await res.json();
-        setDescription(json.description ?? "");
+        const desc = json.description ?? "";
+        setDescription(desc);
+        setDescCache(descCacheKey, desc);
       } else {
         setDescError(true);
       }
@@ -216,17 +275,17 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
   const fetchDataInsights = useCallback(async () => {
     if (!chart.data?.length) return;
     const fp = dataFingerprint(chart.data as Record<string, unknown>[]);
-    const cached = dataCache.current.get(fp);
-    if (cached) {
+    const insightCacheKey = cacheKey("data", `${chartTitle}|${fp}`);
+
+    // Check sessionStorage first (skip empty/error entries)
+    const cached = getSessionCache(insightCacheKey);
+    if (cached && (cached.summary || cached.insights.length > 0) && !cached.summary?.startsWith("AI Insights temporarily")) {
       setInsightSummary(cached.summary);
       setInsightBullets(cached.insights);
-      if (!cached.summary && !cached.insights.length) {
-        setDataError(true);
-      } else {
-        setDataError(false);
-      }
+      setDataError(false);
       return;
     }
+
     setDataLoading(true);
     setDataError(false);
     setInsightSummary("");
@@ -250,15 +309,16 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
           summary: json.summary ?? "",
           insights: json.insights ?? [],
         };
-        dataCache.current.set(fp, entry);
+        // Only cache successful non-error responses
+        if (!entry.summary.startsWith("AI Insights temporarily")) {
+          setSessionCache(insightCacheKey, entry);
+        }
         setInsightSummary(entry.summary);
         setInsightBullets(entry.insights);
       } else {
-        dataCache.current.set(fp, { summary: '', insights: [] });
         setDataError(true);
       }
     } catch {
-      dataCache.current.set(fp, { summary: '', insights: [] });
       setDataError(true);
     } finally {
       setDataLoading(false);
@@ -665,6 +725,114 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
         );
       }
 
+      case "horizontal_bar": {
+        const allData = chart.data;
+        const displayData =
+          !showAll && allData.length > BAR_SHOW_ALL_THRESHOLD
+            ? allData.slice(0, BAR_SHOW_ALL_THRESHOLD)
+            : allData;
+        return (
+          <>
+            <ResponsiveContainer width="100%" height={Math.max(180, displayData.length * 28)}>
+              <BarChart
+                layout="vertical"
+                data={displayData}
+                margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
+              >
+                <CartesianGrid {...GRID_STYLE} horizontal={false} />
+                <XAxis type="number" {...AXIS_STYLE} />
+                <YAxis
+                  type="category"
+                  dataKey={xField}
+                  width={110}
+                  tick={{ fill: "#A3A3A3", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  content={hasDrill ? <DrillTooltip /> : undefined}
+                  contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined}
+                  cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                />
+                <Bar
+                  dataKey={yField}
+                  fill={colors[0]}
+                  radius={[0, 2, 2, 0]}
+                  maxBarSize={20}
+                  cursor={cursorStyle}
+                  onClick={(entry: any) => handleClick(xField, entry?.[xField])}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+            {allData.length > BAR_SHOW_ALL_THRESHOLD && (
+              <button
+                onClick={() => setShowAll((p) => !p)}
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.55rem",
+                  color: "var(--uplink)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  marginTop: "4px",
+                  padding: 0,
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {showAll
+                  ? `SHOW TOP ${BAR_SHOW_ALL_THRESHOLD}`
+                  : `SHOW ALL ${allData.length}`}
+              </button>
+            )}
+          </>
+        );
+      }
+
+      case "radar": {
+        const { pivoted, entityKeys } = pivotRadarData(chart.data, xField);
+        if (!pivoted.length) return <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--on-low)" }}>No data</p>;
+        return (
+          <ResponsiveContainer width="100%" height={260}>
+            <RadarChart data={pivoted} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+              <PolarGrid stroke="#1E1E1E" />
+              <PolarAngleAxis
+                dataKey="subject"
+                tick={{ fill: "#A3A3A3", fontSize: 10, fontFamily: "var(--font-mono)" }}
+              />
+              <PolarRadiusAxis
+                tick={{ fill: "#A3A3A3", fontSize: 9 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              {entityKeys.map((key, idx) => (
+                <Radar
+                  key={key}
+                  name={key}
+                  dataKey={key}
+                  stroke={colors[idx % colors.length]}
+                  fill={colors[idx % colors.length]}
+                  fillOpacity={0.15}
+                  strokeWidth={2}
+                />
+              ))}
+              {entityKeys.length > 1 && (
+                <Legend
+                  iconSize={6}
+                  iconType="square"
+                  wrapperStyle={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.6rem",
+                    color: "#9A9590",
+                    letterSpacing: "0.06em",
+                  }}
+                />
+              )}
+            </RadarChart>
+          </ResponsiveContainer>
+        );
+      }
+
       case "table":
       default: {
         if (!chart.data?.length)
@@ -734,11 +902,11 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
     <div
       className="chart-panel"
       style={{ position: "relative" }}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={disableInsights ? undefined : handleMouseEnter}
+      onMouseLeave={disableInsights ? undefined : handleMouseLeave}
     >
       {chart.title && (
-        <div className="flex items-center gap-3 mb-4">
+        <div className="mb-4 flex flex-col items-start gap-1">
           <span className="section-id">{chart.title}</span>
           {chart.description && (
             <span
@@ -746,6 +914,7 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
                 fontFamily: "var(--font-mono)",
                 fontSize: "0.6rem",
                 color: "var(--on-low)",
+                lineHeight: 1.5,
               }}
             >
               — {chart.description}
@@ -757,17 +926,19 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       {chart.refLinks && chart.refLinks.length > 0 && (
         <RefLinks links={chart.refLinks} />
       )}
-      <ChartInsightPanel
-        visible={insightVisible}
-        onClose={handleInsightClose}
-        description={description}
-        descriptionLoading={descLoading}
-        descriptionError={descError}
-        summary={insightSummary}
-        insights={insightBullets}
-        dataLoading={dataLoading}
-        dataError={dataError}
-      />
+      {!disableInsights && (
+        <ChartInsightPanel
+          visible={insightVisible}
+          onClose={handleInsightClose}
+          description={description}
+          descriptionLoading={descLoading}
+          descriptionError={descError}
+          summary={insightSummary}
+          insights={insightBullets}
+          dataLoading={dataLoading}
+          dataError={dataError}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,129 @@
+/* Driver.js Theme Overrides */
+
+/* Highlighted Element: Ensure visibility */
+.driver-highlighted-element {
+  background-color: transparent !important;
+  z-index: 100003 !important;
+  box-shadow: 0 0 0 4px #aaa, 0 0 0 2px #fff !important; /* Visual focus */
+}
+
+/* Ensure Overlay doesn't hide content completely */
+.driver-overlay {
+  z-index: 100002 !important;
+  opacity: 0.6 !important; 
+}
+
+/* Popover Styling */
+.driver-popover.driverjs-theme {
+  z-index: 100004 !important;
+  background-color: #000 !important;
+  color: #fff !important;
+  border: 1px solid #444; 
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  padding: 16px;
+  max-width: 300px;
+}
+
+.driver-popover-arrow-side-left.driver-popover-arrow {
+  border-left-color: #000000 !important;
+}
+.driver-popover-arrow-side-right.driver-popover-arrow {
+  border-right-color: #000000 !important;
+}
+.driver-popover-arrow-side-top.driver-popover-arrow {
+  border-top-color: #000000 !important;
+}
+.driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-bottom-color: #000000 !important;
+}
+
+/* 2. Typography */
+.driver-popover-title {
+  color: #ffffff !important; /* Pure White Title */
+  font-family: var(--font-condensed, sans-serif);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.driver-popover-description {
+  color: #e0e0e0 !important; /* Almost white (for contrast) */
+  font-family: var(--font-sans, sans-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+
+/* 3. Navigation Buttons */
+.driver-popover-footer {
+  margin-top: 16px;
+}
+
+.driver-popover-footer button {
+  background-color: transparent;
+  color: #ffffff !important;     /* Force White text */
+  border: 1px solid #444; 
+  border-radius: 2px;
+  padding: 6px 14px;
+  font-family: var(--font-condensed, sans-serif);
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-shadow: none;
+}
+
+.driver-popover-footer button:hover {
+  background-color: #111;
+  border-color: #666;
+  color: #fff !important;
+}
+
+/* Primary "Next" / "Done" Button - White background, Black text */
+.driver-popover-footer .driver-popover-next-btn {
+  background-color: #ffffff !important; /* White background */
+  color: #000000 !important;            /* Black text */
+  border: 1px solid #ffffff;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+.driver-popover-footer .driver-popover-next-btn:hover {
+  background-color: #e0e0e0 !important;
+  border-color: #e0e0e0;
+  color: #000 !important;
+}
+
+/* Back Button */
+.driver-popover-footer .driver-popover-prev-btn {
+  color: #888; /* Grey for secondary action */
+  border-color: transparent;
+}
+.driver-popover-footer .driver-popover-prev-btn:hover {
+  color: #fff;
+  background-color: transparent;
+  border-color: #444; 
+}
+
+/* Close Button (X) */
+.driver-popover-close-btn {
+  color: #666;
+  transition: color 0.2s;
+  top: 10px;
+  right: 10px;
+}
+
+.driver-popover-close-btn:hover {
+  color: #ffffff;
+}
+
+/* Progress Text (Step 1 of 4) */
+.driver-popover-progress-text {
+  color: #555; /* Dark gray */
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}

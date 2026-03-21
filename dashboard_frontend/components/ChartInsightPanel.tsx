@@ -34,6 +34,8 @@ export function ChartInsightPanel({
         top: 0,
         right: 0,
         width: "220px",
+        height: "100%",
+        overflowY: "auto",
         background: "#0E0E0E",
         border: "1px solid #2C2C2C",
         padding: "12px",

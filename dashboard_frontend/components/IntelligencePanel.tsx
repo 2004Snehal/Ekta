@@ -145,7 +145,7 @@ export function IntelligencePanel({
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 0 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
 
       {/* ── Panel header ── */}
       <div className="flex items-center justify-between" style={{ marginBottom: '12px' }}>
@@ -254,7 +254,7 @@ export function IntelligencePanel({
       )}
 
       {/* ── Actions header with inline role selector ── */}
-      <div className="flex items-center gap-2" style={{ marginBottom: '12px', position: 'relative' }}>
+      <div className="flex items-center gap-2" style={{ marginBottom: '12px', position: 'relative', zIndex: 10 }}>
         <span style={{
           fontFamily: 'var(--font-condensed)',
           fontSize: '0.55rem',
@@ -353,7 +353,7 @@ export function IntelligencePanel({
       )}
 
       {!loading && !error && recs && (
-        <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+        <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', minHeight: 0, paddingRight: '8px' }}>
           {recs.recommendations.map((rec, i) => (
             <div key={i} className="rec-row" style={{ animationDelay: `${i * 0.08}s` }}>
               <div

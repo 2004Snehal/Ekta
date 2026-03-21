@@ -18,6 +18,8 @@ import {
   Trash2,
   Check,
   FlaskConical,
+  Star,
+  Brain,
 } from "lucide-react";
 import type { UniversalChartSpec } from "@/types/chart";
 
@@ -38,6 +40,8 @@ interface NLQResult {
   data: Record<string, unknown>[];
   columns: string[];
   row_count: number;
+  thinking?: string | null;
+  complexity?: string;
   error?: string;
 }
 
@@ -75,6 +79,17 @@ function formatTime(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** Strip markdown syntax so answers render as plain prose. */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")   // **bold**
+    .replace(/\*(.+?)\*/g, "$1")        // *italic*
+    .replace(/^#+\s+/gm, "")           // ## headings
+    .replace(/^[-*]\s+/gm, "")         // bullet points
+    .replace(/`(.+?)`/g, "$1")         // `code`
+    .trim();
 }
 
 function formatDate(iso: string | null) {
@@ -198,6 +213,32 @@ function UserBubble({ text }: { text: string }) {
 
 function AssistantBubble({ msg }: { msg: Message }) {
   const [sqlOpen, setSqlOpen] = useState(false);
+  const [thinkOpen, setThinkOpen] = useState(true);  // open by default
+  const [pinned, setPinned]   = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('dashboard_nlq_graphs') ?? '[]') as Array<{ id: string }>;
+      setPinned(stored.some(g => g.id === msg.id));
+    } catch { /* ignore */ }
+  }, [msg.id]);
+
+  function togglePin() {
+    const r = msg.result;
+    if (!r || r.error || !r.data?.length) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem('dashboard_nlq_graphs') ?? '[]') as Array<{ id: string }>;
+      if (pinned) {
+        const next = stored.filter(g => g.id !== msg.id);
+        localStorage.setItem('dashboard_nlq_graphs', JSON.stringify(next));
+        setPinned(false);
+      } else {
+        const graph = { id: msg.id, title: r.title ?? 'NLQ Graph', chart_type: r.chart_type, x: r.x, y: r.y, data: r.data, sql: r.sql ?? null, description: r.description ?? null };
+        localStorage.setItem('dashboard_nlq_graphs', JSON.stringify([...stored, graph]));
+        setPinned(true);
+      }
+    } catch { /* ignore */ }
+  }
 
   if (msg.loading) {
     return (
@@ -247,24 +288,65 @@ function AssistantBubble({ msg }: { msg: Message }) {
       </div>
       <div className="flex-1 space-y-3">
         <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
-          <p className="text-sm font-medium text-foreground">
-            {r.title || "Result"}
-          </p>
-          {r.description && (
-            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              {r.description}
+          {r.title && (
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+              {r.title}
             </p>
           )}
-          {r.row_count !== undefined && r.row_count !== null && (
-            <p className="text-xs text-muted-foreground mt-1">
+          {r.description && (
+            <p className="text-sm text-foreground leading-relaxed">
+              {stripMarkdown(r.description)}
+            </p>
+          )}
+          {r.row_count !== undefined && r.row_count !== null && r.row_count > 0 && (
+            <p className="text-xs text-muted-foreground mt-1.5">
               {r.row_count.toLocaleString()} rows
             </p>
           )}
         </div>
 
         {r.data && r.data.length > 0 && (
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <ChartRenderer chart={nlqToChartSpec(r)} />
+          <>
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <ChartRenderer chart={nlqToChartSpec(r)} disableInsights />
+            </div>
+            <button onClick={togglePin}
+              className={`flex items-center gap-1.5 text-xs transition-colors px-1 py-0.5 rounded ${pinned ? 'text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'}`}
+              title={pinned ? 'Remove from Dashboard' : 'Pin to Dashboard'}>
+              <Star className={`w-3.5 h-3.5 ${pinned ? 'fill-yellow-400' : ''}`} />
+              {pinned ? 'Pinned to Dashboard' : 'Pin to Dashboard'}
+            </button>
+          </>
+        )}
+
+        {r.thinking && (
+          <div className="border border-violet-500/20 rounded-xl overflow-hidden bg-violet-500/[0.03]">
+            <button
+              onClick={() => setThinkOpen((v) => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-violet-400/80 hover:text-violet-300 transition-colors"
+            >
+              <Brain className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-medium">Reasoning</span>
+              {r.complexity && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                  {r.complexity}
+                </span>
+              )}
+              {thinkOpen ? (
+                <ChevronDown className="w-3 h-3 ml-auto shrink-0" />
+              ) : (
+                <ChevronRight className="w-3 h-3 ml-auto shrink-0" />
+              )}
+            </button>
+            {thinkOpen && (
+              <div className="px-4 pb-4 pt-0">
+                <div className="border-t border-violet-500/10 pt-3">
+                  <p className="text-xs text-violet-300/70 leading-relaxed whitespace-pre-wrap">
+                    {r.thinking}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

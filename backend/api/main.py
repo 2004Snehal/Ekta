@@ -32,6 +32,7 @@ from api.routes import profiles
 from api.routes import auth as auth_route
 from api.routes import admin as admin_route
 from api.routes import kpi_registry as kpi_registry_route
+from api.routes import workspace as workspace_route
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +58,15 @@ def _schedule_narrator():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    # Train Vanna with live schema (skipped if ChromaDB already populated)
+    # Train RAG KB with live schema (skipped if ChromaDB already populated)
     try:
-        from intelligence.nlq.vanna_service import train_vanna_with_schema
+        from intelligence.nlq.rag_service import train_with_schema
         from api.deps import get_conn
         with get_conn() as conn:
-            train_vanna_with_schema(conn)
-        logger.info("Vanna NLQ knowledge base ready.")
+            train_with_schema(conn)
+        logger.info("NLQ RAG knowledge base ready.")
     except Exception:
-        logger.exception("Vanna training failed — NLQ will still attempt queries but RAG quality may be reduced.")
+        logger.exception("RAG training failed — NLQ will still attempt queries but RAG quality may be reduced.")
 
     # Start nightly job at 02:00 server time (after materialized view refresh)
     _scheduler.add_job(
@@ -90,6 +91,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # tighten in production
@@ -112,6 +120,7 @@ app.include_router(analytics.router,       tags=["Analytics"])
 app.include_router(auth_route.router,          tags=["Auth"])          # signup / login
 app.include_router(admin_route.router,         tags=["Admin"])         # admin console
 app.include_router(kpi_registry_route.router,  tags=["KPI Lab"])       # KPI registry CRUD + manual/agent creation
+app.include_router(workspace_route.router,     tags=["Workspace"])     # team directory + saved dashboards
 
 
 @app.get("/health")

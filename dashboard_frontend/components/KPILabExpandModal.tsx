@@ -70,11 +70,11 @@ function fmt(val: unknown): string {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  growth:     'bg-green-500/10 text-green-400 border-green-500/20',
-  quality:    'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  efficiency: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  engagement: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  volume:     'bg-pink-500/10 text-pink-400 border-pink-500/20',
+  'founders and executive leadership': 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  'client success teams':              'bg-green-500/10 text-green-400 border-green-500/20',
+  'operations teams':                  'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  'editorial and production teams':    'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  'technology and product teams':      'bg-pink-500/10 text-pink-400 border-pink-500/20',
 };
 
 function categoryStyle(cat?: string) {

@@ -4,6 +4,8 @@ import { Analytics } from '@vercel/analytics/next'
 import { TopNav } from '@/components/TopNav'
 import { ProfileProvider } from '@/lib/profiles'
 import { AuthProvider } from '@/context/AuthContext'
+import { TutorialProvider } from '@/components/tutorial/TutorialProvider'
+import { AppShell } from '@/components/AppShell'
 import './globals.css'
 
 const barlow = Barlow({
@@ -45,10 +47,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             suppressHydrationWarning>
         <AuthProvider>
           <ProfileProvider>
-            <TopNav />
-            <main className="pt-11">
-              {children}
-            </main>
+            <TutorialProvider>
+              <TopNav />
+              <AppShell>
+                {children}
+              </AppShell>
+            </TutorialProvider>
           </ProfileProvider>
         </AuthProvider>
         <Analytics />

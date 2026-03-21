@@ -11,6 +11,7 @@ export type DashboardKpiId =
 
 export interface DashboardRecord extends Record<string, string | number | null> {
   date: string;
+  client_type: string;
   client: string;
   channel: string;
   user: string;
@@ -39,6 +40,7 @@ export interface DynamicDashboardFilter {
 
 export interface DashboardFilters {
   dateRange: DashboardDateRange;
+  client_type: string;
   client: string;
   channel: string;
   user: string;
