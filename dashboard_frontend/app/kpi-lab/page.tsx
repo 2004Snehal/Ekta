@@ -827,7 +827,7 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!context.trim()) return;
-    setFormState('loading'); setFormError(''); setResult(null); setIsFallback(false);
+    setFormState('loading'); setFormError(''); setResult(null);
 
     startSteps('Generating KPIs…');
     try {

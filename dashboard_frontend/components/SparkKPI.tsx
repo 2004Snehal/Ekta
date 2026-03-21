@@ -20,11 +20,14 @@ const INSIGHT_DOT_COLOR: Record<string, string> = {
 };
 
 function fmtKpiValue(value: string | number): string {
-  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  // Strings with units (%, letters like "5m 30s") pass through unchanged
+  if (typeof value === 'string' && /[a-zA-Z%]/.test(value)) return value;
+  // Strip locale commas before parsing so "122,000" doesn't become 122
+  const n = typeof value === 'number' ? value : parseFloat(String(value).replace(/,/g, ''));
   if (isNaN(n)) return String(value);
-  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(4) + 'M';
-  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(4) + 'K';
-  if (Number.isInteger(n))      return n.toLocaleString();
+  // Integers: show full number with locale formatting (no K/M truncation)
+  if (Number.isInteger(n)) return n.toLocaleString();
+  // Floats: max 4 decimal places
   return n.toFixed(4);
 }
 

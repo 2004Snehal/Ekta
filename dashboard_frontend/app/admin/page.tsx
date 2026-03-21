@@ -495,7 +495,15 @@ function DataLabTab() {
 
   useEffect(() => { loadTables(); loadRelationships(); }, [loadTables, loadRelationships]);
 
-  const refresh = () => { loadTables(); loadRelationships(); };
+  // Silent refresh: updates data without setting loadingTables=true, so panels
+  // (AddColumnsPanel etc.) stay mounted and can show their own success/error state.
+  const refresh = useCallback(() => {
+    fetch(`${API_BASE}/admin/tables`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((d) => setTables(d.tables ?? []))
+      .catch(() => {});
+    loadRelationships();
+  }, [loadRelationships]);
 
   const labTabs: { id: LabSubTab; label: string; icon: React.ReactNode }[] = [
     { id: 'viz',     label: 'Schema Visualizer', icon: <Maximize2 className="w-4 h-4" /> },
@@ -1234,50 +1242,46 @@ function CreateTablePanel({ onCreated }: { onCreated: () => void }) {
 // Add Columns Panel
 // ────────────────────────────────────────────────────────────────────────── //
 
-function AddColumnsPanel({ tables }: { tables: TableInfo[]; onAdded: () => void }) {
+function AddColumnsPanel({ tables, onAdded }: { tables: TableInfo[]; onAdded: () => void }) {
   const [selectedTable, setSelectedTable] = useState('');
   const [columns, setColumns] = useState<ColumnDef[]>([
     { name: '', type: 'TEXT', nullable: true, is_pk: false },
   ]);
-  const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   function updateCol(i: number, field: keyof ColumnDef, value: string | boolean) {
     setColumns((prev) => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
   }
 
-  const dbUrl = process.env.NEXT_PUBLIC_DATABASE_URL ?? 'postgresql://USER:PASSWORD@HOST:PORT/DATABASE';
-
-  function buildScript(): string {
-    const valid = columns.filter((c) => c.name.trim());
-    const alters = valid.map((c) => {
-      const nullClause = c.nullable ? '' : " NOT NULL DEFAULT ''";
-      return `cur.execute('ALTER TABLE data."${selectedTable}" ADD COLUMN IF NOT EXISTS "${c.name}" ${c.type}${nullClause}')`;
-    }).join('\n');
-
-    return `import psycopg2
-
-conn = psycopg2.connect("${dbUrl}")
-cur = conn.cursor()
-
-${alters}
-
-conn.commit()
-cur.close()
-conn.close()
-print("Done — columns added to data.${selectedTable}")
-`;
-  }
-
-  function copyScript() {
-    navigator.clipboard.writeText(buildScript()).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  async function handleAddColumns() {
+    const validCols = columns.filter((c) => c.name.trim());
+    if (!selectedTable || validCols.length === 0) return;
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await fetch(`${API_BASE}/admin/table/${encodeURIComponent(selectedTable)}/add-columns`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ columns: validCols }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Failed to add columns');
+      setSuccess(`Added ${data.columns_added.length} column(s): ${data.columns_added.join(', ')}`);
+      setColumns([{ name: '', type: 'TEXT', nullable: true, is_pk: false }]);
+      onAdded();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
   }
 
   const existingCols = tables.find((t) => t.name === selectedTable)?.columns ?? [];
   const validCols = columns.filter((c) => c.name.trim());
-  const canGenerate = !!selectedTable && validCols.length > 0;
+  const canSubmit = !!selectedTable && validCols.length > 0 && !loading;
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 space-y-5">
@@ -1285,9 +1289,8 @@ print("Done — columns added to data.${selectedTable}")
         <h2 className="font-semibold text-foreground mb-1 flex items-center gap-2">
           <Columns3 className="w-4 h-4" /> Add Columns to Existing Table
         </h2>
-        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <Terminal className="w-3 h-3" />
-          Session poolers cannot run DDL. This generates a Python script — copy and run it on a direct DB connection.
+        <p className="text-xs text-muted-foreground">
+          Select a table and define new columns to add via DDL.
         </p>
       </div>
 
@@ -1348,24 +1351,14 @@ print("Done — columns added to data.${selectedTable}")
         </div>
       </div>
 
-      {canGenerate && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-foreground">Generated Python script</p>
-            <button onClick={copyScript}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
-              <Copy className="w-3 h-3" />
-              {copied ? 'Copied!' : 'Copy script'}
-            </button>
-          </div>
-          <pre className="bg-background border border-border rounded-lg p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre leading-relaxed">
-            {buildScript()}
-          </pre>
-          <p className="text-xs text-muted-foreground">
-            Run with: <code className="bg-muted px-1.5 py-0.5 rounded font-mono">python script.py</code> (requires psycopg2 and a direct DB URL)
-          </p>
-        </div>
-      )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {success && <p className="text-sm text-green-500">{success}</p>}
+
+      <button onClick={handleAddColumns} disabled={!canSubmit}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+        {loading ? 'Adding columns…' : 'Add Columns'}
+      </button>
     </div>
   );
 }
