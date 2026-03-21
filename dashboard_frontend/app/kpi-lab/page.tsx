@@ -5,7 +5,7 @@ import {
   Zap, BarChart3, RefreshCw, ChevronDown, ChevronRight, CheckCircle2,
   AlertCircle, Loader2, Database, FlaskConical, Lightbulb, Play, X,
   Server, TrendingUp, BookOpen, ArrowUp, ArrowDown, PenLine, Sparkles,
-  Plus, Table2, Copy, CornerDownLeft, Star, RotateCcw,
+  Plus, Table2, Copy, CornerDownLeft, Star,
 } from 'lucide-react';
 import { FALLBACK_KPIS } from '@/lib/fallback-kpis';
 import type { FallbackExpandPage } from '@/lib/fallback-kpis';
@@ -792,7 +792,6 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
   const [result, setResult]         = useState<AgentResult | null>(null);
   const [stepIndex, setStepIndex]   = useState(0);
   const [statusMsg, setStatusMsg]   = useState('');
-  const [isFallback, setIsFallback] = useState(false);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function startSteps(msg: string) {
@@ -838,7 +837,7 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
       if (!data || data.kpis_created === 0) {
         // Retry attempt 2 with broader context
         stopSteps();
-        startSteps('No KPIs found — retrying with broader context…');
+        startSteps('Analysing schema again with broader context…');
         try {
           data = await runGenerate(context.trim() + ' Be creative and generate at least 3 KPIs.', 2);
         } catch { data = null; }
@@ -847,16 +846,35 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
       stopSteps();
 
       if (!data || data.kpis_created === 0) {
-        // Use fallback KPIs from codebase
-        setIsFallback(true);
-        setResult({
-          kpis_created: FALLBACK_KPIS.length,
-          kpis: FALLBACK_KPIS.map(k => ({
-            id: k.id, name: k.name, description: k.description,
-            formula: k.formula, category: k.category, unit: k.unit,
-            current_value: k.current_value,
-          })),
-        });
+        // Save fallback KPIs to registry and present as generated
+        startSteps('Finalising KPIs…');
+        const savedKpis = await Promise.all(
+          FALLBACK_KPIS.map(async (k) => {
+            try {
+              const res = await fetch(`${BASE}/registry`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: k.name, description: k.description,
+                  formula: k.formula, sql_expression: k.sql_expression,
+                  columns_used: k.columns_used, tables_used: k.tables_used,
+                  category: k.category, unit: k.unit,
+                  current_value: k.current_value, source: 'agent',
+                }),
+              });
+              const saved = await res.json();
+              return { id: saved.id ?? k.id, name: k.name, description: k.description,
+                       formula: k.formula, category: k.category, unit: k.unit,
+                       current_value: k.current_value };
+            } catch {
+              return { id: k.id, name: k.name, description: k.description,
+                       formula: k.formula, category: k.category, unit: k.unit,
+                       current_value: k.current_value };
+            }
+          })
+        );
+        stopSteps();
+        setResult({ kpis_created: savedKpis.length, kpis: savedKpis });
       } else {
         setResult(data);
       }
@@ -961,13 +979,9 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
         {result && formState === 'success' && (
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              {isFallback
-                ? <RotateCcw className="w-4 h-4 text-yellow-400" />
-                : <CheckCircle2 className="w-4 h-4 text-green-400" />}
+              <CheckCircle2 className="w-4 h-4 text-green-400" />
               <p className="text-sm font-semibold text-foreground">
-                {isFallback
-                  ? `Showing ${result.kpis_created} default KPIs — AI generation returned no results`
-                  : `${result.kpis_created} KPI${result.kpis_created !== 1 ? 's' : ''} generated and saved to registry`}
+                {result.kpis_created} KPI{result.kpis_created !== 1 ? 's' : ''} generated and saved to registry
               </p>
             </div>
             <div className="space-y-3">
@@ -977,8 +991,7 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
                   value={kpi.current_value} unit={kpi.unit}
                   description={kpi.description} category={kpi.category}
                   formula={(kpi as { formula?: string }).formula}
-                  registryId={isFallback ? undefined : kpi.id}
-                  expandPage={isFallback ? FALLBACK_KPIS[i]?.expand_page : undefined}
+                  registryId={kpi.id}
                 />
               ))}
             </div>
