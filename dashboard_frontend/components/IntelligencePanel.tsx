@@ -109,25 +109,35 @@ export function IntelligencePanel({
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef     = useRef<AbortController | null>(null);
 
   const signals = (narratorData?.dashboard_banner ?? []).slice(0, 5) as InsightAlert[];
 
   async function fetchRecs(role: ProfileKey) {
     if (!apiBaseUrl || !dataReady) return;
+    // Cancel any in-flight request before starting a new one
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
+    const timer = setTimeout(() => controller.abort(), 100_000); // 100s
     try {
       const body = buildContext(filters, kpis, selectedKpiId, role, pathname);
       const res  = await fetch(`${apiBaseUrl}/recommendations/contextual`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        signal: controller.signal,
       });
       if (!res.ok) throw new Error(`${res.status}`);
       setRecs(await res.json() as RecResponse);
     } catch (e) {
+      // Don't show error for aborted requests (superseded by a newer one)
+      if (controller.signal.aborted) return;
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
-      setLoading(false);
+      clearTimeout(timer);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }
 
@@ -135,7 +145,10 @@ export function IntelligencePanel({
     if (!dataReady) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => void fetchRecs(profile), 600);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, kpis, selectedKpiId, dataReady, profile, pathname]);
 

@@ -20,8 +20,8 @@ LLM_BASE_URL = "https://openrouter.ai/api/v1"
 # NLQ / SQL generation (Vanna), LIDA, KPI registry, answer generation
 QWEN_CODER_MODEL        = "qwen/qwen3-coder-next"
 
-# Insight Narrator and other long-form reasoning
-QWEN_INSIGHT_MODEL      = "qwen/qwen3.5-397b-a17b"
+# Insight Narrator, Chart Insight Agent
+QWEN_INSIGHT_MODEL = "google/gemini-3-flash-preview"
 
 
 QWEN_CHART_INSIGHT_MODEL = "openai/gpt-oss-safeguard-20b"

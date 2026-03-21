@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from api.deps import get_conn
 from intelligence.recommendation.models import DashboardContext, RecommendationResponse
-from intelligence.recommendation.engine import get_recommendations
+from intelligence.recommendation.engine import expand_only, get_recommendations
 
 router = APIRouter()
 
@@ -18,21 +18,20 @@ def contextual_recommendations(ctx: DashboardContext):
     viewing, expand it with 4 targeted SQL queries, and return 3–5
     cross-dimensional recommendations from the LLM.
 
-    Example payload:
-    {
-        "client_id": 1,
-        "view": "channel_detail",
-        "entity_type": "channel",
-        "entity_id": 2,
-        "entity_name": "CNN Hindi",
-        "metric_in_focus": "publish_rate_pct",
-        "current_value": 21.9,
-        "time_range": null,
-        "user_role": "ops_lead"
-    }
+    The DB connection is released after context expansion (fast) so it is NOT
+    held during the slow LLM call — freeing the pool for other requests.
     """
     try:
+        # Phase 1: cache check + SQL context expansion (fast, needs DB)
         with get_conn() as conn:
-            return get_recommendations(ctx, conn)
+            result_or_expanded, was_cached = expand_only(ctx, conn)
+
+        if was_cached:
+            resp = result_or_expanded.model_copy()
+            resp.cached = True
+            return resp
+
+        # Phase 2: LLM call + response build (slow, NO DB conn held)
+        return get_recommendations(ctx, result_or_expanded)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

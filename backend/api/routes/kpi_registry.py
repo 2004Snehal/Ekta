@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from typing import Any, Dict, List, Optional
@@ -209,12 +210,17 @@ def _get_schema_summary() -> str:
 # DB helpers
 # ================================================================== #
 
+def _fix_pg_types(sql: str) -> str:
+    """Replace DOUBLE PRECISION with NUMERIC so ROUND(x, n) works in PostgreSQL."""
+    return re.sub(r'(?i)\bDOUBLE\s+PRECISION\b', 'NUMERIC', sql)
+
+
 def _execute_scalar(sql: str) -> Any:
     """Execute SQL and return the first cell of the first row."""
     try:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute(sql)
+            cur.execute(_fix_pg_types(sql))
             row = cur.fetchone()
             cur.close()
             conn.rollback()  # close implicit transaction so connection returns clean
@@ -229,7 +235,7 @@ def _execute_rows(sql: str, limit: int = 500) -> List[Dict[str, Any]]:
     try:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute(sql)
+            cur.execute(_fix_pg_types(sql))
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchmany(limit)]
             cur.close()

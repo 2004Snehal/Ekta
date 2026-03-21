@@ -390,6 +390,14 @@ export function ChartRenderer({ chart, onElementClick, disableInsights = false }
   }
 
   const renderChart = () => {
+    if (!chart.data || chart.data.length === 0) {
+      return (
+        <div style={{ height: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--on-low)' }}>No data available right now.</p>
+        </div>
+      );
+    }
+
     switch (chart.chart_type) {
       case "line":
         return (

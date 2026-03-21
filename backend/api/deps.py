@@ -28,8 +28,8 @@ def _safe_parse(url: str):
 
 _p = _safe_parse(DATABASE_URL)
 _pool = pool.ThreadedConnectionPool(
-    minconn=2,
-    maxconn=10,
+    minconn=1,
+    maxconn=5,
     host=_p.hostname,
     port=_p.port or 5432,
     dbname=_p.path.lstrip("/"),

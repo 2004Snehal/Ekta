@@ -211,19 +211,23 @@ def get_chart_description(
     try:
         with get_conn() as conn:
             cached = get_description(cache_key, conn)
-            if cached:
-                logger.info("chart_description: cache hit for '%s'", chart_title)
-                return {"description": cached, "cached": True}
+        
+        if cached:
+            logger.info("chart_description: cache hit for '%s'", chart_title)
+            return {"description": cached, "cached": True}
 
-            # Cache miss — generate via LLM
-            logger.info("chart_description: cache miss for '%s' — calling LLM", chart_title)
-            req = ChartDescriptionRequest(
-                chart_title=chart_title, chart_type=chart_type,
-                x_label=x_label, y_label=y_label,
-            )
-            result = generate_chart_description(req)
+        # Cache miss — generate via LLM
+        logger.info("chart_description: cache miss for '%s' — calling LLM", chart_title)
+        req = ChartDescriptionRequest(
+            chart_title=chart_title, chart_type=chart_type,
+            x_label=x_label, y_label=y_label,
+        )
+        result = generate_chart_description(req)
+
+        with get_conn() as conn:
             save_description(cache_key, chart_title, chart_type, x_label, y_label, result.description, conn)
-            return {"description": result.description, "cached": False}
+            
+        return {"description": result.description, "cached": False}
 
     except Exception as e:
         logger.error("chart description failed: %s", e)
