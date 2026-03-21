@@ -3,12 +3,16 @@ Intelligence routes — reads from operational tables written to by intelligence
 """
 
 import logging
+import json
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from typing import Optional, Any
 from api.deps import get_conn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Server-side insight cache: { cache_key: (timestamp, result_dict) }
+_insight_cache: dict[str, tuple[float, dict]] = {}
 
 
 @router.get("/insights/")
@@ -230,18 +234,37 @@ def get_chart_description(
 def get_chart_data_insights(payload: dict[str, Any]):
     """
     On-demand LLM analysis of a single chart's visible data.
-    Called by the frontend on hover. Always calls the LLM — no DB cache.
-    Client-side caches the result keyed by a data fingerprint.
+    Called by the frontend on hover. Uses server-side cache with 10min TTL.
     """
+    import hashlib, time
     from intelligence.chart_insight_agent.agent import generate_chart_insights
     from intelligence.chart_insight_agent.schemas import ChartInsightRequest
 
     try:
         req = ChartInsightRequest(**payload)
+
+        # Build cache key from chart title + data hash
+        data_str = json.dumps(req.data, sort_keys=True, default=str)
+        cache_key = f"{req.chart_title}|{hashlib.md5(data_str.encode()).hexdigest()}"
+
+        # Check cache (10 min TTL)
+        if cache_key in _insight_cache:
+            ts, cached_result = _insight_cache[cache_key]
+            if time.time() - ts < 600:  # 10 min
+                logger.info("[/chart/data-insights] cache hit for '%s'", req.chart_title)
+                return cached_result
+
         logger.info("[/chart/data-insights] chart: '%s', type: %s, rows: %d", req.chart_title, req.chart_type, len(req.data))
         result = generate_chart_insights(req)
         logger.info("[/chart/data-insights] done — %d insight(s)", len(result.insights))
-        return result.model_dump()
+        result_dict = result.model_dump()
+
+        # Only cache successful (non-error-fallback) responses
+        is_error = result_dict.get("summary", "").startswith("AI Insights temporarily")
+        if not is_error:
+            _insight_cache[cache_key] = (time.time(), result_dict)
+
+        return result_dict
     except Exception as e:
         logger.error("chart data-insights failed: %s", e)
         import traceback

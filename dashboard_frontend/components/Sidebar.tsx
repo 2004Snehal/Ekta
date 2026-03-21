@@ -12,8 +12,11 @@ import {
   ShieldCheck,
   LogOut,
   LogIn,
+  Users,
+  PlayCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTutorial } from './tutorial/TutorialProvider';
 
 interface StoredUser {
   user_id: string;
@@ -26,6 +29,16 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<StoredUser | null>(null);
+
+  // Try-catch block for safe hook usage in case Provider isn't wrapped yet during dev
+  let tutorialContext;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    tutorialContext = useTutorial();
+  } catch (e) {
+    tutorialContext = { startTutorial: () => {}, resetTutorial: () => {} };
+  }
+  const { startTutorial } = tutorialContext;
 
   useEffect(() => {
     const raw = localStorage.getItem('auth_user');
@@ -54,12 +67,13 @@ export function Sidebar() {
     { href: '/query',      label: 'Natural Language Query',   icon: MessageSquare },
     { href: '/kpi-lab',    label: 'KPI Lab',                  icon: Zap },
     { href: '/data',       label: 'Data Manager',             icon: Database },
+    { href: '/workspace',  label: 'Workspace',                icon: Users },
   ];
 
   return (
-    <div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col h-screen fixed left-0 top-0">
+    <div id="app-sidebar" className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col fixed left-0 top-11 bottom-0 z-40">
       {/* Logo */}
-      <div className="p-6 border-b border-sidebar-border">
+      <div id="sidebar-brand" className="p-6 border-b border-sidebar-border">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
             <div className="text-primary-foreground font-bold text-lg">F</div>
@@ -72,13 +86,15 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-6 space-y-2 overflow-y-auto">
+      <nav id="sidebar-nav" className="flex-1 p-6 space-y-2 overflow-y-auto">
         {links.map((link) => {
           const Icon = link.icon;
           const isActive = pathname.startsWith(link.href);
+          const linkId = `sidebar-link-${link.label.toLowerCase().replace(/\s+/g, '-')}`;
           return (
             <Link
               key={link.href}
+              id={linkId}
               href={link.href}
               className={cn(
                 'flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 font-medium',
@@ -112,6 +128,16 @@ export function Sidebar() {
 
       {/* Footer — user info + logout */}
       <div className="p-6 border-t border-sidebar-border space-y-3">
+        {/* Tutorial Restart Button */}
+        <button
+          id="tutorial-restart-btn"
+          onClick={startTutorial}
+          className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors text-xs w-full mb-2"
+        >
+          <PlayCircle className="w-3.5 h-3.5" />
+          Restart Tutorial
+        </button>
+
         {user ? (
           <>
             <div className="text-xs space-y-0.5">

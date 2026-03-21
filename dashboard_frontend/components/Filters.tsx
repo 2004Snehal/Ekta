@@ -22,7 +22,7 @@ const DATE_OPTS: { value: DashboardFilters['dateRange']; label: string }[] = [
   { value: 'all-time',     label: 'ALL' },
 ];
 
-const DEFAULT_FILTER_KEYS = ['client', 'channel', 'user', 'language', 'type', 'platform'];
+const DEFAULT_FILTER_KEYS = ['client_type', 'channel', 'user', 'language', 'type', 'platform'];
 
 export function Filters({ filters, filterFields, filterOptions, isExpanded, onExpandedChange, onApply }: FiltersProps) {
 
@@ -54,7 +54,7 @@ export function Filters({ filters, filterFields, filterOptions, isExpanded, onEx
     });
 
   const reset = () =>
-    onApply?.({ dateRange: 'last-90-days', client: '', channel: '', user: '', language: '', type: '', platform: '', extraFilters: [] });
+    onApply?.({ dateRange: 'last-90-days', client_type: '', client: '', channel: '', user: '', language: '', type: '', platform: '', extraFilters: [] });
 
   /* Active filter tokens (non-date, non-empty) */
   const activeTokens = DEFAULT_FILTER_KEYS
@@ -75,7 +75,7 @@ export function Filters({ filters, filterFields, filterOptions, isExpanded, onEx
     }));
 
   return (
-    <div style={{ borderBottom: '1px solid var(--wire)', background: 'var(--void)' }}>
+    <div id="dashboard-filters-section" style={{ borderBottom: '1px solid var(--wire)', background: 'var(--void)' }}>
 
       {/* ── Collapsed / summary strip ────────────────────── */}
       <div className="flex items-center gap-4 px-6 py-2.5 flex-wrap">

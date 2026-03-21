@@ -5,7 +5,7 @@ import {
   Zap, BarChart3, RefreshCw, ChevronDown, ChevronRight, CheckCircle2,
   AlertCircle, Loader2, Database, FlaskConical, Lightbulb, Play, X,
   Server, TrendingUp, BookOpen, ArrowUp, ArrowDown, PenLine, Sparkles,
-  Plus, Table2, Copy, CornerDownLeft,
+  Plus, Table2, Copy, CornerDownLeft, Star,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -51,6 +51,13 @@ interface RegistryKPIFull {
 
 type PageTab    = 'discover' | 'manual' | 'agent';
 type PageState  = 'idle' | 'loading_schema' | 'running' | 'done' | 'error';
+
+interface RegistryEntry {
+  id: string; name: string; description?: string; formula?: string;
+  sql_expression?: string; category?: string; current_value?: unknown;
+  unit?: string; usefulness_score?: number; source?: string;
+  has_expand?: boolean; created_at?: string;
+}
 type FormState  = 'idle' | 'loading' | 'success' | 'error';
 
 // ── Static data ────────────────────────────────────────────────────────────────
@@ -104,7 +111,13 @@ const FORMULA_TEMPLATES = [
   },
 ];
 
-const CATEGORIES = ['growth', 'quality', 'efficiency', 'engagement', 'volume'];
+const CATEGORIES = [
+  'Founders and Executive Leadership',
+  'Client Success Teams',
+  'Operations Teams',
+  'Editorial and Production Teams',
+  'Technology and Product Teams',
+];
 const UNITS      = ['%', 'count', 'ratio', 'seconds', 'minutes', 'hours'];
 const AGENT_LABELS = [
   'Reading schema','Discovering relationships','Grouping tables','Extracting statistics',
@@ -279,13 +292,33 @@ function KPIExpandPanel({ registryId }: { registryId: string }) {
   );
 }
 
-function KPICard({ name, value, unit, description, category, usefulness_score, sql, registryId, index }:
-  { name: string; value?: unknown; unit?: string; description?: string; category?: string;
+function KPICard({ name, value, unit, description, formula, category, usefulness_score, sql, registryId, index }:
+  { name: string; value?: unknown; unit?: string; description?: string; formula?: string; category?: string;
     usefulness_score?: number; sql?: string; registryId?: string; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const [sqlOpen, setSqlOpen]   = useState(false);
+  const [pinned, setPinned]     = useState(false);
   const score = usefulness_score ?? 0;
   const scoreColor = score >= 8 ? 'text-green-400' : score >= 6 ? 'text-yellow-400' : 'text-muted-foreground';
+
+  useEffect(() => {
+    if (!registryId) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem('dashboard_pinned_kpis') ?? '[]') as string[];
+      setPinned(stored.includes(registryId));
+    } catch { /* ignore */ }
+  }, [registryId]);
+
+  function togglePin(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!registryId) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem('dashboard_pinned_kpis') ?? '[]') as string[];
+      const next = pinned ? stored.filter(id => id !== registryId) : [...stored, registryId];
+      localStorage.setItem('dashboard_pinned_kpis', JSON.stringify(next));
+      setPinned(!pinned);
+    } catch { /* ignore */ }
+  }
 
   return (
     <div className={`bg-card border rounded-xl p-4 flex flex-col gap-3 transition-all duration-200 ${expanded ? 'border-primary/40 shadow-sm shadow-primary/10' : 'border-border hover:border-primary/30'}`}>
@@ -297,14 +330,28 @@ function KPICard({ name, value, unit, description, category, usefulness_score, s
           </div>
           <h3 className="font-semibold text-foreground text-sm leading-tight">{name}</h3>
         </div>
-        <div className="text-right flex-shrink-0">
-          <div className="text-2xl font-bold text-foreground tabular-nums">
-            {fmt(value as number | string | null)}{unit && <span className="text-sm text-muted-foreground ml-1">{unit}</span>}
+        <div className="flex items-start gap-2 flex-shrink-0">
+          <div className="text-right">
+            <div className="text-2xl font-bold text-foreground tabular-nums">
+              {fmt(value as number | string | null)}{unit && <span className="text-sm text-muted-foreground ml-1">{unit}</span>}
+            </div>
+            {usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
           </div>
-          {usefulness_score !== undefined && <div className={`text-xs font-medium ${scoreColor}`}>score {score.toFixed(1)}</div>}
+          {registryId && (
+            <button onClick={togglePin} title={pinned ? 'Remove from Dashboard' : 'Pin to Dashboard'}
+              className="mt-0.5 p-1 rounded hover:bg-secondary/50 transition-colors">
+              <Star className={`w-4 h-4 transition-colors ${pinned ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground/40 hover:text-yellow-400'}`} />
+            </button>
+          )}
         </div>
       </div>
       {description && <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>}
+      {formula && (
+        <div className="bg-secondary/30 rounded-lg px-3 py-2">
+          <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-mono mb-1">Formula</p>
+          <pre className="text-xs text-foreground/80 font-mono leading-relaxed whitespace-pre-wrap">{formula}</pre>
+        </div>
+      )}
       {sql && (
         <div>
           <button onClick={() => setSqlOpen(o => !o)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
@@ -784,6 +831,11 @@ export default function KPILabPage() {
   const [agentIndex, setAgentIndex] = useState(0);
   const agentTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Registry state ────────────────────────────────────────
+  const [registryKpis, setRegistryKpis]     = useState<RegistryEntry[]>([]);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
   const loadSchema = useCallback(async (forceRefresh = false) => {
     setPageState('loading_schema'); setErrors([]);
     try {
@@ -798,6 +850,22 @@ export default function KPILabPage() {
   }, []);
 
   useEffect(() => { loadSchema(); }, [loadSchema]);
+
+  const loadRegistry = useCallback(async () => {
+    setRegistryLoading(true);
+    try {
+      const res = await fetch(`${BASE}/registry`);
+      if (res.ok) {
+        const data = await res.json() as { kpis: RegistryEntry[] };
+        setRegistryKpis(data.kpis ?? []);
+      }
+    } catch { /* ignore */ } finally {
+      setRegistryLoading(false);
+    }
+  }, []);
+
+  // Load registry whenever discover tab is active
+  useEffect(() => { if (tab === 'discover') loadRegistry(); }, [tab, loadRegistry]);
 
   const startAgentSim = useCallback(() => {
     setAgentIndex(0); let idx = 0;
@@ -818,11 +886,12 @@ export default function KPILabPage() {
       setAgentIndex(AGENT_LABELS.length);
       setResult(data as DiscoverResult); setErrors(data.errors ?? []);
       setPageState('done');
+      void loadRegistry(); // refresh registry to show newly discovered KPIs
     } catch (e: unknown) {
       if (agentTimer.current) { clearInterval(agentTimer.current); agentTimer.current = null; }
       setErrors([e instanceof Error ? e.message : String(e)]); setPageState('error');
     }
-  }, [schema, startAgentSim]);
+  }, [schema, startAgentSim, loadRegistry]);
 
   const hasSchema = !!schema && Object.keys(schema.tables).length > 0;
   const isRunning = pageState === 'running';
@@ -903,106 +972,103 @@ export default function KPILabPage() {
               </div>
             </div>
 
-            {/* Right: schema + results */}
-            <div className="lg:col-span-2 space-y-6">
-              {isBusy && (
-                <div className="flex items-center justify-center py-12">
+            {/* Right: KPI Registry ─────────────────────────────── */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Header row */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-primary" />
+                  <h2 className="font-semibold text-sm text-foreground">
+                    KPI Registry
+                    {!registryLoading && (
+                      <span className="ml-2 text-xs text-muted-foreground font-normal">{registryKpis.length} saved</span>
+                    )}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => void loadRegistry()}
+                  disabled={registryLoading}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                >
+                  <RefreshCw className={`w-3 h-3 ${registryLoading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+
+              {/* Category filter — only shown when categories exist in registry */}
+              {(() => {
+                const cats = Array.from(new Set(registryKpis.map(k => k.category).filter((c): c is string => !!c)));
+                if (cats.length === 0) return null;
+                return (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(['all', ...cats]).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setCategoryFilter(cat)}
+                        className={`text-xs px-3 py-1 rounded-full border transition-colors font-medium ${
+                          categoryFilter === cat
+                            ? 'bg-primary/15 text-primary border-primary/40'
+                            : 'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
+                        }`}
+                      >
+                        {cat === 'all' ? `All (${registryKpis.length})` : `${cat} (${registryKpis.filter(k => k.category === cat).length})`}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* KPI list */}
+              {registryLoading && (
+                <div className="flex items-center justify-center py-16">
                   <div className="flex flex-col items-center gap-3">
                     <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                    <p className="text-sm text-muted-foreground">Loading Frammer database schema…</p>
+                    <p className="text-sm text-muted-foreground">Loading registry…</p>
                   </div>
                 </div>
               )}
-              {hasSchema && !isBusy && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Server className="w-4 h-4 text-primary" />
-                      <h2 className="font-semibold text-sm text-foreground">
-                        Database Schema
-                        <span className="ml-2 text-xs text-muted-foreground font-normal">{Object.keys(schema!.tables).length} tables</span>
-                      </h2>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {schema?.cached && <span className="text-xs text-muted-foreground/60 bg-secondary px-2 py-0.5 rounded-full">cached</span>}
-                      <button onClick={() => loadSchema(true)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                        <RefreshCw className="w-3 h-3" />Refresh
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {Object.entries(schema!.tables).map(([name, tbl]) => <SchemaCard key={name} name={name} schema={tbl} />)}
-                  </div>
-                </div>
-              )}
-              {!hasSchema && !isBusy && pageState !== 'error' && (
+
+              {!registryLoading && registryKpis.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                   <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center mb-4">
                     <FlaskConical className="w-8 h-8 text-muted-foreground/50" />
                   </div>
-                  <h3 className="font-semibold text-foreground mb-2">Could not load database schema</h3>
-                  <p className="text-sm text-muted-foreground max-w-xs">Make sure the backend is running and DATABASE_URL is configured.</p>
+                  <h3 className="font-semibold text-foreground mb-2">Registry is empty</h3>
+                  <p className="text-xs text-muted-foreground max-w-xs">
+                    Run the discovery pipeline, use the Formula Builder, or AI Generate to create KPIs — they&apos;ll appear here.
+                  </p>
                 </div>
               )}
-              {result && (
-                <div className="space-y-6">
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { label: 'Table Groups',    value: (result.table_groups ?? []).length, icon: Database },
-                      { label: 'KPIs Discovered', value: (result.good_kpis   ?? []).length, icon: CheckCircle2 },
-                      { label: 'Insights',        value: (result.insights    ?? []).length, icon: Lightbulb },
-                    ].map(s => {
-                      const Icon = s.icon;
-                      return (
-                        <div key={s.label} className="bg-card border border-border rounded-xl p-4">
-                          <div className="flex items-center gap-2 mb-1"><Icon className="w-4 h-4 text-primary" /><span className="text-xs text-muted-foreground">{s.label}</span></div>
-                          <span className="text-2xl font-bold text-foreground tabular-nums">{s.value}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {(result.good_kpis ?? []).length > 0 && (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <BarChart3 className="w-4 h-4 text-primary" />
-                        <h2 className="font-semibold text-sm text-foreground">
-                          Discovered KPIs <span className="ml-1 text-xs text-muted-foreground font-normal">click to expand detail page</span>
-                        </h2>
-                      </div>
-                      <div className="space-y-3">
-                        {(result.good_kpis ?? []).map((kpi, i) => (
-                          <KPICard key={kpi.kpi_id ?? i} index={i} name={kpi.name} value={kpi.value}
-                            unit={kpi.unit} description={kpi.description} category={kpi.category}
-                            usefulness_score={kpi.usefulness_score} sql={kpi.sql} registryId={kpi.registry_id} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {(result.insights ?? []).length > 0 && (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <Lightbulb className="w-4 h-4 text-primary" />
-                        <h2 className="font-semibold text-sm text-foreground">AI Insights</h2>
-                      </div>
-                      <div className="space-y-2">{(result.insights ?? []).map((ins, i) => <InsightCard key={i} insight={ins} />)}</div>
-                    </div>
-                  )}
-                  {errors.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-destructive" /><h2 className="font-semibold text-sm">Errors</h2></div>
-                      {errors.map((err, i) => (
-                        <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-                          <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                          <p className="text-xs text-muted-foreground">{err}</p>
-                        </div>
-                      ))}
-                    </div>
+
+              {!registryLoading && registryKpis.length > 0 && (
+                <div className="space-y-3">
+                  {registryKpis
+                    .filter(k => categoryFilter === 'all' || k.category === categoryFilter)
+                    .map((kpi, i) => (
+                      <KPICard
+                        key={kpi.id}
+                        index={i}
+                        name={kpi.name}
+                        value={kpi.current_value}
+                        unit={kpi.unit}
+                        description={kpi.description}
+                        formula={kpi.formula}
+                        category={kpi.category}
+                        usefulness_score={kpi.usefulness_score}
+                        sql={kpi.sql_expression}
+                        registryId={kpi.id}
+                      />
+                    ))}
+                  {registryKpis.filter(k => categoryFilter === 'all' || k.category === categoryFilter).length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-8">No KPIs in category &quot;{categoryFilter}&quot;.</p>
                   )}
                 </div>
               )}
-              {pageState === 'error' && !result && errors.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-destructive" /><h2 className="font-semibold text-sm">Something went wrong</h2></div>
+
+              {/* Pipeline errors (if any from last run) */}
+              {pageState === 'error' && errors.length > 0 && (
+                <div className="space-y-2 mt-4">
+                  <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-destructive" /><h2 className="font-semibold text-sm">Discovery errors</h2></div>
                   {errors.map((err, i) => (
                     <div key={i} className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
                       <X className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />

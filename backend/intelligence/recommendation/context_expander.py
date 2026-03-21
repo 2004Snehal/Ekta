@@ -4,9 +4,16 @@ All queries hit materialized views in the data schema (no fact table scans on th
 """
 
 import logging
+import time
 from intelligence.recommendation.models import DashboardContext, ExpandedContext
 
 log = logging.getLogger("recommendation.expander")
+
+_db_cache: dict[str, tuple[float, ExpandedContext]] = {}
+CACHE_TTL_SECONDS = 300  # 5 minutes
+
+def _get_cache_key(ctx: DashboardContext) -> str:
+    return f"{ctx.client_id}:{ctx.view}:{ctx.entity_type}:{ctx.entity_id}:{ctx.entity_name}:{ctx.time_range}"
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -26,6 +33,16 @@ def _fetch(conn, sql: str, params: tuple) -> list[dict]:
 # ── dispatcher ─────────────────────────────────────────────────────────────────
 
 def expand_context(ctx: DashboardContext, conn) -> ExpandedContext:
+    k = _get_cache_key(ctx)
+    entry = _db_cache.get(k)
+    if entry is not None:
+        stored_at, expanded = entry
+        if time.time() - stored_at <= CACHE_TTL_SECONDS:
+            log.info(f"[REC] DB Context cache hit for view={ctx.view} entity={ctx.entity_name}")
+            return expanded
+        else:
+            del _db_cache[k]
+
     handlers = {
         "channel_detail":    _expand_channel_detail,
         "user_detail":       _expand_user_detail,
@@ -37,7 +54,9 @@ def expand_context(ctx: DashboardContext, conn) -> ExpandedContext:
     }
     handler = handlers.get(ctx.view, _expand_executive_summary)
     log.info(f"[REC] Expanding context for view={ctx.view} entity={ctx.entity_name}")
-    return handler(ctx, conn)
+    result = handler(ctx, conn)
+    _db_cache[k] = (time.time(), result)
+    return result
 
 
 # ── name→id resolver ──────────────────────────────────────────────────────────

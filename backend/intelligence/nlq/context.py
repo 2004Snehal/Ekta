@@ -46,20 +46,31 @@ def fetch_live_schema(conn) -> str:
         return "No tables found in the data schema."
 
     # ── 2. Columns for every object ────────────────────────────────────────────
+    # information_schema.columns misses materialized views — use pg_attribute for those
     all_names = tuple(r[0] for r in objects)
     cur.execute("""
-        SELECT table_name, column_name, data_type
+        SELECT table_name, column_name, data_type, ordinal_position AS pos
         FROM information_schema.columns
         WHERE table_schema = 'data'
           AND table_name = ANY(%s)
-        ORDER BY table_name, ordinal_position
-    """, (list(all_names),))
+        UNION ALL
+        SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod), a.attnum
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'data'
+          AND c.relkind = 'm'
+          AND c.relname = ANY(%s)
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        ORDER BY table_name, pos
+    """, (list(all_names), list(all_names)))
     col_rows = cur.fetchall()
 
     # Group columns by table
     from collections import defaultdict
     cols_by_table: dict = defaultdict(list)
-    for tname, cname, dtype in col_rows:
+    for tname, cname, dtype, *_ in col_rows:
         cols_by_table[tname].append((cname, dtype))
 
     # ── 3. Sample distinct values for low-cardinality text columns ─────────────

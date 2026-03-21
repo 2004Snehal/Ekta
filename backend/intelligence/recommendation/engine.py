@@ -21,6 +21,7 @@ from intelligence.shared.stats_summary import summarize_rows
 
 # Reuse the LLM abstraction from the NLQ module
 from intelligence.nlq.llm import call_llm_text as call_llm
+from llm_config import QWEN_INSIGHT_MODEL
 
 log = logging.getLogger("recommendation.engine")
 _SEP = "─" * 52
@@ -53,11 +54,34 @@ def get_recommendations(ctx: DashboardContext, conn) -> RecommendationResponse:
     # ── 5. LLM call ───────────────────────────────────────────────────────────
     t1 = time.perf_counter()
     try:
-        raw_text = call_llm(user_message, system_prompt)
-        llm_response = json.loads(raw_text.strip().removeprefix("```json").removesuffix("```").strip())
+        raw_text = call_llm(user_message, system_prompt, model=QWEN_INSIGHT_MODEL)
+        cleaned = raw_text.strip()
+        
+        # Robustly extract JSON block
+        if "```" in cleaned:
+            parts = cleaned.split("```")
+            if len(parts) >= 3:
+                cleaned = parts[1].strip()
+                if cleaned.lower().startswith("json"):
+                    cleaned = cleaned[4:].strip()
+        else:
+            # Fallback: find first { or [ and last } or ]
+            first_brace = min((i for i in [cleaned.find("{"), cleaned.find("[")] if i != -1), default=-1)
+            last_brace = max(cleaned.rfind("}"), cleaned.rfind("]"))
+            if first_brace != -1 and last_brace > first_brace:
+                cleaned = cleaned[first_brace:last_brace+1]
+                
+        llm_response = json.loads(cleaned)
     except Exception as e:
         log.error(f"[REC] LLM call failed  ({time.perf_counter()-t1:.2f}s): {e}")
-        raise
+        llm_response = {"recommendations": [{
+            "title": "AI Insight Generation Failed",
+            "action": "Consider checking context length or API connection limits.",
+            "rationale": "The configured insight model failed to process the statistical dashboard payload, returning an empty response.",
+            "priority": "high",
+            "scope": "network",
+            "supporting_metrics": {}
+        }]}
 
     log.info(f"[REC] LLM call  {time.perf_counter()-t1:.2f}s")
 
