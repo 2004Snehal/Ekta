@@ -23,8 +23,7 @@ QWEN_CODER_MODEL        = "qwen/qwen3-coder-next"
 # Insight Narrator and other long-form reasoning
 QWEN_INSIGHT_MODEL      = "qwen/qwen3.5-397b-a17b"
 
-# Insight Narrator, Chart Insight Agent
-QWEN_INSIGHT_MODEL = "qwen/qwen3.5-397b-a17b"
+
 QWEN_CHART_INSIGHT_MODEL = "openai/gpt-oss-safeguard-20b"
 # Global Parameters
 LLM_MAX_TOKENS     = 4096

@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 class NLQRequest(BaseModel):
-    question: str = Field(..., min_length=3, max_length=2000)
+    question: str = Field(..., min_length=1, max_length=2000)
     client_id: int = 1
     session_id: str = Field(default="default", description="Session ID for multi-turn conversation context")
     explore: bool = Field(default=False, description="When true, runs LIDA for additional insight visualizations")

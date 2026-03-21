@@ -11,12 +11,12 @@ if not DATABASE_URL:
 from llm_config import LLM_API_KEY, QWEN_CODER_MODEL, QWEN_INSIGHT_MODEL, make_openai_client
 
 LLM_PROVIDER   = "openrouter"
-LLM_MODEL      = QWEN_CODER_MODEL   # default model (Vanna / LIDA / KPI)
+LLM_MODEL      = QWEN_CODER_MODEL   # default model (NLQ / LIDA / KPI)
 OPENAI_API_KEY = LLM_API_KEY        # alias used by some modules
 GOOGLE_API_KEY = ""                    # removed — Gemini no longer used
 GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 
-# ── Vanna / NLQ settings ──────────────────────────────────────────────────────
-VANNA_CHROMA_PATH = os.getenv("VANNA_CHROMA_PATH", "./vanna_chroma_db")
+# ── NLQ / RAG settings ────────────────────────────────────────────────────────
+CHROMA_PATH     = os.getenv("CHROMA_PATH", "./chroma_db")
 MAX_SQL_RETRIES   = int(os.getenv("MAX_SQL_RETRIES", "2"))
 LIDA_MAX_GOALS    = int(os.getenv("LIDA_MAX_GOALS", "3"))

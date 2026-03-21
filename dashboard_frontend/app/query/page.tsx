@@ -19,6 +19,7 @@ import {
   Check,
   FlaskConical,
   Star,
+  Brain,
 } from "lucide-react";
 import type { UniversalChartSpec } from "@/types/chart";
 
@@ -39,6 +40,8 @@ interface NLQResult {
   data: Record<string, unknown>[];
   columns: string[];
   row_count: number;
+  thinking?: string | null;
+  complexity?: string;
   error?: string;
 }
 
@@ -199,6 +202,7 @@ function UserBubble({ text }: { text: string }) {
 
 function AssistantBubble({ msg }: { msg: Message }) {
   const [sqlOpen, setSqlOpen] = useState(false);
+  const [thinkOpen, setThinkOpen] = useState(false);
   const [pinned, setPinned]   = useState(false);
 
   useEffect(() => {
@@ -300,6 +304,35 @@ function AssistantBubble({ msg }: { msg: Message }) {
               {pinned ? 'Pinned to Dashboard' : 'Pin to Dashboard'}
             </button>
           </>
+        )}
+
+        {r.thinking && (
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <button
+              onClick={() => setThinkOpen((v) => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Brain className="w-3.5 h-3.5 text-violet-400" />
+              <span>Reasoning trace</span>
+              {r.complexity && (
+                <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                  {r.complexity}
+                </span>
+              )}
+              {thinkOpen ? (
+                <ChevronDown className="w-3 h-3 ml-auto" />
+              ) : (
+                <ChevronRight className="w-3 h-3 ml-auto" />
+              )}
+            </button>
+            {thinkOpen && (
+              <div className="px-4 pb-4">
+                <pre className="text-xs font-mono text-violet-300 bg-[#0d1117] rounded-lg p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-violet-500/20">
+                  {r.thinking}
+                </pre>
+              </div>
+            )}
+          </div>
         )}
 
         {r.sql && (
