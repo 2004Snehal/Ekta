@@ -28,7 +28,7 @@ from intelligence.nlq.context import fetch_live_schema
 logger = logging.getLogger("nlq.rag")
 
 # Bump this string to force a full KB retrain on next startup
-_KB_VERSION = "RAG_KB_V2_SEMANTIC_DDL"
+_KB_VERSION = "RAG_KB_V3_LIVE_SCHEMA"
 
 
 @dataclass
@@ -106,54 +106,19 @@ def train_with_schema(conn) -> None:
 
     logger.info("Training RAG KB (%s)…", _KB_VERSION)
 
-    # ── 1. Semantic DDL with inline domain hints → DDL collection ─────────────
-    schema_doc = fetch_live_schema(conn)
-    _safe_add(db["ddl"], schema_doc, _det_id(schema_doc, "-ddl"))
-
-    semantic_ddl = """=== Frammer AI Analytics Schema (PostgreSQL, all objects in 'data' schema) ===
-
-TABLE: data.fact_created_videos  — primary fact table, one row per video output
-  video_id        BIGINT       -- unique output identifier
-  client_id       INTEGER      -- tenant key (ALWAYS filter: WHERE client_id = N)
-  channel_id      INTEGER      -- FK → data.dim_channel
-  language_id     INTEGER      -- FK → data.dim_language
-  user_id         INTEGER      -- FK → data.dim_user (the uploader)
-  published_flag  BOOLEAN      -- TRUE = published (use published_flag = TRUE, NOT 'yes')
-  created_at      TIMESTAMP    -- when the output was created
-  published_at    TIMESTAMP    -- when published (NULL if unpublished)
-
-MATERIALIZED VIEW: data.mv_monthly_kpis  — pre-aggregated monthly metrics
-  client_id, channel_id
-  month           DATE         -- truncated to 1st of month
-  created_count   INTEGER      -- total outputs created that month
-  published_count INTEGER      -- total outputs published that month
-  publish_rate_pct NUMERIC     -- pre-computed: published_count / created_count * 100
-  → USE FOR: time-series trends, monthly comparisons, publish rate over time
-
-MATERIALIZED VIEW: data.mv_channel_health  — per-channel totals
-  client_id, channel_id
-  total_created, total_published, publish_rate_pct NUMERIC, active_users INTEGER
-  → USE FOR: channel comparisons, channel leaderboards, channel health overview
-
-MATERIALIZED VIEW: data.mv_user_performance  — per-user totals
-  client_id, user_id
-  created_count, published_count, publish_rate_pct NUMERIC
-  → USE FOR: user leaderboards, top N users by output
-
-DIMENSION TABLES:
-  data.dim_channel  — channel_id, channel_name
-  data.dim_language — language_id, language_name
-  data.dim_user     — user_id, user_name"""
-    _safe_add(db["ddl"], semantic_ddl, _det_id(semantic_ddl, "-ddl"))
-
-    # ── 2. Tiered documentation → doc collection ──────────────────────────────
-    # Each doc is a focused block so ChromaDB only retrieves what's relevant
+    # ── 1. Business rule docs → doc collection ────────────────────────────────
+    # Schema is NOT stored here — it is injected live into every prompt via
+    # fetch_live_schema(conn) so the LLM always sees the real column names.
 
     core_doc = """Core query conventions for Frammer AI analytics:
 - All objects are in the 'data' schema — always prefix: data.fact_created_videos, data.mv_monthly_kpis, etc.
 - client_id isolation: always filter WHERE client_id = N UNLESS the question explicitly compares clients.
-- published = published_flag = TRUE (BOOLEAN column — never use 'yes'/'no' string comparison).
-- Prefer materialized views over the fact table for any aggregate/group-by query (faster, pre-computed).
+- fact_created_videos: published_flag is BOOLEAN — use published_flag = TRUE.
+- fact_created_videos: billable is TEXT — use billable = 'Yes' or billable = 'No'.
+- fact_created_videos: the timestamp column is uploaded_at (NOT created_at).
+- shortened_filtered_data: published and billable are TEXT ('Yes'/'No'), channel is TEXT (not channel_id).
+- Prefer materialized views (mv_monthly_kpis, mv_channel_health, mv_user_performance) over fact_created_videos for any aggregate — they are pre-computed and faster.
+- For raw row access or billable/input_type breakdowns, use fact_created_videos (has all FK columns).
 - Publish rate formula: ROUND(published_count::numeric / NULLIF(created_count, 0) * 100, 2)
 - Month display: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels."""
     _safe_add(db["doc"], core_doc, _det_id(core_doc, "-doc"))
@@ -289,14 +254,9 @@ _SYSTEM_BASE = (
 
 _SQL_SUFFIX = """
 
-First, decide if this question requires a database query:
-- If it is greetings, small talk, or unrelated to analytics/video data → set "requires_sql": false, write a short friendly "direct_answer", and skip SQL.
-- If it requires data → set "requires_sql": true and write the SQL query.
-
-Then output a JSON block fenced with ```json ... ``` containing:
+After writing the SQL, output a JSON block fenced with ```json ... ``` containing:
 {
   "requires_sql": true,
-  "direct_answer": null,
   "chart_type": "line|bar|horizontal_bar|pie|scatter|radar|stacked_bar|table",
   "x": "<exact column alias from SELECT list — entity/category column>",
   "y": "<exact column alias from SELECT list — primary numeric column>",
@@ -307,10 +267,11 @@ Then output a JSON block fenced with ```json ... ``` containing:
   }
 }
 
-If requires_sql is false, only these fields matter — omit the rest:
+Exception — if the question is a greeting, small talk, or completely unrelated to analytics:
+do NOT write SQL. Output only this JSON:
 {
   "requires_sql": false,
-  "direct_answer": "<friendly plain-text response>"
+  "direct_answer": "<short friendly plain-text response>"
 }
 
 Chart type rules:
@@ -331,17 +292,17 @@ Answer strategy rules:
 - detail_sample     → row-level. focus: top_rows, row_count"""
 
 
-def _build_messages(question: str, sql_examples: list, ddl_docs: list, doc_docs: list) -> list:
+def _build_messages(question: str, sql_examples: list, live_schema: str, doc_docs: list) -> list:
     """
     Build the LLM message list:
-      system  = base prompt + schema + business rules + response guidelines
+      system  = base prompt + live schema (always fresh) + business rules + response guidelines
       user/assistant pairs = retrieved Q→SQL few-shot examples
       final user = augmented question + output format instructions
     """
     system = _SYSTEM_BASE
 
-    if ddl_docs:
-        system += "\n\n=== Schema ===\n" + "\n\n".join(ddl_docs)
+    if live_schema:
+        system += "\n\n=== Schema ===\n" + live_schema
 
     if doc_docs:
         system += "\n\n=== Business Rules ===\n" + "\n\n".join(doc_docs)
@@ -498,12 +459,15 @@ def generate_sql_candidates(
     previous_sql: Optional[str] = None,
     user_role: Optional[str] = None,
     client_id: int = 1,
+    conn=None,
 ) -> List[RAGResult]:
     """
     Generate N SQL candidates using ChromaDB RAG.
 
     Key optimisations:
-    - Question is embedded once and reused for all 3 ChromaDB queries.
+    - Live schema is fetched directly from the DB on every call (5-min cache)
+      so the LLM always sees the real column names — no stale hardcoded DDL.
+    - Question is embedded once and reused for all ChromaDB queries.
     - When N>1, LLM calls are made concurrently (ThreadPoolExecutor) at T=0.7
       for candidate diversity. N=1 uses the configured LLM_TEMPERATURE.
     """
@@ -511,14 +475,16 @@ def generate_sql_candidates(
 
     augmented = _augment_question(question, previous_sql, user_role, client_id)
 
-    # Embed once — reuse for all 3 collection queries
+    # Live schema — always accurate, injected directly (not via ChromaDB similarity search)
+    live_schema = fetch_live_schema(conn) if conn is not None else ""
+
+    # Embed once — reuse for both collection queries
     embedding = db["ef"]([question])[0]
 
     sql_examples = _retrieve(db["sql"], embedding, n=3)
-    ddl_docs     = _retrieve(db["ddl"], embedding, n=2)
     doc_docs     = _retrieve(db["doc"], embedding, n=2)
 
-    messages = _build_messages(augmented, sql_examples, ddl_docs, doc_docs)
+    messages = _build_messages(augmented, sql_examples, live_schema, doc_docs)
 
     logger.info("RAG generating %d SQL candidate(s) for: '%s'", n, question)
 
@@ -539,10 +505,11 @@ def generate_sql(
     previous_sql: Optional[str] = None,
     user_role: Optional[str] = None,
     client_id: int = 1,
+    conn=None,
 ) -> RAGResult:
     """Convenience wrapper — single candidate generation."""
     return generate_sql_candidates(question, n=1, previous_sql=previous_sql,
-                                   user_role=user_role, client_id=client_id)[0]
+                                   user_role=user_role, client_id=client_id, conn=conn)[0]
 
 
 def _parse_candidate(raw: str) -> RAGResult:

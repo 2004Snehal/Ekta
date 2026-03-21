@@ -62,6 +62,7 @@ def run_nlq_query(
             previous_sql=previous_sql,
             user_role=effective_role,
             client_id=client_id,
+            conn=conn,
         )
     except Exception as exc:
         log.error("[2/7] RAG generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
