@@ -91,7 +91,7 @@ def run_nlq_query(
             "answer":             direct_answer,
             "sql":                None,
             "chart_type":         vr.chart_type or "table",
-            "title":              vr.title or question[:80],
+            "title":              vr.title or "",
             "x":                  vr.x_column or "",
             "y":                  vr.y_column or "",
             "description":        direct_answer,
@@ -247,8 +247,7 @@ def _fill_chart_meta(vr, rows: list, question: str) -> None:
         else:
             vr.chart_type = "table"
 
-    if not vr.title:
-        vr.title = question[:80]
+    # Leave vr.title empty if LLM didn't provide one — avoids repeating the question as title
 
 
 def _serialize(rows: list) -> list:
