@@ -1,11 +1,11 @@
 """
 RAG service — Text-to-SQL using ChromaDB directly (no Vanna dependency).
 
-On startup: trains ChromaDB with live schema + business rules + example Q→SQL pairs.
-Training is skipped if ChromaDB already has entries (persists across restarts).
-Per query: embeds the question once → queries all 3 collections with the same
-           vector (latency win) → builds prompt → calls LLM.
-On success: stores the verified Q→SQL pair back into ChromaDB.
+On startup: trains ChromaDB with semantic DDL, tiered business rules, and Q→SQL examples.
+Training is version-gated — only runs if the current KB version marker is absent.
+Per query: embeds once → queries all 3 collections with the same vector → builds prompt.
+Best-of-N: generate_sql_candidates() supports N>1 with concurrent LLM calls.
+Qwen3 thinking: <think>...</think> blocks are extracted and surfaced in RAGResult.
 """
 
 import hashlib
@@ -14,8 +14,9 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 import sys
 import os
@@ -26,6 +27,9 @@ from intelligence.nlq.context import fetch_live_schema
 
 logger = logging.getLogger("nlq.rag")
 
+# Bump this string to force a full KB retrain on next startup
+_KB_VERSION = "RAG_KB_V2_SEMANTIC_DDL"
+
 
 @dataclass
 class RAGResult:
@@ -35,6 +39,8 @@ class RAGResult:
     y_column: Optional[str] = None
     title: Optional[str] = None
     answer_strategy: Optional[dict] = None
+    thinking: Optional[str] = None      # Qwen3 native chain-of-thought
+    routing: Optional[dict] = None      # reserved for no-SQL path signalling
 
 
 # ── ChromaDB singleton ─────────────────────────────────────────────────────────
@@ -55,10 +61,11 @@ def _get_chroma() -> dict:
             settings=Settings(anonymized_telemetry=False),
         )
         _chroma = {
-            "ef":  ef,
-            "sql": client.get_or_create_collection(name="sql",           embedding_function=ef),
-            "ddl": client.get_or_create_collection(name="ddl",           embedding_function=ef),
-            "doc": client.get_or_create_collection(name="documentation", embedding_function=ef),
+            "client": client,
+            "ef":     ef,
+            "sql":    client.get_or_create_collection(name="sql",           embedding_function=ef),
+            "ddl":    client.get_or_create_collection(name="ddl",           embedding_function=ef),
+            "doc":    client.get_or_create_collection(name="documentation", embedding_function=ef),
         }
         logger.info("ChromaDB initialised at %s.", CHROMA_PATH)
     return _chroma
@@ -72,7 +79,7 @@ def _det_id(text: str, suffix: str) -> str:
 
 
 def _safe_add(collection, doc: str, uid: str) -> None:
-    """Add a document; silently skip if already present (duplicate deterministic ID)."""
+    """Add document; silently skip if already present (idempotent via deterministic ID)."""
     try:
         collection.add(documents=doc, ids=uid)
     except Exception:
@@ -83,47 +90,114 @@ def _safe_add(collection, doc: str, uid: str) -> None:
 
 def train_with_schema(conn) -> None:
     """
-    Populate ChromaDB on first run with schema, business rules, and Q→SQL examples.
-    Skipped entirely if SQL collection already has entries.
+    Populate ChromaDB with semantic DDL, tiered business rules, and Q→SQL examples.
+
+    Version-gated: skipped if _KB_VERSION marker already exists in the doc collection.
+    To force a retrain, bump _KB_VERSION at the top of this file.
     """
     db = _get_chroma()
 
-    if db["sql"].count() > 0:
-        logger.info("RAG KB already trained (%d SQL entries) — skipping.", db["sql"].count())
+    # Check version marker — skip if this version is already trained
+    version_id = _det_id(_KB_VERSION, "-doc")
+    existing = db["doc"].get(ids=[version_id])
+    if existing and existing.get("documents"):
+        logger.info("RAG KB at version %s — skipping training.", _KB_VERSION)
         return
 
-    logger.info("Training RAG KB…")
+    logger.info("Training RAG KB (%s)…", _KB_VERSION)
 
-    # 1. Live schema → DDL collection
+    # ── 1. Semantic DDL with inline domain hints → DDL collection ─────────────
     schema_doc = fetch_live_schema(conn)
     _safe_add(db["ddl"], schema_doc, _det_id(schema_doc, "-ddl"))
 
-    # 2. Business rules → documentation collection
-    business_rules = """Business rules for Frammer AI analytics queries:
+    semantic_ddl = """=== Frammer AI Analytics Schema (PostgreSQL, all objects in 'data' schema) ===
 
-- "published" means published_flag = TRUE (boolean column on fact_created_videos).
-- "publish rate" = published_count / created_count * 100 (available in mv_monthly_kpis as publish_rate_pct).
-- "outputs" or "created videos" = COUNT(*) from fact_created_videos OR SUM(created_count) from mv_monthly_kpis.
-- "uploads" or "source videos" = COUNT(DISTINCT video_id) from fact_created_videos.
-- Always filter by client_id unless the question explicitly asks to compare clients.
-- Prefer materialized views for aggregate queries:
-    mv_monthly_kpis     → time-series / monthly trends (month DATE, created_count, published_count, publish_rate_pct)
-    mv_channel_health   → per-channel comparisons (total_created, total_published, publish_rate_pct, active_users)
-    mv_user_performance → per-user stats (created_count, published_count, publish_rate_pct)
-- Format month column: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels.
-- All tables and views live in the 'data' schema — always prefix with data. (e.g. data.fact_created_videos)."""
-    _safe_add(db["doc"], business_rules, _det_id(business_rules, "-doc"))
+TABLE: data.fact_created_videos  — primary fact table, one row per video output
+  video_id        BIGINT       -- unique output identifier
+  client_id       INTEGER      -- tenant key (ALWAYS filter: WHERE client_id = N)
+  channel_id      INTEGER      -- FK → data.dim_channel
+  language_id     INTEGER      -- FK → data.dim_language
+  user_id         INTEGER      -- FK → data.dim_user (the uploader)
+  published_flag  BOOLEAN      -- TRUE = published (use published_flag = TRUE, NOT 'yes')
+  created_at      TIMESTAMP    -- when the output was created
+  published_at    TIMESTAMP    -- when published (NULL if unpublished)
 
-    # 3. Q→SQL examples → SQL collection
+MATERIALIZED VIEW: data.mv_monthly_kpis  — pre-aggregated monthly metrics
+  client_id, channel_id
+  month           DATE         -- truncated to 1st of month
+  created_count   INTEGER      -- total outputs created that month
+  published_count INTEGER      -- total outputs published that month
+  publish_rate_pct NUMERIC     -- pre-computed: published_count / created_count * 100
+  → USE FOR: time-series trends, monthly comparisons, publish rate over time
+
+MATERIALIZED VIEW: data.mv_channel_health  — per-channel totals
+  client_id, channel_id
+  total_created, total_published, publish_rate_pct NUMERIC, active_users INTEGER
+  → USE FOR: channel comparisons, channel leaderboards, channel health overview
+
+MATERIALIZED VIEW: data.mv_user_performance  — per-user totals
+  client_id, user_id
+  created_count, published_count, publish_rate_pct NUMERIC
+  → USE FOR: user leaderboards, top N users by output
+
+DIMENSION TABLES:
+  data.dim_channel  — channel_id, channel_name
+  data.dim_language — language_id, language_name
+  data.dim_user     — user_id, user_name"""
+    _safe_add(db["ddl"], semantic_ddl, _det_id(semantic_ddl, "-ddl"))
+
+    # ── 2. Tiered documentation → doc collection ──────────────────────────────
+    # Each doc is a focused block so ChromaDB only retrieves what's relevant
+
+    core_doc = """Core query conventions for Frammer AI analytics:
+- All objects are in the 'data' schema — always prefix: data.fact_created_videos, data.mv_monthly_kpis, etc.
+- client_id isolation: always filter WHERE client_id = N UNLESS the question explicitly compares clients.
+- published = published_flag = TRUE (BOOLEAN column — never use 'yes'/'no' string comparison).
+- Prefer materialized views over the fact table for any aggregate/group-by query (faster, pre-computed).
+- Publish rate formula: ROUND(published_count::numeric / NULLIF(created_count, 0) * 100, 2)
+- Month display: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels."""
+    _safe_add(db["doc"], core_doc, _det_id(core_doc, "-doc"))
+
+    time_series_doc = """TIME-SERIES and TREND queries (monthly, over time, growth trends):
+Use data.mv_monthly_kpis — pre-computed month, created_count, published_count, publish_rate_pct.
+Always GROUP BY month and ORDER BY month ASC.
+For "last N months": WHERE month >= DATE_TRUNC('month', NOW() - INTERVAL 'N-1 months')
+Example pattern for monthly publish rate:
+  SELECT TO_CHAR(month, 'Mon YYYY') AS month, SUM(publish_rate_pct) / COUNT(*) AS avg_rate
+  FROM data.mv_monthly_kpis WHERE client_id = 1
+  GROUP BY month ORDER BY month"""
+    _safe_add(db["doc"], time_series_doc, _det_id(time_series_doc, "-doc"))
+
+    ranking_doc = """RANKING and TOP-N queries (top users, best channels, highest/lowest publish rate):
+Use mv_user_performance for user rankings, mv_channel_health for channel rankings.
+Always include ORDER BY <metric> DESC LIMIT N.
+For publish rate rankings, ORDER BY publish_rate_pct DESC.
+For output volume rankings, ORDER BY created_count DESC or total_created DESC."""
+    _safe_add(db["doc"], ranking_doc, _det_id(ranking_doc, "-doc"))
+
+    multidim_doc = """MULTI-DIMENSION and BREAKDOWN queries (channel by language, user by channel, cross-tab):
+Join fact_created_videos with the relevant dimension tables.
+GROUP BY both dimensions. Always include:
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+Example: breakdown by channel and language →
+  JOIN data.dim_channel dc ON f.channel_id = dc.channel_id
+  JOIN data.dim_language dl ON f.language_id = dl.language_id
+  GROUP BY dc.channel_name, dl.language_name"""
+    _safe_add(db["doc"], multidim_doc, _det_id(multidim_doc, "-doc"))
+
+    # ── 3. Q→SQL examples → SQL collection ────────────────────────────────────
     examples = [
         (
             "how many videos have been published",
-            "SELECT COUNT(*) AS published_count FROM data.fact_created_videos WHERE published_flag = TRUE;",
+            "SELECT COUNT(*) AS published_count FROM data.fact_created_videos WHERE published_flag = TRUE AND client_id = 1;",
         ),
         (
             "show created vs published videos by language",
             """SELECT dl.language_name AS language, COUNT(*) AS created_count,
-  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
 FROM data.fact_created_videos f
 JOIN data.dim_language dl ON f.language_id = dl.language_id
 WHERE f.client_id = 1
@@ -164,13 +238,27 @@ JOIN data.dim_channel dc ON ch.channel_id = dc.channel_id
 WHERE ch.client_id = 1
 GROUP BY dc.channel_name, ch.publish_rate_pct ORDER BY publish_rate_pct DESC;""",
         ),
+        (
+            "show output breakdown by channel and language",
+            """SELECT dc.channel_name AS channel, dl.language_name AS language,
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+JOIN data.dim_channel dc ON f.channel_id = dc.channel_id
+JOIN data.dim_language dl ON f.language_id = dl.language_id
+WHERE f.client_id = 1
+GROUP BY dc.channel_name, dl.language_name ORDER BY created_count DESC;""",
+        ),
     ]
 
     for question, sql in examples:
         doc = json.dumps({"question": question, "sql": sql}, ensure_ascii=False)
         _safe_add(db["sql"], doc, _det_id(doc, "-sql"))
 
-    logger.info("RAG training complete (%d SQL examples).", len(examples))
+    # Add version marker last — only present if training completed fully
+    _safe_add(db["doc"], _KB_VERSION, version_id)
+    logger.info("RAG training complete — %d SQL examples, %d docs.", len(examples), db["doc"].count())
 
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
@@ -209,25 +297,25 @@ After writing the SQL, also output a JSON block fenced with ```json ... ``` cont
 
 Chart type rules:
 - line        → time series / trends over months
-- bar         → comparisons across categories (channels, users, types)
-- pie         → distributions / proportions (use only when ≤ 10 categories)
+- bar         → comparisons across categories
+- pie         → distributions / proportions (≤ 10 categories only)
 - stacked_bar → multi-series category comparisons
-- table       → detailed row-level data or queries with many columns
+- table       → row-level data or many columns
 
 Answer strategy rules:
-- time_series_trend  → any over-time trend. focus: peak, trough, direction, change_pct
-- top_n_ranked       → ranking questions. focus: winner, spread, total
-- distribution       → share/proportion questions. focus: dominant_slice, total
-- single_aggregate   → COUNT/SUM returning one row. focus: exact_value
-- detail_sample      → row-level table queries. focus: top_rows, row_count"""
+- time_series_trend → over-time trends. focus: peak, trough, direction, change_pct
+- top_n_ranked      → ranking questions. focus: winner, spread, total
+- distribution      → share/proportion. focus: dominant_slice, total
+- single_aggregate  → one-row COUNT/SUM. focus: exact_value
+- detail_sample     → row-level. focus: top_rows, row_count"""
 
 
 def _build_messages(question: str, sql_examples: list, ddl_docs: list, doc_docs: list) -> list:
     """
     Build the LLM message list:
-      system  = base + schema + business rules + response guidelines
+      system  = base prompt + schema + business rules + response guidelines
       user/assistant pairs = retrieved Q→SQL few-shot examples
-      final user = the actual question + output format instructions
+      final user = augmented question + output format instructions
     """
     system = _SYSTEM_BASE
 
@@ -239,15 +327,14 @@ def _build_messages(question: str, sql_examples: list, ddl_docs: list, doc_docs:
 
     system += (
         "\n\n=== Response Guidelines ===\n"
-        "1. Generate a valid SQL query without explanations.\n"
-        "2. Use the most relevant table(s) from the schema above.\n"
+        "1. Generate valid SQL without explanations.\n"
+        "2. Use only the tables and views from the schema above.\n"
         "3. Ensure the SQL is PostgreSQL-compliant and free of syntax errors.\n"
-        "4. If context is insufficient, return a SELECT that produces 0 rows (WHERE 1=0).\n"
+        "4. If context is insufficient, return SELECT that produces 0 rows (WHERE 1=0).\n"
     )
 
     messages = [{"role": "system", "content": system}]
 
-    # Inject retrieved Q→SQL pairs as few-shot examples
     for raw in sql_examples:
         try:
             ex = json.loads(raw)
@@ -262,7 +349,7 @@ def _build_messages(question: str, sql_examples: list, ddl_docs: list, doc_docs:
 
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
-def _call_llm(messages: list, max_retries: int = 3) -> str:
+def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries: int = 3) -> str:
     from intelligence.nlq.llm import _is_quota_error, _parse_retry_delay
     client = make_openai_client()
 
@@ -272,7 +359,7 @@ def _call_llm(messages: list, max_retries: int = 3) -> str:
                 model=QWEN_CODER_MODEL,
                 messages=messages,
                 max_tokens=LLM_MAX_TOKENS,
-                temperature=LLM_TEMPERATURE,
+                temperature=temperature,
             )
             return response.choices[0].message.content
         except Exception as exc:
@@ -287,30 +374,86 @@ def _call_llm(messages: list, max_retries: int = 3) -> str:
                 raise
 
 
-# ── SQL generation ─────────────────────────────────────────────────────────────
+# ── Thinking extraction ────────────────────────────────────────────────────────
 
-def generate_sql(
+def _extract_thinking(raw: str) -> tuple:
+    """
+    Extract Qwen3's native <think>...</think> chain-of-thought block.
+    Returns (thinking_text, remaining_output).
+    If no thinking block is present, returns ("", raw).
+    """
+    match = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
+    if match:
+        thinking = match.group(1).strip()
+        rest = (raw[: match.start()] + raw[match.end():]).strip()
+        return thinking, rest
+    return "", raw
+
+
+# ── Candidate scoring ─────────────────────────────────────────────────────────
+
+def score_candidate(vr: "RAGResult", question: str) -> int:
+    """
+    Score a SQL candidate by structural alignment with the question.
+    Used to rank N>1 candidates before execution — no DB call needed.
+    """
+    score = 0
+    q   = question.lower()
+    sql = vr.sql.lower()
+
+    # Column/concept alignment
+    col_hints = [
+        ("channel",  "channel"),
+        ("language", "language"),
+        ("user",     "user"),
+        ("publish",  "publish"),
+        ("duration", "duration"),
+        ("hours",    "duration"),
+        ("monthly",  "month"),
+        ("trend",    "month"),
+    ]
+    for kw, col in col_hints:
+        if kw in q and col in sql:
+            score += 2
+
+    # Rate/percentage queries must have division
+    if any(w in q for w in ["rate", "percentage", "ratio", "%"]):
+        score += 3 if "/" in sql else -3
+
+    # GROUP BY should match "by X" phrasing
+    m = re.search(r"\bby\s+(\w+)", q)
+    if m and m.group(1) in sql:
+        score += 2
+
+    # Prefer materialized views for aggregate queries (faster + correct)
+    if any(w in q for w in ["monthly", "trend", "channel", "user", "compare"]):
+        if "mv_" in sql:
+            score += 2
+
+    # Penalise suspiciously short SQL
+    if len(vr.sql) > 60:
+        score += 1
+
+    return score
+
+
+# ── Question augmentation ─────────────────────────────────────────────────────
+
+def _augment_question(
     question: str,
-    previous_sql: Optional[str] = None,
-    user_role: Optional[str] = None,
-    client_id: int = 1,
-) -> RAGResult:
-    """
-    Convert a natural language question to SQL using ChromaDB RAG.
-
-    Key optimisation: the question is embedded once and the same vector is
-    reused for all three ChromaDB queries (sql / ddl / doc), avoiding two
-    redundant embedding model calls per request.
-    """
-    db = _get_chroma()
-
-    # Augment question with context
+    previous_sql: Optional[str],
+    user_role: Optional[str],
+    client_id: int,
+) -> str:
+    """Inject role context, client_id constraint, and follow-up SQL into the question."""
     augmented = question
+
     if previous_sql:
         augmented = (
             f"Previous SQL:\n{previous_sql}\n\n"
             f"New question (modify the previous SQL to answer this): {question}"
         )
+
     if user_role:
         from intelligence.nlq.role_config import get_role_config
         role_cfg = get_role_config(user_role)
@@ -321,23 +464,70 @@ def generate_sql(
                 f"Always filter client_id = {client_id} unless comparing clients.\n\n"
                 f"{augmented}"
             )
-    else:
-        augmented = f"Always filter client_id = {client_id} unless comparing clients.\n\n{augmented}"
+            return augmented
+
+    return f"Always filter client_id = {client_id} unless comparing clients.\n\n{augmented}"
+
+
+# ── SQL generation ─────────────────────────────────────────────────────────────
+
+def generate_sql_candidates(
+    question: str,
+    n: int = 1,
+    previous_sql: Optional[str] = None,
+    user_role: Optional[str] = None,
+    client_id: int = 1,
+) -> List[RAGResult]:
+    """
+    Generate N SQL candidates using ChromaDB RAG.
+
+    Key optimisations:
+    - Question is embedded once and reused for all 3 ChromaDB queries.
+    - When N>1, LLM calls are made concurrently (ThreadPoolExecutor) at T=0.7
+      for candidate diversity. N=1 uses the configured LLM_TEMPERATURE.
+    """
+    db = _get_chroma()
+
+    augmented = _augment_question(question, previous_sql, user_role, client_id)
 
     # Embed once — reuse for all 3 collection queries
     embedding = db["ef"]([question])[0]
 
-    sql_examples = _retrieve(db["sql"], embedding, n=5)
-    ddl_docs     = _retrieve(db["ddl"], embedding, n=3)
-    doc_docs     = _retrieve(db["doc"], embedding, n=3)
+    sql_examples = _retrieve(db["sql"], embedding, n=3)
+    ddl_docs     = _retrieve(db["ddl"], embedding, n=2)
+    doc_docs     = _retrieve(db["doc"], embedding, n=2)
 
     messages = _build_messages(augmented, sql_examples, ddl_docs, doc_docs)
 
-    logger.info("RAG generating SQL for: '%s'", question)
-    raw = _call_llm(messages)
-    logger.info("Raw LLM output:\n%s", raw)
+    logger.info("RAG generating %d SQL candidate(s) for: '%s'", n, question)
 
-    sql, chart_meta = _parse_output(raw)
+    if n == 1:
+        raw = _call_llm(messages, temperature=LLM_TEMPERATURE)
+        return [_parse_candidate(raw)]
+
+    # N > 1: generate concurrently with higher temperature for candidate diversity
+    with ThreadPoolExecutor(max_workers=n) as executor:
+        futures = [executor.submit(_call_llm, messages, 0.7) for _ in range(n)]
+        raws = [f.result() for f in futures]
+
+    return [_parse_candidate(raw) for raw in raws]
+
+
+def generate_sql(
+    question: str,
+    previous_sql: Optional[str] = None,
+    user_role: Optional[str] = None,
+    client_id: int = 1,
+) -> RAGResult:
+    """Convenience wrapper — single candidate generation."""
+    return generate_sql_candidates(question, n=1, previous_sql=previous_sql,
+                                   user_role=user_role, client_id=client_id)[0]
+
+
+def _parse_candidate(raw: str) -> RAGResult:
+    """Parse a single raw LLM response into a RAGResult (thinking + SQL + chart meta)."""
+    thinking, cleaned = _extract_thinking(raw)
+    sql, chart_meta = _parse_output(cleaned)
     return RAGResult(
         sql=sql,
         chart_type=chart_meta.get("chart_type"),
@@ -345,6 +535,7 @@ def generate_sql(
         y_column=chart_meta.get("y"),
         title=chart_meta.get("title"),
         answer_strategy=chart_meta.get("answer_strategy"),
+        thinking=thinking or None,
     )
 
 
@@ -379,7 +570,7 @@ def _parse_output(raw: str) -> tuple:
     if sql_match:
         return sql_match.group(1).strip(), chart_meta
 
-    # Fallback: strip any remaining fences and find the SELECT
+    # Fallback: strip fences and find SELECT
     sql = re.sub(r"```\w*\s*", "", raw)
     sql = re.sub(r"```\s*", "", sql)
     select_match = re.search(r"(SELECT\b.*)", sql, re.DOTALL | re.IGNORECASE)

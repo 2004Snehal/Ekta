@@ -15,7 +15,8 @@ import re
 import time
 from datetime import datetime
 
-from intelligence.nlq.rag_service import generate_sql, store_successful_query
+from intelligence.nlq.rag_service import generate_sql_candidates, store_successful_query, score_candidate
+from intelligence.nlq.router import classify_complexity, n_candidates
 from intelligence.nlq.self_healing import run_sql_with_healing
 from intelligence.nlq.session_service import get_session, update_session
 from intelligence.nlq.llm import build_summary, generate_answer
@@ -50,19 +51,31 @@ def run_nlq_query(
     previous_sql = session.last_sql
     log.info("[1/7] Session loaded (follow-up=%s) — %.0f ms", previous_sql is not None, _ms())
 
-    # ── Step 2: ChromaDB RAG → SQL + chart spec + answer_strategy ────────────
+    # ── Step 2: ChromaDB RAG → SQL candidates (complexity-aware) ─────────────
+    complexity = classify_complexity(question)
+    n = n_candidates(complexity, explore=explore)
     t2 = time.perf_counter()
     try:
-        vr = generate_sql(
+        candidates = generate_sql_candidates(
             question=question,
+            n=n,
             previous_sql=previous_sql,
             user_role=effective_role,
             client_id=client_id,
         )
     except Exception as exc:
-        log.error("[2/7] RAG SQL generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
+        log.error("[2/7] RAG generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
         return _error(str(exc), question)
-    log.info("[2/7] SQL + metadata generated — %.0f ms", _ms())
+
+    # Score and rank candidates — best structural match executes first
+    if len(candidates) > 1:
+        candidates.sort(key=lambda vr: score_candidate(vr, question), reverse=True)
+        log.info("[2/7] %d candidates generated and ranked (complexity=%s) — %.0f ms",
+                 len(candidates), complexity, _ms())
+    else:
+        log.info("[2/7] SQL generated (complexity=%s) — %.0f ms", complexity, _ms())
+
+    vr = candidates[0]
 
     # ── Step 2a: Router — allow RAG to signal no-SQL path ────────────────────
     routing = vr.routing or {}
@@ -86,38 +99,36 @@ def run_nlq_query(
             "columns":            [],
             "row_count":          0,
             "insights":           [],
+            "thinking":           vr.thinking,
+            "complexity":         complexity,
             "processing_time_ms": total_ms,
         }
 
-    # default / legacy behaviour: run full SQL pipeline
-    sql = vr.sql.strip()
-
-    # ── Security: only allow read-only queries (SELECT or CTE starting WITH) ─
-    if not re.match(r"^\s*(WITH|SELECT)\b", sql, re.IGNORECASE):
-        log.warning("[NLQ] Non-SELECT blocked")
-        return _error("Generated a non-SELECT statement — blocked.", question)
-
-    for forbidden in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"):
-        if re.search(rf"\b{forbidden}\b", sql, re.IGNORECASE):
-            log.warning("[NLQ] %s statement blocked", forbidden)
-            return _error(f"Generated SQL containing {forbidden} — blocked.", question)
-
-    # Enforce client_id isolation on the fact table
-    if "fact_created_videos" in sql.lower() and "client_id" not in sql.lower():
-        log.warning("[NLQ] Missing client_id filter — injecting wrapper")
-        sql = f"SELECT * FROM ({sql.rstrip(';')}) _nlq WHERE client_id = {int(client_id)}"
-
-    if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE):
-        sql = sql.rstrip(";") + " LIMIT 500"
-
-    # ── Step 3: Self-healing SQL execution ────────────────────────────────────
+    # ── Step 3: Secure + execute candidates (best-scored first, fallback to rest) ─
     t3 = time.perf_counter()
-    try:
-        final_sql, rows = run_sql_with_healing(conn, sql, question)
-    except Exception as exc:
-        log.error("[3/7] SQL execution failed after retries (%.2fs): %s", time.perf_counter() - t3, exc)
-        _log_query(conn, client_id, question, sql, success=False, row_count=0)
-        return _error(f"SQL execution failed: {exc}", question)
+    final_sql, rows = None, None
+
+    for i, candidate in enumerate(candidates):
+        ok, err_msg, secured = _secure_sql(candidate.sql.strip(), client_id)
+        if not ok:
+            log.warning("[NLQ] Candidate %d/%d blocked: %s", i + 1, len(candidates), err_msg)
+            if i == len(candidates) - 1:
+                return _error(err_msg, question)
+            continue
+
+        try:
+            final_sql, rows = run_sql_with_healing(conn, secured, question)
+            vr = candidate   # adopt metadata from the winning candidate
+            log.info("[3/7] Candidate %d/%d succeeded — %d rows — %.0f ms",
+                     i + 1, len(candidates), len(rows), _ms())
+            break
+        except Exception as exc:
+            log.warning("[3/7] Candidate %d/%d failed: %s", i + 1, len(candidates), exc)
+            conn.rollback()
+            if i == len(candidates) - 1:
+                log.error("[3/7] All candidates exhausted (%.2fs)", time.perf_counter() - t3)
+                _log_query(conn, client_id, question, secured, success=False, row_count=0)
+                return _error(f"SQL execution failed: {exc}", question)
 
     data = _serialize(rows)
     columns = list(data[0].keys()) if data else []
@@ -176,11 +187,37 @@ def run_nlq_query(
         "columns":            columns,
         "row_count":          len(data),
         "insights":           insights,
+        "thinking":           vr.thinking,
+        "complexity":         complexity,
         "processing_time_ms": total_ms,
     }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _secure_sql(sql: str, client_id: int) -> tuple:
+    """
+    Validate and harden a SQL string.
+    Returns (ok: bool, error_msg: str, secured_sql: str).
+    """
+    if not re.match(r"^\s*(WITH|SELECT)\b", sql, re.IGNORECASE):
+        return False, "Generated a non-SELECT statement — blocked.", sql
+
+    for forbidden in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
+                      "TRUNCATE", "CREATE", "GRANT", "REVOKE"):
+        if re.search(rf"\b{forbidden}\b", sql, re.IGNORECASE):
+            return False, f"Generated SQL containing {forbidden} — blocked.", sql
+
+    # Enforce client_id isolation on the raw fact table
+    if "fact_created_videos" in sql.lower() and "client_id" not in sql.lower():
+        sql = f"SELECT * FROM ({sql.rstrip(';')}) _nlq WHERE client_id = {int(client_id)}"
+
+    # Cap row count
+    if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE):
+        sql = sql.rstrip(";") + " LIMIT 500"
+
+    return True, "", sql
+
 
 def _fill_chart_meta(vr, rows: list, question: str) -> None:
     """Infer missing chart metadata from actual result columns."""
