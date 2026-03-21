@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useProfile } from "@/lib/profiles";
+import { useAuth } from "@/context/AuthContext";
 import { ChartRenderer } from "@/components/ChartRenderer";
 import {
   Send,
@@ -42,7 +43,9 @@ interface NLQResult {
   row_count: number;
   thinking?: string | null;
   complexity?: string;
+  processing_time_ms?: number;
   error?: string;
+  session_id?: string;
 }
 
 interface Message {
@@ -144,14 +147,15 @@ function lsDeleteSession(id: string) {
 // ── API helpers (secondary/backup) ────────────────────────────────────────────
 
 async function apiSaveSession(
-  sessionId: string,
+  sessionId: string | null,
+  userId: string,
   messages: Message[],
   title?: string,
 ) {
   const res = await fetch(`${API_URL}/nlq/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId, userId: USER_ID, title, messages }),
+    body: JSON.stringify({ sessionId, userId, title, messages }),
   });
   if (!res.ok) throw new Error("Failed to save session");
   return (await res.json()) as { session_id: string };
@@ -243,7 +247,7 @@ function UserBubble({ text }: { text: string }) {
 
 function AssistantBubble({ msg }: { msg: Message }) {
   const [sqlOpen, setSqlOpen] = useState(false);
-  const [thinkOpen, setThinkOpen] = useState(true);  // open by default
+  const [thinkOpen, setThinkOpen] = useState(false);
   const [pinned, setPinned]   = useState(false);
 
   useEffect(() => {
@@ -317,6 +321,41 @@ function AssistantBubble({ msg }: { msg: Message }) {
         <Sparkles className="w-3.5 h-3.5 text-primary" />
       </div>
       <div className="flex-1 space-y-3">
+        {r.thinking && (
+          <div className="mb-2">
+            <button
+              onClick={() => setThinkOpen((v) => !v)}
+              className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium select-none w-full text-left"
+            >
+              {thinkOpen ? (
+                <ChevronDown className="w-3 h-3 shrink-0" />
+              ) : (
+                <ChevronRight className="w-3 h-3 shrink-0" />
+              )}
+              <span className="flex items-center gap-1.5 shrink-0">
+                Thought Process
+              </span>
+              {!thinkOpen && (
+                <span className="truncate text-muted-foreground/50 font-normal ml-1 flex-1 min-w-0 max-w-[300px] lg:max-w-[500px]">
+                  {r.thinking.replace(/\s+/g, " ")}
+                </span>
+              )}
+              {r.processing_time_ms && (
+                 <span className="text-[10px] text-muted-foreground/40 ml-auto shrink-0 pl-2">
+                    {Math.round(r.processing_time_ms / 100) / 10}s
+                 </span>
+              )}
+            </button>
+            {thinkOpen && (
+              <div className="mt-2 pl-3 border-l-2 border-border ml-1.5 py-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                  {r.thinking}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
           {r.title && (
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
@@ -348,37 +387,8 @@ function AssistantBubble({ msg }: { msg: Message }) {
             </button>
           </>
         )}
-
-        {r.thinking && (
-          <div className="border border-violet-500/20 rounded-xl overflow-hidden bg-violet-500/[0.03]">
-            <button
-              onClick={() => setThinkOpen((v) => !v)}
-              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-violet-400/80 hover:text-violet-300 transition-colors"
-            >
-              <Brain className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-medium">Reasoning</span>
-              {r.complexity && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20">
-                  {r.complexity}
-                </span>
-              )}
-              {thinkOpen ? (
-                <ChevronDown className="w-3 h-3 ml-auto shrink-0" />
-              ) : (
-                <ChevronRight className="w-3 h-3 ml-auto shrink-0" />
-              )}
-            </button>
-            {thinkOpen && (
-              <div className="px-4 pb-4 pt-0">
-                <div className="border-t border-violet-500/10 pt-3">
-                  <p className="text-xs text-violet-300/70 leading-relaxed whitespace-pre-wrap">
-                    {r.thinking}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        
+        {/* r.thinking removed from here as it is moved up */}
 
         {r.sql && (
           <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -434,6 +444,9 @@ function QueryPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile, profileDef } = useProfile();
+  const { user } = useAuth();
+  
+  const currentUserId = user?.id || "default-user";
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -534,7 +547,7 @@ function QueryPageInner() {
 
         // 2. Also save to backend (best-effort)
         try {
-          await apiSaveSession(resolvedId, persistable, title);
+          await apiSaveSession(resolvedId, currentUserId, persistable, title);
         } catch { /* backend unavailable – localStorage version is fine */ }
       }, 600);
     },
@@ -560,6 +573,20 @@ function QueryPageInner() {
       ts: new Date().toISOString(),
     };
 
+    // Optimistic UI update: Show new session in sidebar immediately
+    // We use a temporary ID, which will be replaced when the backend responds
+    if (!sessionId) {
+      setSessions((prev) => [
+        {
+          session_id: "temp-optimistic-id",
+          title: question.trim(),
+          messageCount: 1,
+          updatedAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+    }
+
     setMessages((prev) => [...prev, userMsg, pendingMsg]);
     setInput("");
     setIsLoading(true);
@@ -575,9 +602,23 @@ function QueryPageInner() {
           client_id: CLIENT_ID,
           user_role: profile,
           explore: exploreMode,
+          session_id: sessionId || "default", // Ensure session_id is passed
+          user_id: currentUserId, // Backend will use this to persist
         }),
       });
       const result: NLQResult = await res.json();
+      
+      // If backend created a new session ID, adopt it
+      if (result.session_id && (!sessionId || sessionId === "default")) {
+          setSessionId(result.session_id);
+          window.history.replaceState({}, "", `/query?session=${result.session_id}`);
+          
+          // Add a delay before refreshing sessions to ensure DB consistency
+          setTimeout(() => {
+            void refreshSessions();
+          }, 1000);
+      }
+
       const doneMsg: Message = {
         id: pendingId,
         role: "assistant",
@@ -684,7 +725,7 @@ function QueryPageInner() {
       const summary: SessionSummary = { session_id: sid, title, messageCount: persistable.length, updatedAt: new Date().toISOString() };
       lsSetList([summary, ...lsGetList()]);
       setSessionId(sid);
-      apiSaveSession(sid, persistable, title).catch(() => {});
+      apiSaveSession(sid, currentUserId, persistable, title).catch(() => {});
     }
     const url = `${window.location.origin}/query?session=${sid}`;
     await navigator.clipboard.writeText(url);

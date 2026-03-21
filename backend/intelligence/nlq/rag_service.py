@@ -594,8 +594,16 @@ def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries:
             )
             msg = response.choices[0].message
             raw = msg.content or ""
-            # OpenRouter surfaces Qwen3 chain-of-thought in a separate field
-            reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
+            
+            # Robustly extract partial/reasoning content from various provider formats (OpenRouter, DeepSeek, etc.)
+            reasoning = (
+                getattr(msg, "reasoning_content", None) 
+                or getattr(msg, "reasoning", None)
+                or (msg.model_extra.get("reasoning_content") if msg.model_extra else None)
+                or (msg.model_extra.get("reasoning") if msg.model_extra else None)
+                or ""
+            )
+            
             logger.info("[LLM raw] finish_reason=%s len=%d reasoning_len=%d preview=%r",
                         response.choices[0].finish_reason, len(raw), len(reasoning), raw[:300])
 
