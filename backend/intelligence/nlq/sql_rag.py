@@ -274,6 +274,12 @@ def _fill_chart_meta(vr, rows: list, question: str) -> None:
 
     x_lower = (vr.x_column or "").lower()
 
+    # Auto-suggest scatter when both x and y are numeric duration/views columns
+    if not vr.chart_type and len(metric_cols) >= 2:
+        dur_view_kws = ("duration", "views", "secs", "seconds", "hours", "mins")
+        if sum(1 for c in metric_cols[:2] if any(kw in c.lower() for kw in dur_view_kws)) >= 2:
+            vr.chart_type = "scatter"
+
     if not vr.chart_type:
         if text_cols and metric_cols:
             vr.chart_type = _best_chart_type(len(rows), len(metric_cols), x_lower)
@@ -283,6 +289,8 @@ def _fill_chart_meta(vr, rows: list, question: str) -> None:
         # Validate / correct the LLM's choice against the actual data shape
         if not metric_cols:
             vr.chart_type = "table"
+        elif vr.chart_type == "scatter":
+            pass  # always preserve LLM-specified scatter
         elif vr.chart_type in ("bar", "horizontal_bar") and text_cols and metric_cols:
             correct = _best_chart_type(len(rows), len(metric_cols), x_lower)
             # Only override bar→pie or bar→horizontal_bar — don't second-guess line/radar/etc.

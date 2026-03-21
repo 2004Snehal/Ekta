@@ -132,6 +132,34 @@ def build_summary(data: list, x_col: str, y_col: str, strategy: dict) -> dict:
     elif stype == "single_aggregate":
         return {"result": data[0]}
 
+    elif stype == "comparison":
+        # Two-group contrast (bot vs human, weekday vs weekend, short vs long-form)
+        groups = {}
+        for r in data:
+            g = str(r.get(x_col, "unknown"))
+            v = r.get(y_col, 0) or 0
+            groups[g] = groups.get(g, 0) + v
+        total = sum(groups.values())
+        sorted_groups = sorted(groups.items(), key=lambda t: t[1], reverse=True)
+        return {
+            "groups": dict(sorted_groups),
+            "total": total,
+            "dominant": sorted_groups[0][0] if sorted_groups else None,
+        }
+
+    elif stype == "filtered_ranking":
+        # Ranked list that passed a HAVING/threshold filter — same shape as top_n_ranked
+        sorted_desc = sorted(data, key=lambda r: r.get(y_col, 0) or 0, reverse=True)
+        total = sum((r.get(y_col, 0) or 0) for r in data)
+        top1_val = sorted_desc[0].get(y_col, 0) if sorted_desc else 0
+        return {
+            "total_rows": n,
+            "top_5": sorted_desc[:5],
+            "bottom_3": sorted_desc[-3:] if n > 5 else [],
+            "total": total,
+            "top1_share_pct": round(top1_val / total * 100, 1) if total else None,
+        }
+
     else:  # detail_sample
         return {"total_rows": n, "sample_rows": data[:10]}
 
@@ -144,6 +172,8 @@ Your job is to answer a user's question directly using the statistical summary p
 RULES:
 - Be concise: 1–4 sentences. Lead with the most important number or finding.
 - Use specific names, numbers, and percentages from the summary — never be vague.
+- Plain text ONLY — no markdown. No bold (**), no bullets (-), no headers (#), no italics.
+  Write as clean prose, not formatted text.
 - Never say "based on the data", "the query shows", "the results indicate", or similar meta-phrases.
   Just state the answer as a fact.
 - For "which X is best/highest/lowest/worst": name the winner and its value.

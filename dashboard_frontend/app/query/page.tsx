@@ -81,6 +81,17 @@ function formatTime(iso: string) {
   });
 }
 
+/** Strip markdown syntax so answers render as plain prose. */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")   // **bold**
+    .replace(/\*(.+?)\*/g, "$1")        // *italic*
+    .replace(/^#+\s+/gm, "")           // ## headings
+    .replace(/^[-*]\s+/gm, "")         // bullet points
+    .replace(/`(.+?)`/g, "$1")         // `code`
+    .trim();
+}
+
 function formatDate(iso: string | null) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -202,7 +213,7 @@ function UserBubble({ text }: { text: string }) {
 
 function AssistantBubble({ msg }: { msg: Message }) {
   const [sqlOpen, setSqlOpen] = useState(false);
-  const [thinkOpen, setThinkOpen] = useState(false);
+  const [thinkOpen, setThinkOpen] = useState(true);  // open by default
   const [pinned, setPinned]   = useState(false);
 
   useEffect(() => {
@@ -277,16 +288,18 @@ function AssistantBubble({ msg }: { msg: Message }) {
       </div>
       <div className="flex-1 space-y-3">
         <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
-          <p className="text-sm font-medium text-foreground">
-            {r.title || "Result"}
-          </p>
-          {r.description && (
-            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              {r.description}
+          {r.title && (
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+              {r.title}
             </p>
           )}
-          {r.row_count !== undefined && r.row_count !== null && (
-            <p className="text-xs text-muted-foreground mt-1">
+          {r.description && (
+            <p className="text-sm text-foreground leading-relaxed">
+              {stripMarkdown(r.description)}
+            </p>
+          )}
+          {r.row_count !== undefined && r.row_count !== null && r.row_count > 0 && (
+            <p className="text-xs text-muted-foreground mt-1.5">
               {r.row_count.toLocaleString()} rows
             </p>
           )}
@@ -307,29 +320,31 @@ function AssistantBubble({ msg }: { msg: Message }) {
         )}
 
         {r.thinking && (
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="border border-violet-500/20 rounded-xl overflow-hidden bg-violet-500/[0.03]">
             <button
               onClick={() => setThinkOpen((v) => !v)}
-              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-violet-400/80 hover:text-violet-300 transition-colors"
             >
-              <Brain className="w-3.5 h-3.5 text-violet-400" />
-              <span>Reasoning trace</span>
+              <Brain className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-medium">Reasoning</span>
               {r.complexity && (
-                <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-violet-500/10 text-violet-400 border border-violet-500/20">
                   {r.complexity}
                 </span>
               )}
               {thinkOpen ? (
-                <ChevronDown className="w-3 h-3 ml-auto" />
+                <ChevronDown className="w-3 h-3 ml-auto shrink-0" />
               ) : (
-                <ChevronRight className="w-3 h-3 ml-auto" />
+                <ChevronRight className="w-3 h-3 ml-auto shrink-0" />
               )}
             </button>
             {thinkOpen && (
-              <div className="px-4 pb-4">
-                <pre className="text-xs font-mono text-violet-300 bg-[#0d1117] rounded-lg p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-violet-500/20">
-                  {r.thinking}
-                </pre>
+              <div className="px-4 pb-4 pt-0">
+                <div className="border-t border-violet-500/10 pt-3">
+                  <p className="text-xs text-violet-300/70 leading-relaxed whitespace-pre-wrap">
+                    {r.thinking}
+                  </p>
+                </div>
               </div>
             )}
           </div>

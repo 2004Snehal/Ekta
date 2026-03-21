@@ -28,7 +28,7 @@ from intelligence.nlq.context import fetch_live_schema
 logger = logging.getLogger("nlq.rag")
 
 # Bump this string to force a full KB retrain on next startup
-_KB_VERSION = "RAG_KB_V4_ILIKE"
+_KB_VERSION = "RAG_KB_V6_SEMANTIC_DOCS"
 
 
 @dataclass
@@ -111,48 +111,139 @@ def train_with_schema(conn) -> None:
     # fetch_live_schema(conn) so the LLM always sees the real column names.
 
     core_doc = """Core query conventions for Frammer AI analytics:
-- All objects are in the 'data' schema — always prefix: data.fact_created_videos, data.mv_monthly_kpis, etc.
-- client_id isolation: always filter WHERE client_id = N UNLESS the question explicitly compares clients.
-- fact_created_videos: published_flag is BOOLEAN — use published_flag = TRUE.
-- fact_created_videos: billable is TEXT — use billable = 'Yes' or billable = 'No'.
-- fact_created_videos: the timestamp column is uploaded_at (NOT created_at).
-- shortened_filtered_data: published and billable are TEXT ('Yes'/'No'), channel is TEXT (not channel_id).
-- Prefer materialized views (mv_monthly_kpis, mv_channel_health, mv_user_performance) over fact_created_videos for any aggregate — they are pre-computed and faster.
-- For raw row access or billable/input_type breakdowns, use fact_created_videos (has all FK columns).
+- All objects are in the 'data' schema — always prefix tables/views with 'data.'.
+- client_id isolation: always filter by client_id UNLESS the question explicitly compares clients.
+- The main fact table (fact_created_videos) has: a boolean publish flag, a billable text field,
+  a timestamp for when content was uploaded, duration columns for three stages (all in seconds),
+  a per-video view count, and foreign keys to all dimension tables.
+- Prefer materialized views for aggregates — they are pre-computed and faster:
+    mv_monthly_kpis     → monthly trends, created/published counts, publish rates
+    mv_channel_health   → per-channel totals, publish rate, views, hours, recency
+    mv_user_performance → per-user output and publish rate
+- Use the fact table for: row-level detail, billable filters, duration, per-video views,
+  bot/human filters, short-form filters, platform/team breakdowns.
 - Publish rate formula: ROUND(published_count::numeric / NULLIF(created_count, 0) * 100, 2)
 - Month display: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels.
-- String filters: ALWAYS use ILIKE for name/label columns (channel_name, user_name, language_name, type_name, etc.).
-  Never use = for user-supplied text. Example: dc.channel_name ILIKE 'r'"""
+- String filters: ALWAYS use ILIKE for name/label columns. Never use = for user-supplied text.
+- Exact column names are in the live schema injected above — use those, do not guess."""
     _safe_add(db["doc"], core_doc, _det_id(core_doc, "-doc"))
 
     time_series_doc = """TIME-SERIES and TREND queries (monthly, over time, growth trends):
-Use data.mv_monthly_kpis — pre-computed month, created_count, published_count, publish_rate_pct.
-Always GROUP BY month and ORDER BY month ASC.
-For "last N months": WHERE month >= DATE_TRUNC('month', NOW() - INTERVAL 'N-1 months')
-Example pattern for monthly publish rate:
-  SELECT TO_CHAR(month, 'Mon YYYY') AS month, SUM(publish_rate_pct) / COUNT(*) AS avg_rate
-  FROM data.mv_monthly_kpis WHERE client_id = 1
-  GROUP BY month ORDER BY month"""
+Use the monthly KPIs materialized view for pre-aggregated monthly data.
+Always GROUP BY the time column and ORDER BY it ASC for correct trend direction.
+Relative date patterns (use the live schema to pick the right timestamp column):
+  "last N months"  → WHERE time_col >= DATE_TRUNC('month', NOW() - INTERVAL 'N-1 months')
+  "this month"     → WHERE DATE_TRUNC('month', time_col) = DATE_TRUNC('month', NOW())
+  "last month"     → WHERE DATE_TRUNC('month', time_col) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
+  "last 7 days"    → WHERE time_col >= NOW() - INTERVAL '7 days'
+  "today"          → WHERE DATE_TRUNC('day', time_col) = CURRENT_DATE
+Use TO_CHAR(month_col, 'Mon YYYY') for human-readable month labels on the x-axis."""
     _safe_add(db["doc"], time_series_doc, _det_id(time_series_doc, "-doc"))
 
     ranking_doc = """RANKING and TOP-N queries (top users, best channels, highest/lowest publish rate):
-Use mv_user_performance for user rankings, mv_channel_health for channel rankings.
-Always include ORDER BY <metric> DESC LIMIT N.
-For publish rate rankings, ORDER BY publish_rate_pct DESC.
-For output volume rankings, ORDER BY created_count DESC or total_created DESC."""
+Use the user performance MV for user rankings, channel health MV for channel rankings.
+Always ORDER BY the metric DESC — never LIMIT 1 for "which is best/worst" questions.
+Return all ranked rows so the user can compare. Use LIMIT N only when "top N" is explicit.
+For filtered rankings with complex conditions, use HAVING after GROUP BY:
+  HAVING <aggregate_condition> AND <another_aggregate_condition>
+Check the live schema for exact column names — do not assume metric column names."""
     _safe_add(db["doc"], ranking_doc, _det_id(ranking_doc, "-doc"))
 
     multidim_doc = """MULTI-DIMENSION and BREAKDOWN queries (channel by language, user by channel, cross-tab):
-Join fact_created_videos with the relevant dimension tables.
-GROUP BY both dimensions. Always include:
+Join fact_created_videos with any combination of dimension tables using the FK columns on the fact table.
+GROUP BY all dimension label columns. Standard aggregate pattern:
   COUNT(*) AS created_count,
   COUNT(CASE WHEN published_flag THEN 1 END) AS published_count,
   ROUND(COUNT(CASE WHEN published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
-Example: breakdown by channel and language →
-  JOIN data.dim_channel dc ON f.channel_id = dc.channel_id
-  JOIN data.dim_language dl ON f.language_id = dl.language_id
-  GROUP BY dc.channel_name, dl.language_name"""
+Available dimensions (use the live schema for exact FK and name column names):
+  channel, language, platform, team, user (has bot flag), output type (has short-form flag), input type
+Always select the name/label column from dimensions, never the ID columns."""
     _safe_add(db["doc"], multidim_doc, _det_id(multidim_doc, "-doc"))
+
+    platform_team_doc = """PLATFORM and TEAM queries:
+- Platform and team data lives in their own dimension tables, joined to the fact table via FK columns.
+- These dimensions are NOT on materialized views — always use the fact table for platform/team breakdowns.
+- To group or filter by platform: join the platform dimension and use its name column.
+- To group or filter by team: join the team dimension and use its name column.
+- Use ILIKE for user-supplied platform/team name filters.
+- Exact table names, FK columns, and name columns are in the live schema."""
+    _safe_add(db["doc"], platform_team_doc, _det_id(platform_team_doc, "-doc"))
+
+    user_filter_doc = """BOT vs HUMAN USER queries:
+- The bot/human distinction is a boolean flag on the user dimension table — NOT on the fact table.
+- To filter or group by bot status: join the user dimension via the user FK on the fact table.
+- Human users: filter where the bot flag is FALSE.
+- Bot users: filter where the bot flag is TRUE.
+- Bot vs human comparison: group by the bot flag; use CASE WHEN for readable labels ('Bot'/'Human').
+- User names are also on the user dimension table.
+- Exact column names for the bot flag and user name are in the live schema."""
+    _safe_add(db["doc"], user_filter_doc, _det_id(user_filter_doc, "-doc"))
+
+    content_type_doc = """SHORT-FORM, LONG-FORM, and CONTENT TYPE queries:
+- "Short-form" is NOT a duration threshold — it is a boolean flag on the output type dimension.
+- "Long-form" means the short-form boolean is FALSE.
+- To filter or group by content form: join the output type dimension via its FK on the fact table.
+- Short-form filter: where the short-form boolean is TRUE.
+- Long-form filter: where the short-form boolean is FALSE.
+- For short-form vs long-form comparison: GROUP BY CASE WHEN <short_form_col> THEN 'Short-form' ELSE 'Long-form' END
+- Output type name and input type name are also on their respective dimension tables.
+- Exact table names, FK columns, and flag column names are in the live schema."""
+    _safe_add(db["doc"], content_type_doc, _det_id(content_type_doc, "-doc"))
+
+    duration_views_doc = """DURATION and VIEWS queries:
+- The fact table has three duration columns (upload stage, created stage, published stage) — all in SECONDS.
+  Exact column names are in the live schema. Convert to hours by dividing by 3600.
+- Duration buckets: use CASE WHEN on the duration column for ranges (e.g. <30s, 30-60s, >60s).
+- Per-video view count: on the fact table. Per-channel aggregate views: on the channel health MV.
+- Recency queries (inactive channels): the channel health MV has a last_activity date column.
+  Use: WHERE last_activity_col < NOW() - INTERVAL 'N days'
+- Average duration: AVG(duration_col) / 60.0 for minutes."""
+    _safe_add(db["doc"], duration_views_doc, _det_id(duration_views_doc, "-doc"))
+
+    advanced_sql_doc = """ADVANCED SQL PATTERNS for complex analytics:
+
+Weekday vs weekend (use the fact table's timestamp column):
+  CASE WHEN EXTRACT(DOW FROM <timestamp_col>) IN (0, 6) THEN 'Weekend' ELSE 'Weekday' END AS day_type
+  GROUP BY day_type
+  (DOW: 0=Sunday, 6=Saturday)
+
+Month-over-month growth — LAG window function over the monthly KPIs MV:
+  SELECT TO_CHAR(<month_col>, 'Mon YYYY') AS month, <metric_col>,
+    ROUND((<metric_col> - LAG(<metric_col>) OVER (ORDER BY <month_col>))::numeric
+          / NULLIF(LAG(<metric_col>) OVER (ORDER BY <month_col>), 0) * 100, 1) AS mom_growth_pct
+  FROM data.mv_monthly_kpis WHERE client_id = N ORDER BY <month_col>
+
+Cumulative sum:
+  SUM(<metric_col>) OVER (ORDER BY <time_col> ROWS UNBOUNDED PRECEDING) AS cumulative_total
+
+HAVING clause — filter groups after aggregation (not WHERE):
+  GROUP BY <dimension>
+  HAVING <aggregate_expr> > threshold AND <aggregate_expr2> < threshold2
+
+Scatter / correlation (two numeric columns, e.g. duration vs views):
+  SELECT two numeric columns FROM fact table WHERE client_id = N LIMIT 500
+  (set chart_type: scatter in the JSON output)
+
+Users active across multiple channels: GROUP BY user HAVING COUNT(DISTINCT channel_id) > N
+
+Channels with no published content: HAVING COUNT(CASE WHEN publish_flag THEN 1 END) = 0
+
+Declining trend: use LAG() and compare current value < previous period value"""
+    _safe_add(db["doc"], advanced_sql_doc, _det_id(advanced_sql_doc, "-doc"))
+
+    ambiguous_query_doc = """AMBIGUOUS and VAGUE QUESTION interpretations — always make a best-effort attempt:
+- "Are we doing better?" → compare this week vs last week on created_count and publish_rate_pct
+- "Bad channels" → channels with lowest publish_rate_pct (ORDER BY publish_rate_pct ASC LIMIT 10)
+- "All the data" / "everything" → aggregate summary by channel: created_count, published_count, publish_rate_pct, total_views
+- "What happened on [day]?" → that day's totals: created_count, published_count, total views WHERE DATE_TRUNC('day', uploaded_at) = '[date]'
+- "Videos that took too long" → WHERE created_duration_secs > uploaded_duration_secs * 2
+- "High upload, low publish" → HAVING total uploads above a threshold AND publish rate below a threshold
+- "Inactive channels" → channel health MV filtered where last activity was more than N days ago
+- "Consistent growth" → use LAG() comparing 3+ consecutive months each higher than previous
+- "Anomalies" → channels/users deviating more than 2× from the average metric value
+Never refuse an analytics question — always write a reasonable SQL interpretation.
+Use the live schema for exact column names."""
+    _safe_add(db["doc"], ambiguous_query_doc, _det_id(ambiguous_query_doc, "-doc"))
 
     # ── 3. Q→SQL examples → SQL collection ────────────────────────────────────
     examples = [
@@ -178,7 +269,7 @@ GROUP BY dl.language_name ORDER BY created_count DESC;""",
 FROM data.mv_monthly_kpis mk
 JOIN data.dim_channel dc ON mk.channel_id = dc.channel_id
 WHERE mk.client_id = 1
-GROUP BY dc.channel_name ORDER BY publish_rate_pct DESC LIMIT 1;""",
+GROUP BY dc.channel_name ORDER BY publish_rate_pct DESC;""",
         ),
         (
             "top 10 users by output count",
@@ -216,6 +307,99 @@ JOIN data.dim_channel dc ON f.channel_id = dc.channel_id
 JOIN data.dim_language dl ON f.language_id = dl.language_id
 WHERE f.client_id = 1
 GROUP BY dc.channel_name, dl.language_name ORDER BY created_count DESC;""",
+        ),
+        # --- V5 examples ---
+        (
+            "compare videos created by bots vs human users",
+            """SELECT CASE WHEN du.is_bot THEN 'Bot' ELSE 'Human' END AS user_type,
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+JOIN data.dim_user du ON f.user_id = du.user_id
+WHERE f.client_id = 1
+GROUP BY du.is_bot ORDER BY created_count DESC;""",
+        ),
+        (
+            "show short-form content performance by channel",
+            """SELECT dc.channel_name AS channel,
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+JOIN data.dim_channel dc ON f.channel_id = dc.channel_id
+JOIN data.dim_output_type dot ON f.output_type_id = dot.output_type_id
+WHERE f.client_id = 1 AND dot.is_short_form = TRUE
+GROUP BY dc.channel_name ORDER BY created_count DESC;""",
+        ),
+        (
+            "breakdown of videos by platform",
+            """SELECT dp.platform_name AS platform,
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+JOIN data.dim_platform dp ON f.platform_id = dp.platform_id
+WHERE f.client_id = 1
+GROUP BY dp.platform_name ORDER BY created_count DESC;""",
+        ),
+        (
+            "distribution of videos by duration bucket",
+            """SELECT
+  CASE WHEN f.uploaded_duration_secs < 30 THEN '<30s'
+       WHEN f.uploaded_duration_secs <= 60 THEN '30-60s'
+       ELSE '>60s' END AS duration_bucket,
+  COUNT(*) AS video_count,
+  ROUND(COUNT(*)::numeric / SUM(COUNT(*)) OVER () * 100, 1) AS share_pct
+FROM data.fact_created_videos f
+WHERE f.client_id = 1
+GROUP BY duration_bucket ORDER BY MIN(f.uploaded_duration_secs);""",
+        ),
+        (
+            "month over month growth in created videos",
+            """SELECT TO_CHAR(month, 'Mon YYYY') AS month, created_count,
+  ROUND((created_count - LAG(created_count) OVER (ORDER BY month))::numeric
+        / NULLIF(LAG(created_count) OVER (ORDER BY month), 0) * 100, 1) AS mom_growth_pct
+FROM data.mv_monthly_kpis
+WHERE client_id = 1
+ORDER BY month;""",
+        ),
+        (
+            "channels with more than 100 uploads but less than 50% publish rate",
+            """SELECT dc.channel_name AS channel,
+  COUNT(*) AS total_uploads,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+JOIN data.dim_channel dc ON f.channel_id = dc.channel_id
+WHERE f.client_id = 1
+GROUP BY dc.channel_name
+HAVING COUNT(*) > 100 AND
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) < 50
+ORDER BY publish_rate_pct ASC;""",
+        ),
+        (
+            "video output breakdown by team and language",
+            """SELECT dt.team_name AS team, dl.language_name AS language,
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+JOIN data.dim_team dt ON f.team_id = dt.team_id
+JOIN data.dim_language dl ON f.language_id = dl.language_id
+WHERE f.client_id = 1
+GROUP BY dt.team_name, dl.language_name ORDER BY created_count DESC;""",
+        ),
+        (
+            "compare video uploads on weekdays vs weekends",
+            """SELECT
+  CASE WHEN EXTRACT(DOW FROM f.uploaded_at) IN (0, 6) THEN 'Weekend' ELSE 'Weekday' END AS day_type,
+  COUNT(*) AS created_count,
+  COUNT(CASE WHEN f.published_flag THEN 1 END) AS published_count,
+  ROUND(COUNT(CASE WHEN f.published_flag THEN 1 END)::numeric / NULLIF(COUNT(*),0) * 100, 2) AS publish_rate_pct
+FROM data.fact_created_videos f
+WHERE f.client_id = 1
+GROUP BY day_type ORDER BY created_count DESC;""",
         ),
     ]
 
@@ -273,19 +457,31 @@ SQL rules:
 - Ranking questions ("which is best/worst/highest/lowest/top"): SELECT ALL relevant entities
   ranked by the metric (ORDER BY metric DESC). NEVER use LIMIT 1 — one row is unplottable.
   Use LIMIT 1 ONLY for single-scalar questions ("what is the total count of X").
-- ID columns (video_id, channel_id, user_id, language_id, etc.) are identifiers — NEVER
-  select them unless the user explicitly asks for IDs. Select name columns instead.
-- Text filters: ALWAYS use ILIKE, never =.
-  Correct:   dc.channel_name ILIKE 'r'
-  Wrong:     dc.channel_name = 'r'
-- Relative dates:
-    "last month"     → DATE_TRUNC('month', uploaded_at) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
-    "this month"     → DATE_TRUNC('month', uploaded_at) = DATE_TRUNC('month', NOW())
-    "last N months"  → uploaded_at >= DATE_TRUNC('month', NOW() - INTERVAL 'N-1 months')
-    Use uploaded_at for fact_created_videos; month column for MVs.
-- Unpublished videos: use published_flag = FALSE (not published_url IS NULL).
+- ID columns (any column ending in _id, _key, _code) are identifiers — NEVER select them
+  unless the user explicitly asks for IDs. Always select the name/label column instead.
+- Text filters (channel names, platform names, team names, etc.): ALWAYS use ILIKE, never =.
+- Relative dates (use the actual timestamp column name from the schema):
+    "last month"    → DATE_TRUNC('month', ts_col) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
+    "this month"    → DATE_TRUNC('month', ts_col) = DATE_TRUNC('month', NOW())
+    "last N months" → ts_col >= DATE_TRUNC('month', NOW() - INTERVAL 'N-1 months')
+    "last 7 days"   → ts_col >= NOW() - INTERVAL '7 days'
+    For MVs use the month column; for the fact table use the timestamp column.
+- Unpublished: filter by the publish flag being FALSE — not by checking a URL column.
 - Publish rate: ROUND(published_count::numeric / NULLIF(created_count, 0) * 100, 2)
-- Month labels: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis.
+- Month labels: TO_CHAR(month_col, 'Mon YYYY') for human-readable x-axis.
+- Bot/human: the bot flag lives on the user dimension, NOT the fact table.
+    Join the user dimension via its FK, then filter or group by the bot boolean.
+    For comparison: GROUP BY CASE WHEN bot_col THEN 'Bot' ELSE 'Human' END AS user_type
+- Short-form: defined by a boolean on the output type dimension, NOT by duration.
+    Join the output type dimension via its FK, then filter by the short-form boolean.
+- Platform and team: only in their dimension tables joined to the fact table — NOT in MVs.
+- Duration: three columns on the fact table (upload/created/published stages), all in seconds.
+    Divide by 3600 for hours. CASE WHEN for buckets. Check schema for exact names.
+- Views: per-video on the fact table; aggregate per-channel on the channel health MV.
+- Weekday/weekend: EXTRACT(DOW FROM ts_col) — 0=Sunday, 6=Saturday.
+- Month-over-month growth: LAG() window function over the monthly KPIs MV.
+- Post-aggregation filters: use HAVING (not WHERE) after GROUP BY.
+- Always make a reasonable SQL attempt — never refuse an analytics question.
 
 STEP 2 — After the SQL, output this JSON block:
 ```json
@@ -322,11 +518,15 @@ x/y field rules:
 - If result has no suitable y metric → set chart_type to "table", leave x and y as ""
 
 Answer strategy — match the shape of the result:
-- time_series_trend → trend over time.     focus: ["peak", "trough", "direction", "change_pct"]
-- top_n_ranked      → ranked list.          focus: ["winner", "runner_up", "spread", "total"]
-- distribution      → proportions/shares.  focus: ["dominant_slice", "total", "slice_count"]
-- single_aggregate  → one number.          focus: ["exact_value"]
-- detail_sample     → individual records.  focus: ["total_count", "common_pattern"]
+- time_series_trend  → trend over time.              focus: ["peak", "trough", "direction", "change_pct"]
+- top_n_ranked       → ranked list.                  focus: ["winner", "runner_up", "spread", "total"]
+- distribution       → proportions/shares.           focus: ["dominant_slice", "total", "slice_count"]
+- single_aggregate   → one number.                   focus: ["exact_value"]
+- detail_sample      → individual records.           focus: ["total_count", "common_pattern"]
+- comparison         → two-group contrast (bot vs human, weekday vs weekend, short vs long-form).
+                       focus: ["group_a_value", "group_b_value", "difference"]
+- filtered_ranking   → ranked list with HAVING/threshold filter.
+                       focus: ["winner", "threshold", "count_passing"]
 
 --- EXCEPTION: greetings and off-topic only ---
 If the question is a greeting, small talk, or entirely unrelated to video/media analytics,
@@ -372,7 +572,15 @@ def _build_messages(question: str, sql_examples: list, live_schema: str, doc_doc
 
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
-def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries: int = 3) -> str:
+def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries: int = 3) -> tuple:
+    """Returns (content_str, external_reasoning_str).
+
+    Keeping reasoning separate from content avoids the parse failure that occurred
+    when we injected it as a <think> block and the content field was then empty.
+    Native <think> blocks inside content are handled by _extract_thinking downstream.
+    External reasoning (reasoning_content field from OpenRouter) is returned as the
+    second element of the tuple and merged into RAGResult.thinking as a fallback.
+    """
     from intelligence.nlq.llm import _is_quota_error, _parse_retry_delay
     client = make_openai_client()
 
@@ -386,14 +594,11 @@ def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries:
             )
             msg = response.choices[0].message
             raw = msg.content or ""
-            # OpenRouter surfaces Qwen3 chain-of-thought in reasoning_content
+            # OpenRouter surfaces Qwen3 chain-of-thought in a separate field
             reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
             logger.info("[LLM raw] finish_reason=%s len=%d reasoning_len=%d preview=%r",
                         response.choices[0].finish_reason, len(raw), len(reasoning), raw[:300])
-            # Embed reasoning as a <think> block so _extract_thinking can pick it up
-            if reasoning and "<think>" not in raw:
-                raw = f"<think>{reasoning}</think>\n{raw}"
-            return raw
+            return raw, reasoning
         except Exception as exc:
             if _is_quota_error(exc) and attempt < max_retries - 1:
                 wait = _parse_retry_delay(exc, fallback=5.0 * (2 ** attempt))
@@ -444,14 +649,23 @@ def score_candidate(vr: "RAGResult", question: str) -> int:
 
     # Column/concept alignment
     col_hints = [
-        ("channel",  "channel"),
-        ("language", "language"),
-        ("user",     "user"),
-        ("publish",  "publish"),
-        ("duration", "duration"),
-        ("hours",    "duration"),
-        ("monthly",  "month"),
-        ("trend",    "month"),
+        ("channel",    "channel"),
+        ("language",   "language"),
+        ("user",       "user"),
+        ("publish",    "publish"),
+        ("duration",   "duration"),
+        ("hours",      "duration"),
+        ("monthly",    "month"),
+        ("trend",      "month"),
+        ("platform",   "dim_platform"),
+        ("team",       "dim_team"),
+        ("bot",        "is_bot"),
+        ("human",      "is_bot"),
+        ("short-form", "is_short_form"),
+        ("short form", "is_short_form"),
+        ("views",      "views"),
+        ("seconds",    "duration_secs"),
+        ("secs",       "duration_secs"),
     ]
     for kw, col in col_hints:
         if kw in q and col in sql:
@@ -548,15 +762,15 @@ def generate_sql_candidates(
     logger.info("RAG generating %d SQL candidate(s) for: '%s'", n, question)
 
     if n == 1:
-        raw = _call_llm(messages, temperature=LLM_TEMPERATURE)
-        return [_parse_candidate(raw)]
+        raw, reasoning = _call_llm(messages, temperature=LLM_TEMPERATURE)
+        return [_parse_candidate(raw, reasoning)]
 
     # N > 1: generate concurrently with higher temperature for candidate diversity
     with ThreadPoolExecutor(max_workers=n) as executor:
         futures = [executor.submit(_call_llm, messages, 0.7) for _ in range(n)]
-        raws = [f.result() for f in futures]
+        pairs = [f.result() for f in futures]
 
-    return [_parse_candidate(raw) for raw in raws]
+    return [_parse_candidate(raw, reasoning) for raw, reasoning in pairs]
 
 
 def generate_sql(
@@ -571,13 +785,19 @@ def generate_sql(
                                    user_role=user_role, client_id=client_id, conn=conn)[0]
 
 
-def _parse_candidate(raw: str) -> RAGResult:
+def _parse_candidate(raw: str, external_reasoning: str = "") -> RAGResult:
     """Parse a single raw LLM response into a RAGResult (thinking + SQL + chart meta).
 
     Defensively coerces every field — the LLM may produce lists, ints, or
     nested objects instead of the expected scalar strings.
+
+    external_reasoning: chain-of-thought from reasoning_content (OpenRouter field).
+    Used as fallback thinking when no native <think> block is present in content.
     """
     thinking, cleaned = _extract_thinking(raw)
+    # Fall back to external reasoning_content if no native <think> block found
+    if not thinking and external_reasoning:
+        thinking = external_reasoning.strip()
     sql, chart_meta = _parse_output(cleaned)
 
     def _str(v):

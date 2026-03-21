@@ -29,8 +29,7 @@
       "WebFetch(domain:apidog.com)",
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(grep -r \"data.*generation\\\\|synthetic\\\\|mock\\\\|faker\\\\|gaussian\\\\|normal distribution\" 'c:\\\\Users\\\\HARSH SAHU\\\\Documents\\\\GitHub\\\\Ekta' --include=*.md)",
-      "Bash(grep -r \"news\\\\|media\\\\|client\" C:Userssneha.vscodepythondata_gc_2026ekta/dashboard_frontend --include=*.tsx --include=*.ts --exclude-dir=node_modules --exclude-dir=.next)",
-      "Bash(grep -r \"DIM_TABLES\\\\|DIMENSIONS\\\\|METRICS\\\\|DEFAULT_FILTER\" C:Userssneha.vscodepythondata_gc_2026ekta --include=*.py --include=*.tsx --include=*.ts)"
+      "mcp__supabase__execute_sql"
     ]
   },
   "enableAllProjectMcpServers": true,
