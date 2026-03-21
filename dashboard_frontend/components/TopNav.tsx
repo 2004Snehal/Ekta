@@ -198,15 +198,24 @@ export function TopNav() {
 
         <div className="wire-v" style={{ height: '14px' }} />
 
-        {TOOL_LINKS.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={cn('nav-link', pathname.startsWith(link.href) && 'active')}
-          >
-            {link.label}
-          </Link>
-        ))}
+        {TOOL_LINKS.map((link, idx) => {
+          let id = '';
+          if (link.label === 'NLQ') id = 'nav-link-query';
+          if (link.label === 'Insights') id = 'nav-link-insights';
+          if (link.label === 'KPI Lab') id = 'nav-link-kpi-lab';
+          if (link.label === 'Workspace') id = 'nav-link-workspace';
+          
+          return (
+            <Link
+              id={id}
+              key={link.href}
+              href={link.href}
+              className={cn('nav-link', pathname.startsWith(link.href) && 'active')}
+            >
+              {link.label}
+            </Link>
+          );
+        })}
 
         {user?.role === 'admin' && (
           <>

@@ -75,7 +75,7 @@ export function Filters({ filters, filterFields, filterOptions, isExpanded, onEx
     }));
 
   return (
-    <div style={{ borderBottom: '1px solid var(--wire)', background: 'var(--void)' }}>
+    <div id="dashboard-filters-section" style={{ borderBottom: '1px solid var(--wire)', background: 'var(--void)' }}>
 
       {/* ── Collapsed / summary strip ────────────────────── */}
       <div className="flex items-center gap-4 px-6 py-2.5 flex-wrap">
