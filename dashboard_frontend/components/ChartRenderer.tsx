@@ -175,9 +175,10 @@ function RefLinks({
 interface ChartRendererProps {
   chart: UniversalChartSpec;
   onElementClick?: (dimensionKey: string, value: string) => void;
+  disableInsights?: boolean;
 }
 
-export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
+export function ChartRenderer({ chart, onElementClick, disableInsights = false }: ChartRendererProps) {
   const colors = chart.colors ?? COLORS;
   const { xField, yField } = resolveFields(chart);
   const hasDrill = Boolean(chart.drillDown);
@@ -901,8 +902,8 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
     <div
       className="chart-panel"
       style={{ position: "relative" }}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={disableInsights ? undefined : handleMouseEnter}
+      onMouseLeave={disableInsights ? undefined : handleMouseLeave}
     >
       {chart.title && (
         <div className="mb-4 flex flex-col items-start gap-1">
@@ -925,17 +926,19 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       {chart.refLinks && chart.refLinks.length > 0 && (
         <RefLinks links={chart.refLinks} />
       )}
-      <ChartInsightPanel
-        visible={insightVisible}
-        onClose={handleInsightClose}
-        description={description}
-        descriptionLoading={descLoading}
-        descriptionError={descError}
-        summary={insightSummary}
-        insights={insightBullets}
-        dataLoading={dataLoading}
-        dataError={dataError}
-      />
+      {!disableInsights && (
+        <ChartInsightPanel
+          visible={insightVisible}
+          onClose={handleInsightClose}
+          description={description}
+          descriptionLoading={descLoading}
+          descriptionError={descError}
+          summary={insightSummary}
+          insights={insightBullets}
+          dataLoading={dataLoading}
+          dataError={dataError}
+        />
+      )}
     </div>
   );
 }

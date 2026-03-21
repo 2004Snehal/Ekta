@@ -112,7 +112,8 @@ def run_nlq_query(
     for i, candidate in enumerate(candidates):
         ok, err_msg, secured = _secure_sql(candidate.sql.strip(), client_id)
         if not ok:
-            log.warning("[NLQ] Candidate %d/%d blocked: %s", i + 1, len(candidates), err_msg)
+            log.warning("[NLQ] Candidate %d/%d blocked: %s\n  SQL was: %s",
+                        i + 1, len(candidates), err_msg, candidate.sql.strip()[:400])
             if i == len(candidates) - 1:
                 return _error(err_msg, question)
             continue
@@ -162,7 +163,7 @@ def run_nlq_query(
     y_col = vr.y_column or (columns[1] if len(columns) > 1 else "")
 
     summary = build_summary(data, x_col, y_col, strategy)
-    answer = generate_answer(question, summary, strategy.get("focus", []))
+    answer = generate_answer(question, summary, strategy.get("focus", []), user_role=effective_role)
     log.info("[5/7] Answer generated (%.2fs) — %.0f ms", time.perf_counter() - t5, _ms())
 
     # ── Step 6: Store Q→SQL in ChromaDB knowledge base ───────────────────────
@@ -220,6 +221,15 @@ def _secure_sql(sql: str, client_id: int) -> tuple:
     return True, "", sql
 
 
+_ID_SUFFIXES = ("_id", "_key", "_code", "_num", "_number")
+
+
+def _is_id_col(col: str) -> bool:
+    """Return True if a column looks like an identifier rather than a metric."""
+    c = col.lower()
+    return c == "id" or any(c.endswith(s) for s in _ID_SUFFIXES)
+
+
 def _fill_chart_meta(vr, rows: list, question: str) -> None:
     """Infer missing chart metadata from actual result columns."""
     if not rows:
@@ -229,33 +239,55 @@ def _fill_chart_meta(vr, rows: list, question: str) -> None:
 
     first = rows[0]
     cols = list(first.keys())
-    numeric_cols = [c for c in cols if isinstance(first.get(c), (int, float))]
-    text_cols = [c for c in cols if c not in numeric_cols]
+
+    # Metric columns: numeric but NOT identifiers
+    metric_cols = [
+        c for c in cols
+        if isinstance(first.get(c), (int, float)) and not _is_id_col(c)
+    ]
+    text_cols = [c for c in cols if not isinstance(first.get(c), (int, float))]
+
+    # Force table when no real metric column exists (only IDs or only text)
+    if not metric_cols:
+        vr.chart_type = "table"
+        return
 
     if not vr.x_column:
-        vr.x_column = text_cols[0] if text_cols else (numeric_cols[0] if numeric_cols else None)
+        vr.x_column = text_cols[0] if text_cols else (metric_cols[0] if metric_cols else None)
     if not vr.y_column:
-        candidates = [c for c in numeric_cols if c != vr.x_column]
-        vr.y_column = candidates[0] if candidates else (numeric_cols[0] if numeric_cols else None)
+        candidates = [c for c in metric_cols if c != vr.x_column]
+        vr.y_column = candidates[0] if candidates else (metric_cols[0] if metric_cols else None)
+
+    def _best_chart_type(n_rows, n_metrics, x_lower):
+        time_kws = ("month", "date", "year", "week", "day", "time", "period")
+        if any(kw in x_lower for kw in time_kws):
+            return "line"
+        if n_metrics >= 3 and n_rows <= 10:
+            return "radar"
+        if n_rows <= 8 and n_metrics == 1:
+            return "pie"
+        if n_rows > 8 and n_metrics == 1:
+            return "horizontal_bar"
+        if n_rows > 8:
+            return "horizontal_bar"
+        return "bar"
+
+    x_lower = (vr.x_column or "").lower()
 
     if not vr.chart_type:
-        if text_cols and numeric_cols:
-            x_lower = (vr.x_column or "").lower()
-            time_kws = ("month", "date", "year", "week", "day", "time", "period")
-            if any(kw in x_lower for kw in time_kws):
-                vr.chart_type = "line"
-            elif len(numeric_cols) >= 3 and len(rows) <= 10:
-                # Multiple metrics per entity — radar shows all dimensions at once
-                vr.chart_type = "radar"
-            elif len(rows) <= 8 and len(numeric_cols) == 1:
-                vr.chart_type = "pie"
-            elif len(rows) > 8 and len(numeric_cols) == 1:
-                # Many categories with long names render better horizontally
-                vr.chart_type = "horizontal_bar"
-            else:
-                vr.chart_type = "bar"
+        if text_cols and metric_cols:
+            vr.chart_type = _best_chart_type(len(rows), len(metric_cols), x_lower)
         else:
             vr.chart_type = "table"
+    else:
+        # Validate / correct the LLM's choice against the actual data shape
+        if not metric_cols:
+            vr.chart_type = "table"
+        elif vr.chart_type in ("bar", "horizontal_bar") and text_cols and metric_cols:
+            correct = _best_chart_type(len(rows), len(metric_cols), x_lower)
+            # Only override bar→pie or bar→horizontal_bar — don't second-guess line/radar/etc.
+            if correct in ("pie", "horizontal_bar", "line"):
+                vr.chart_type = correct
 
     # Leave vr.title empty if LLM didn't provide one — avoids repeating the question as title
 

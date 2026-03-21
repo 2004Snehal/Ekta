@@ -295,7 +295,7 @@ function AssistantBubble({ msg }: { msg: Message }) {
         {r.data && r.data.length > 0 && (
           <>
             <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <ChartRenderer chart={nlqToChartSpec(r)} />
+              <ChartRenderer chart={nlqToChartSpec(r)} disableInsights />
             </div>
             <button onClick={togglePin}
               className={`flex items-center gap-1.5 text-xs transition-colors px-1 py-0.5 rounded ${pinned ? 'text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'}`}

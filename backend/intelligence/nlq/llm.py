@@ -133,36 +133,55 @@ def build_summary(data: list, x_col: str, y_col: str, strategy: dict) -> dict:
         return {"result": data[0]}
 
     else:  # detail_sample
-        return {"rows": data[:15], "total_rows": n}
+        return {"total_rows": n, "sample_rows": data[:10]}
 
 
 # ── Answer generation (Call 2) ────────────────────────────────────────────────
 
-_ANSWER_SYSTEM_PROMPT = """You are a media analytics assistant. Your job is to answer a user's question
-directly and concisely using the statistical summary of query results provided.
+_ANSWER_SYSTEM_PROMPT = """You are a media analytics assistant for Frammer AI — a video content production platform.
+Your job is to answer a user's question directly using the statistical summary provided.
 
 RULES:
-- Answer in 1–3 sentences maximum.
+- Be concise: 1–4 sentences. Lead with the most important number or finding.
 - Use specific names, numbers, and percentages from the summary — never be vague.
 - Never say "based on the data", "the query shows", "the results indicate", or similar meta-phrases.
   Just state the answer as a fact.
-- For "which X is highest/lowest" questions: name the winner and its value, then optionally mention second place.
-- For trend questions: describe the direction and the key turning point or peak/trough with its value.
-- For comparison questions: highlight the most notable contrast with real numbers.
-- For totals/counts: give the exact number and any useful context from the summary.
-- For distribution/mix questions: name the top 1–2 categories and their share or count.
-- If the summary is empty or has no data, say "No data was found for this query."
-- Do NOT repeat the question back. Do NOT describe the chart. Do NOT explain what the numbers mean conceptually.
+- For "which X is best/highest/lowest/worst": name the winner and its value.
+  If the summary has multiple ranked entities, mention the runner-up for context.
+- For trend questions: state direction, peak or trough, and the change value.
+- For comparisons: highlight the most notable contrast with real numbers.
+- For totals/counts: give the exact number plus one useful piece of context.
+- For distribution/mix: name the top 1–2 categories and their share or count.
+- Row count rule: if the summary has a `total_rows` field, that is the actual record count.
+  NEVER count the items in `sample_rows` and report that as the total.
+- If summary is empty or has no data: say "No data was found for this query."
+- Do NOT repeat the question. Do NOT describe the chart. Do NOT explain concepts.
+- Domain context: channels are content production channels, publish rate means % of created
+  videos that were published, uploaded_at is when a video entered the system.
 """
 
 
-def generate_answer(question: str, summary: dict, focus: list) -> str:
+def generate_answer(question: str, summary: dict, focus: list, user_role: str = None) -> str:
     """
     Call 2: given a compact statistical summary, produce a plain-English answer.
     summary is pre-computed by build_summary() — no raw row slicing here.
     """
     if not summary:
         return "No data was found for this query."
+
+    system = _ANSWER_SYSTEM_PROMPT
+
+    # Inject role-specific answer persona if available
+    if user_role:
+        try:
+            import sys, os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            from intelligence.nlq.role_config import get_role_config
+            role_cfg = get_role_config(user_role)
+            if role_cfg and role_cfg.answer_persona:
+                system = role_cfg.answer_persona + "\n\n" + _ANSWER_SYSTEM_PROMPT
+        except Exception:
+            pass
 
     focus_hint = ", ".join(focus) if focus else "key numbers and trends"
     user_message = (
@@ -172,6 +191,6 @@ def generate_answer(question: str, summary: dict, focus: list) -> str:
     )
 
     try:
-        return call_llm_text(user_message, system=_ANSWER_SYSTEM_PROMPT)
+        return call_llm_text(user_message, system=system)
     except Exception:
         return ""

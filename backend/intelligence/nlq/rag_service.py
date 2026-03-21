@@ -28,7 +28,7 @@ from intelligence.nlq.context import fetch_live_schema
 logger = logging.getLogger("nlq.rag")
 
 # Bump this string to force a full KB retrain on next startup
-_KB_VERSION = "RAG_KB_V3_LIVE_SCHEMA"
+_KB_VERSION = "RAG_KB_V4_ILIKE"
 
 
 @dataclass
@@ -120,7 +120,9 @@ def train_with_schema(conn) -> None:
 - Prefer materialized views (mv_monthly_kpis, mv_channel_health, mv_user_performance) over fact_created_videos for any aggregate — they are pre-computed and faster.
 - For raw row access or billable/input_type breakdowns, use fact_created_videos (has all FK columns).
 - Publish rate formula: ROUND(published_count::numeric / NULLIF(created_count, 0) * 100, 2)
-- Month display: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels."""
+- Month display: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis labels.
+- String filters: ALWAYS use ILIKE for name/label columns (channel_name, user_name, language_name, type_name, etc.).
+  Never use = for user-supplied text. Example: dc.channel_name ILIKE 'r'"""
     _safe_add(db["doc"], core_doc, _det_id(core_doc, "-doc"))
 
     time_series_doc = """TIME-SERIES and TREND queries (monthly, over time, growth trends):
@@ -248,55 +250,100 @@ def _retrieve(collection, embedding: list, n: int) -> list:
 
 _SYSTEM_BASE = (
     "You are a PostgreSQL expert for the Frammer AI analytics platform. "
-    "Generate valid PostgreSQL queries based only on the schema and business rules provided. "
-    "If a similar question was answered before, follow the same SQL pattern."
+    "Your job is to write SQL queries AND return a JSON metadata block describing how to display the result. "
+    "Always use only the tables and views from the schema provided. "
+    "If a similar question was answered before, follow the same SQL pattern. "
+    "For insufficient context write a SELECT that produces 0 rows (WHERE 1=0) — "
+    "except greetings/off-topic, which get a direct answer with no SQL at all."
 )
 
 _SQL_SUFFIX = """
 
-After writing the SQL, output a JSON block fenced with ```json ... ``` containing:
+--- ANALYTICS QUESTIONS: write SQL first, then JSON ---
+
+STEP 1 — Write the PostgreSQL query.
+
+SQL rules:
+- Schema: all tables are in the 'data' schema. Always qualify: data.fact_created_videos, etc.
+- Preferred tables for aggregates (faster, pre-computed):
+    mv_monthly_kpis      → monthly trends, publish rates over time
+    mv_channel_health    → per-channel totals and publish rates
+    mv_user_performance  → per-user output and publish rates
+  Use fact_created_videos only for row-level detail or breakdowns by input_type/output_type/language.
+- Ranking questions ("which is best/worst/highest/lowest/top"): SELECT ALL relevant entities
+  ranked by the metric (ORDER BY metric DESC). NEVER use LIMIT 1 — one row is unplottable.
+  Use LIMIT 1 ONLY for single-scalar questions ("what is the total count of X").
+- ID columns (video_id, channel_id, user_id, language_id, etc.) are identifiers — NEVER
+  select them unless the user explicitly asks for IDs. Select name columns instead.
+- Text filters: ALWAYS use ILIKE, never =.
+  Correct:   dc.channel_name ILIKE 'r'
+  Wrong:     dc.channel_name = 'r'
+- Relative dates:
+    "last month"     → DATE_TRUNC('month', uploaded_at) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
+    "this month"     → DATE_TRUNC('month', uploaded_at) = DATE_TRUNC('month', NOW())
+    "last N months"  → uploaded_at >= DATE_TRUNC('month', NOW() - INTERVAL 'N-1 months')
+    Use uploaded_at for fact_created_videos; month column for MVs.
+- Unpublished videos: use published_flag = FALSE (not published_url IS NULL).
+- Publish rate: ROUND(published_count::numeric / NULLIF(created_count, 0) * 100, 2)
+- Month labels: TO_CHAR(month, 'Mon YYYY') for human-readable x-axis.
+
+STEP 2 — After the SQL, output this JSON block:
+```json
 {
   "requires_sql": true,
-  "chart_type": "line|bar|horizontal_bar|pie|scatter|radar|stacked_bar|table",
-  "x": "<exact column alias from SELECT list — entity/category column>",
-  "y": "<exact column alias from SELECT list — primary numeric column>",
-  "title": "<short descriptive chart title>",
+  "chart_type": "<see rules below>",
+  "x": "<the PRIMARY category/dimension column alias: channel, user, month, language, etc.>",
+  "y": "<the SINGLE computed metric alias: count, sum, rate, percentage — NEVER an ID column>",
+  "group_by": "<stacked_bar only: the column that splits into series — omit for all other chart types>",
+  "title": "<concise descriptive title, 4–7 words>",
   "answer_strategy": {
-    "type": "time_series_trend|top_n_ranked|distribution|single_aggregate|detail_sample",
-    "focus": ["<aspect1>", "<aspect2>"]
+    "type": "<see rules below>",
+    "focus": ["<key aspect 1>", "<key aspect 2>"]
   }
 }
+```
 
-Exception — if the question is a greeting, small talk, or completely unrelated to analytics:
-do NOT write SQL. Output only this JSON:
+Chart type — choose based on SEMANTICS of the result, not just row count:
+- line           → values over ordered time periods (months, weeks, dates)
+- bar            → independent category comparisons, ≤ 8 categories, 1 metric
+- horizontal_bar → same as bar but > 8 categories or category names are long
+- pie            → proportions that together represent a whole (shares summing to ~100%),
+                   ≤ 10 categories, exactly 1 metric; use when asking "what % / how is it split"
+- scatter        → correlation or relationship between two numeric columns
+- radar          → comparing 2–5 named entities each measured on 3+ shared metrics
+- stacked_bar    → one category broken down by a second dimension (requires group_by)
+- table          → REQUIRED when: result has ID columns, > 4 columns, individual row records,
+                   or there is no single clear numeric metric to visualise
+
+x/y field rules:
+- x → always a TEXT/LABEL column (channel_name, user_name, language_name, month label, type_name)
+- y → always a COMPUTED number (created_count, publish_rate_pct, total_views, video_count, etc.)
+- For pie: x = category label, y = numeric value
+- If result has no suitable y metric → set chart_type to "table", leave x and y as ""
+
+Answer strategy — match the shape of the result:
+- time_series_trend → trend over time.     focus: ["peak", "trough", "direction", "change_pct"]
+- top_n_ranked      → ranked list.          focus: ["winner", "runner_up", "spread", "total"]
+- distribution      → proportions/shares.  focus: ["dominant_slice", "total", "slice_count"]
+- single_aggregate  → one number.          focus: ["exact_value"]
+- detail_sample     → individual records.  focus: ["total_count", "common_pattern"]
+
+--- EXCEPTION: greetings and off-topic only ---
+If the question is a greeting, small talk, or entirely unrelated to video/media analytics,
+do NOT write SQL. Output ONLY this JSON (no SQL, nothing else):
+```json
 {
   "requires_sql": false,
   "direct_answer": "<short friendly plain-text response>"
 }
-
-Chart type rules:
-- line           → time series / trends over months or dates
-- bar            → comparisons across a small number of categories (≤ 8)
-- horizontal_bar → comparisons across many categories (> 8) or long category names
-- pie            → distributions / proportions (≤ 10 categories, 1 numeric column only)
-- scatter        → correlation between two numeric columns
-- radar          → compare one entity across 3+ metrics, or compare 2-5 entities across the same metrics
-- stacked_bar    → multi-series category comparisons (use group_by field)
-- table          → row-level detail, many columns, or no clear chart mapping
-
-Answer strategy rules:
-- time_series_trend → over-time trends. focus: peak, trough, direction, change_pct
-- top_n_ranked      → ranking questions. focus: winner, spread, total
-- distribution      → share/proportion. focus: dominant_slice, total
-- single_aggregate  → one-row COUNT/SUM. focus: exact_value
-- detail_sample     → row-level. focus: top_rows, row_count"""
+```"""
 
 
 def _build_messages(question: str, sql_examples: list, live_schema: str, doc_docs: list) -> list:
     """
     Build the LLM message list:
-      system  = base prompt + live schema (always fresh) + business rules + response guidelines
-      user/assistant pairs = retrieved Q→SQL few-shot examples
+      system  = base prompt + live schema (always fresh) + business rules
+      user/assistant pairs = retrieved Q→SQL few-shot examples (SQL + JSON, matching final format)
       final user = augmented question + output format instructions
     """
     system = _SYSTEM_BASE
@@ -307,16 +354,10 @@ def _build_messages(question: str, sql_examples: list, live_schema: str, doc_doc
     if doc_docs:
         system += "\n\n=== Business Rules ===\n" + "\n\n".join(doc_docs)
 
-    system += (
-        "\n\n=== Response Guidelines ===\n"
-        "1. Generate valid SQL without explanations.\n"
-        "2. Use only the tables and views from the schema above.\n"
-        "3. Ensure the SQL is PostgreSQL-compliant and free of syntax errors.\n"
-        "4. If context is insufficient, return SELECT that produces 0 rows (WHERE 1=0).\n"
-    )
-
     messages = [{"role": "system", "content": system}]
 
+    # Few-shot examples: SQL only — the _SQL_SUFFIX on the final message teaches the JSON format.
+    # Dummy JSON in examples would teach wrong x/y/chart_type values.
     for raw in sql_examples:
         try:
             ex = json.loads(raw)
@@ -343,7 +384,16 @@ def _call_llm(messages: list, temperature: float = LLM_TEMPERATURE, max_retries:
                 max_tokens=LLM_MAX_TOKENS,
                 temperature=temperature,
             )
-            return response.choices[0].message.content
+            msg = response.choices[0].message
+            raw = msg.content or ""
+            # OpenRouter surfaces Qwen3 chain-of-thought in reasoning_content
+            reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
+            logger.info("[LLM raw] finish_reason=%s len=%d reasoning_len=%d preview=%r",
+                        response.choices[0].finish_reason, len(raw), len(reasoning), raw[:300])
+            # Embed reasoning as a <think> block so _extract_thinking can pick it up
+            if reasoning and "<think>" not in raw:
+                raw = f"<think>{reasoning}</think>\n{raw}"
+            return raw
         except Exception as exc:
             if _is_quota_error(exc) and attempt < max_retries - 1:
                 wait = _parse_retry_delay(exc, fallback=5.0 * (2 ** attempt))
@@ -362,13 +412,22 @@ def _extract_thinking(raw: str) -> tuple:
     """
     Extract Qwen3's native <think>...</think> chain-of-thought block.
     Returns (thinking_text, remaining_output).
-    If no thinking block is present, returns ("", raw).
+    Handles truncated output (no closing tag) by discarding the incomplete block.
     """
+    # Full block present
     match = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
     if match:
         thinking = match.group(1).strip()
         rest = (raw[: match.start()] + raw[match.end():]).strip()
         return thinking, rest
+
+    # Truncated: <think> opened but never closed — discard everything inside it
+    open_match = re.search(r"<think>", raw, re.IGNORECASE)
+    if open_match:
+        logger.warning("[LLM] Truncated <think> block detected — output was cut off before </think>")
+        # Anything after </think> doesn't exist; return empty SQL so self-healing kicks in
+        return "", ""
+
     return "", raw
 
 
