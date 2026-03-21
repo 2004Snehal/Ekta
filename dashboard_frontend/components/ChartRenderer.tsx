@@ -772,7 +772,7 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
       onMouseLeave={handleMouseLeave}
     >
       {chart.title && (
-        <div className="flex items-center gap-3 mb-4">
+        <div className="mb-4 flex flex-col items-start gap-1">
           <span className="section-id">{chart.title}</span>
           {chart.description && (
             <span
@@ -780,6 +780,7 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
                 fontFamily: "var(--font-mono)",
                 fontSize: "0.6rem",
                 color: "var(--on-low)",
+                lineHeight: 1.5,
               }}
             >
               — {chart.description}

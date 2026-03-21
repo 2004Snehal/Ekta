@@ -23,10 +23,9 @@ QWEN_CODER_MODEL        = "qwen/qwen3-coder-next"
 # Insight Narrator and other long-form reasoning
 QWEN_INSIGHT_MODEL      = "qwen/qwen3.5-397b-a17b"
 
-# Chart Insight Agent (on-demand chart reading / local stats explanations)
-# Separate so you can tune this independently of global insight narration.
+# Insight Narrator, Chart Insight Agent
+QWEN_INSIGHT_MODEL = "qwen/qwen3.5-397b-a17b"
 QWEN_CHART_INSIGHT_MODEL = "openai/gpt-oss-safeguard-20b"
-
 # Global Parameters
 LLM_MAX_TOKENS     = 4096
 LLM_TEMPERATURE    = 0.2
