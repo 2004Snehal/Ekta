@@ -57,7 +57,7 @@ def _get_chroma() -> dict:
 
         ef = embedding_functions.DefaultEmbeddingFunction()
         client = chromadb.PersistentClient(
-            path=CHROMA_PATH,
+            path=os.path.abspath(CHROMA_PATH),
             settings=Settings(anonymized_telemetry=False),
         )
         _chroma = {
@@ -67,7 +67,7 @@ def _get_chroma() -> dict:
             "ddl":    client.get_or_create_collection(name="ddl",           embedding_function=ef),
             "doc":    client.get_or_create_collection(name="documentation", embedding_function=ef),
         }
-        logger.info("ChromaDB initialised at %s.", CHROMA_PATH)
+        logger.info("ChromaDB initialised at %s.", os.path.abspath(CHROMA_PATH))
     return _chroma
 
 
@@ -265,11 +265,18 @@ GROUP BY dc.channel_name, dl.language_name ORDER BY created_count DESC;""",
 
 def _retrieve(collection, embedding: list, n: int) -> list:
     """Query a collection by pre-computed embedding. Returns raw document strings."""
-    count = collection.count()
-    if count == 0:
+    try:
+        count = collection.count()
+        if count == 0:
+            return []
+        result = collection.query(query_embeddings=[embedding], n_results=min(n, count))
+        return result.get("documents", [[]])[0]
+    except Exception as exc:
+        # ChromaDB can throw "Nothing found on disk" when the HNSW index is
+        # uninitialised (training hasn't run yet). Return empty — the pipeline
+        # will proceed without RAG context and self-healing will cover it.
+        logger.warning("ChromaDB retrieve failed (collection=%s): %s", collection.name, exc)
         return []
-    result = collection.query(query_embeddings=[embedding], n_results=min(n, count))
-    return result.get("documents", [[]])[0]
 
 
 # ── Prompt building ────────────────────────────────────────────────────────────
