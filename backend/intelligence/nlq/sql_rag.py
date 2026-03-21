@@ -241,9 +241,18 @@ def _fill_chart_meta(vr, rows: list, question: str) -> None:
         if text_cols and numeric_cols:
             x_lower = (vr.x_column or "").lower()
             time_kws = ("month", "date", "year", "week", "day", "time", "period")
-            vr.chart_type = "line" if any(kw in x_lower for kw in time_kws) else (
-                "pie" if len(rows) <= 8 and len(numeric_cols) == 1 else "bar"
-            )
+            if any(kw in x_lower for kw in time_kws):
+                vr.chart_type = "line"
+            elif len(numeric_cols) >= 3 and len(rows) <= 10:
+                # Multiple metrics per entity — radar shows all dimensions at once
+                vr.chart_type = "radar"
+            elif len(rows) <= 8 and len(numeric_cols) == 1:
+                vr.chart_type = "pie"
+            elif len(rows) > 8 and len(numeric_cols) == 1:
+                # Many categories with long names render better horizontally
+                vr.chart_type = "horizontal_bar"
+            else:
+                vr.chart_type = "bar"
         else:
             vr.chart_type = "table"
 

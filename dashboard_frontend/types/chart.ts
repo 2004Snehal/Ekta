@@ -27,8 +27,10 @@ export interface AxesSpec {
 
 export type ChartType =
   | 'bar'
+  | 'horizontal_bar'
   | 'line'
   | 'pie'
+  | 'radar'
   | 'scatter'
   | 'stacked_bar'
   | 'table';

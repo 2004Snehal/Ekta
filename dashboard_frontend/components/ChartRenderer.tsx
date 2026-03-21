@@ -20,6 +20,11 @@ import {
   ScatterChart,
   Scatter,
   Brush,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
 } from "recharts";
 import type { UniversalChartSpec } from "@/types/chart";
 import { ChartInsightPanel } from "@/components/ChartInsightPanel";
@@ -113,6 +118,26 @@ function pivotStackedData(
     pivoted: Array.from(map.values()),
     seriesKeys: Array.from(seriesSet),
   };
+}
+
+function pivotRadarData(
+  data: Record<string, unknown>[],
+  entityField: string,
+): { pivoted: Record<string, unknown>[]; entityKeys: string[] } {
+  if (!data.length) return { pivoted: [], entityKeys: [] };
+  const first = data[0];
+  const metricCols = Object.keys(first).filter(
+    (k) => k !== entityField && typeof first[k] === "number",
+  );
+  const entityKeys = data.map((r) => String(r[entityField]));
+  const pivoted = metricCols.map((col) => {
+    const entry: Record<string, unknown> = { subject: col };
+    data.forEach((row) => {
+      entry[String(row[entityField])] = row[col];
+    });
+    return entry;
+  });
+  return { pivoted, entityKeys };
 }
 
 function RefLinks({
@@ -695,6 +720,114 @@ export function ChartRenderer({ chart, onElementClick }: ChartRendererProps) {
                 />
               ))}
             </BarChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      case "horizontal_bar": {
+        const allData = chart.data;
+        const displayData =
+          !showAll && allData.length > BAR_SHOW_ALL_THRESHOLD
+            ? allData.slice(0, BAR_SHOW_ALL_THRESHOLD)
+            : allData;
+        return (
+          <>
+            <ResponsiveContainer width="100%" height={Math.max(180, displayData.length * 28)}>
+              <BarChart
+                layout="vertical"
+                data={displayData}
+                margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
+              >
+                <CartesianGrid {...GRID_STYLE} horizontal={false} />
+                <XAxis type="number" {...AXIS_STYLE} />
+                <YAxis
+                  type="category"
+                  dataKey={xField}
+                  width={110}
+                  tick={{ fill: "#A3A3A3", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  content={hasDrill ? <DrillTooltip /> : undefined}
+                  contentStyle={!hasDrill ? TOOLTIP_STYLE : undefined}
+                  cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                />
+                <Bar
+                  dataKey={yField}
+                  fill={colors[0]}
+                  radius={[0, 2, 2, 0]}
+                  maxBarSize={20}
+                  cursor={cursorStyle}
+                  onClick={(entry: any) => handleClick(xField, entry?.[xField])}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+            {allData.length > BAR_SHOW_ALL_THRESHOLD && (
+              <button
+                onClick={() => setShowAll((p) => !p)}
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.55rem",
+                  color: "var(--uplink)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  marginTop: "4px",
+                  padding: 0,
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {showAll
+                  ? `SHOW TOP ${BAR_SHOW_ALL_THRESHOLD}`
+                  : `SHOW ALL ${allData.length}`}
+              </button>
+            )}
+          </>
+        );
+      }
+
+      case "radar": {
+        const { pivoted, entityKeys } = pivotRadarData(chart.data, xField);
+        if (!pivoted.length) return <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--on-low)" }}>No data</p>;
+        return (
+          <ResponsiveContainer width="100%" height={260}>
+            <RadarChart data={pivoted} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+              <PolarGrid stroke="#1E1E1E" />
+              <PolarAngleAxis
+                dataKey="subject"
+                tick={{ fill: "#A3A3A3", fontSize: 10, fontFamily: "var(--font-mono)" }}
+              />
+              <PolarRadiusAxis
+                tick={{ fill: "#A3A3A3", fontSize: 9 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              {entityKeys.map((key, idx) => (
+                <Radar
+                  key={key}
+                  name={key}
+                  dataKey={key}
+                  stroke={colors[idx % colors.length]}
+                  fill={colors[idx % colors.length]}
+                  fillOpacity={0.15}
+                  strokeWidth={2}
+                />
+              ))}
+              {entityKeys.length > 1 && (
+                <Legend
+                  iconSize={6}
+                  iconType="square"
+                  wrapperStyle={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.6rem",
+                    color: "#9A9590",
+                    letterSpacing: "0.06em",
+                  }}
+                />
+              )}
+            </RadarChart>
           </ResponsiveContainer>
         );
       }

@@ -291,11 +291,10 @@ _SQL_SUFFIX = """
 
 After writing the SQL, also output a JSON block fenced with ```json ... ``` containing:
 {
-  "chart_type": "line|bar|pie|table|stacked_bar",
-  "x": "<exact column alias from SELECT list for x-axis>",
-  "y": "<exact column alias from SELECT list for y-axis>",
+  "chart_type": "line|bar|horizontal_bar|pie|scatter|radar|stacked_bar|table",
+  "x": "<exact column alias from SELECT list — entity/category column>",
+  "y": "<exact column alias from SELECT list — primary numeric column>",
   "title": "<short descriptive chart title>",
-  "description": "<one sentence describing what the chart shows>",
   "answer_strategy": {
     "type": "time_series_trend|top_n_ranked|distribution|single_aggregate|detail_sample",
     "focus": ["<aspect1>", "<aspect2>"]
@@ -303,11 +302,14 @@ After writing the SQL, also output a JSON block fenced with ```json ... ``` cont
 }
 
 Chart type rules:
-- line        → time series / trends over months
-- bar         → comparisons across categories
-- pie         → distributions / proportions (≤ 10 categories only)
-- stacked_bar → multi-series category comparisons
-- table       → row-level data or many columns
+- line           → time series / trends over months or dates
+- bar            → comparisons across a small number of categories (≤ 8)
+- horizontal_bar → comparisons across many categories (> 8) or long category names
+- pie            → distributions / proportions (≤ 10 categories, 1 numeric column only)
+- scatter        → correlation between two numeric columns
+- radar          → compare one entity across 3+ metrics, or compare 2-5 entities across the same metrics
+- stacked_bar    → multi-series category comparisons (use group_by field)
+- table          → row-level detail, many columns, or no clear chart mapping
 
 Answer strategy rules:
 - time_series_trend → over-time trends. focus: peak, trough, direction, change_pct
@@ -532,16 +534,42 @@ def generate_sql(
 
 
 def _parse_candidate(raw: str) -> RAGResult:
-    """Parse a single raw LLM response into a RAGResult (thinking + SQL + chart meta)."""
+    """Parse a single raw LLM response into a RAGResult (thinking + SQL + chart meta).
+
+    Defensively coerces every field — the LLM may produce lists, ints, or
+    nested objects instead of the expected scalar strings.
+    """
     thinking, cleaned = _extract_thinking(raw)
     sql, chart_meta = _parse_output(cleaned)
+
+    def _str(v):
+        """Scalar coercion: list → first element, anything else → str. None stays None."""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return str(v[0]) if v else None
+        if isinstance(v, str):
+            return v or None
+        return str(v)
+
+    # answer_strategy must be a dict with a "type" key; discard anything malformed
+    strategy = chart_meta.get("answer_strategy")
+    if not isinstance(strategy, dict) or "type" not in strategy:
+        strategy = None
+
+    # routing must be a dict; discard anything else
+    routing = chart_meta.get("routing")
+    if not isinstance(routing, dict):
+        routing = None
+
     return RAGResult(
         sql=sql,
-        chart_type=chart_meta.get("chart_type"),
-        x_column=chart_meta.get("x"),
-        y_column=chart_meta.get("y"),
-        title=chart_meta.get("title"),
-        answer_strategy=chart_meta.get("answer_strategy"),
+        chart_type=_str(chart_meta.get("chart_type")),
+        x_column=_str(chart_meta.get("x")),
+        y_column=_str(chart_meta.get("y")),
+        title=_str(chart_meta.get("title")),
+        answer_strategy=strategy,
+        routing=routing,
         thinking=thinking or None,
     )
 
@@ -560,27 +588,47 @@ def store_successful_query(question: str, sql: str) -> None:
 # ── Output parsing ─────────────────────────────────────────────────────────────
 
 def _parse_output(raw: str) -> tuple:
-    """Split LLM output into (sql_string, chart_meta_dict)."""
+    """Split LLM output into (sql_string, chart_meta_dict).
+
+    Handles:
+    - ```json ... ``` fenced block (primary)
+    - bare { ... } JSON object as fallback (LLM omits fences)
+    - ```sql ... ``` fenced SQL block
+    - bare SELECT ... fallback
+    """
     chart_meta = {}
 
-    # Extract and remove the JSON block first
+    # ── 1. Extract fenced JSON block ─────────────────────────────────────
     json_match = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
     if json_match:
         try:
-            chart_meta = json.loads(json_match.group(1))
+            parsed = json.loads(json_match.group(1))
+            if isinstance(parsed, dict):
+                chart_meta = parsed
         except json.JSONDecodeError as exc:
-            logger.warning("Could not parse chart JSON: %s", exc)
+            logger.warning("Could not parse fenced chart JSON: %s", exc)
         raw = raw[: json_match.start()] + raw[json_match.end():]
+    else:
+        # ── 2. Fallback: bare JSON object anywhere in the output ─────────
+        bare_match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
+        if bare_match:
+            try:
+                parsed = json.loads(bare_match.group(0))
+                if isinstance(parsed, dict):
+                    chart_meta = parsed
+                    raw = raw[: bare_match.start()] + raw[bare_match.end():]
+            except json.JSONDecodeError:
+                pass  # not valid JSON, ignore
 
-    # Try fenced SQL block
+    # ── 3. Fenced SQL block ───────────────────────────────────────────────
     sql_match = re.search(r"```sql\s*(.*?)\s*```", raw, re.DOTALL | re.IGNORECASE)
     if sql_match:
         return sql_match.group(1).strip(), chart_meta
 
-    # Fallback: strip fences and find SELECT
+    # ── 4. Bare SELECT fallback ───────────────────────────────────────────
     sql = re.sub(r"```\w*\s*", "", raw)
     sql = re.sub(r"```\s*", "", sql)
-    select_match = re.search(r"(SELECT\b.*)", sql, re.DOTALL | re.IGNORECASE)
+    select_match = re.search(r"((?:WITH|SELECT)\b.*)", sql, re.DOTALL | re.IGNORECASE)
     sql = select_match.group(1).strip() if select_match else sql.strip()
 
     return sql, chart_meta
