@@ -19,6 +19,15 @@ const INSIGHT_DOT_COLOR: Record<string, string> = {
   low: 'var(--uplink)',
 };
 
+function fmtKpiValue(value: string | number): string {
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  if (isNaN(n)) return String(value);
+  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(4) + 'M';
+  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(4) + 'K';
+  if (Number.isInteger(n))      return n.toLocaleString();
+  return n.toFixed(4);
+}
+
 export function SparkKPI({ title, value, delta, sparkData, active, onClick, insightSeverity }: SparkKPIProps) {
   const sparkPoints = useMemo(() =>
     (sparkData ?? []).map((v, i) => ({ i, v })),
@@ -31,7 +40,7 @@ export function SparkKPI({ title, value, delta, sparkData, active, onClick, insi
     : 'var(--on-low)';
 
   const deltaText = delta == null ? '—'
-    : `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
+    : `${delta > 0 ? '+' : ''}${delta.toFixed(4)}%`;
 
   return (
     <div
@@ -71,7 +80,7 @@ export function SparkKPI({ title, value, delta, sparkData, active, onClick, insi
       {/* Value + Delta row */}
       <div className="flex items-end gap-3">
         <span className="data-number" style={{ fontSize: '1.4rem', color: 'var(--on)' }}>
-          {typeof value === 'number' ? value.toLocaleString() : value}
+          {fmtKpiValue(value)}
         </span>
         <span
           style={{

@@ -142,13 +142,13 @@ export default function NarratorPage() {
       writeNarratorCache(json);
       setData(json);
     } catch (err) {
-      if (!data) {
+      if (!cached) {
         setErrorMsg(err instanceof Error ? err.message : 'Failed to load insights');
       }
     } finally {
       setLoadState('idle');
     }
-  }, [data]);
+  }, []); // no data dep — use local `cached` in catch to avoid infinite loop
 
   useEffect(() => { fetchInsights(); }, [fetchInsights]);
 

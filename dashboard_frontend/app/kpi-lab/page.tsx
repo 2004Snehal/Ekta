@@ -920,10 +920,6 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
                 : <><Sparkles className="w-4 h-4" />Generate KPIs</>}
             </button>
 
-            {formState === 'loading' && (
-              <AIStepProgress stepIndex={stepIndex} statusMsg={statusMsg} />
-            )}
-
             {formState === 'error' && (
               <div className="flex items-start gap-2.5 bg-destructive/5 border border-destructive/20 rounded-xl p-3">
                 <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
@@ -934,8 +930,34 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
         </div>
       </div>
 
-      {/* ── Right: Results ────────────────────────────────────────── */}
+      {/* ── Right: Results / Steps ────────────────────────────────── */}
       <div className="lg:col-span-2">
+        {formState === 'loading' && (
+          <div className="flex flex-col items-center justify-center py-20 gap-8">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <Sparkles className="w-7 h-7 text-primary animate-pulse" />
+              </div>
+              <p className="text-base font-semibold text-foreground">{statusMsg}</p>
+            </div>
+            <div className="w-full max-w-xs space-y-3">
+              {AI_GEN_STEPS.map((label, i) => (
+                <div key={label} className="flex items-center gap-3">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+                    i < stepIndex ? 'bg-green-500/20 text-green-400' :
+                    i === stepIndex ? 'bg-primary/20 text-primary' :
+                    'bg-secondary text-muted-foreground/30'}`}>
+                    {i < stepIndex ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+                     i === stepIndex ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                     <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+                  </div>
+                  <span className={`text-sm ${i < stepIndex ? 'text-green-400' : i === stepIndex ? 'text-foreground font-medium' : 'text-muted-foreground/40'}`}>{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {result && formState === 'success' && (
           <div className="space-y-4">
             <div className="flex items-center gap-2">
