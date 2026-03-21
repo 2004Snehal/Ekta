@@ -1,12 +1,12 @@
 """
-NLQ pipeline orchestrator — full 7-step Vanna+LIDA flow.
+NLQ pipeline orchestrator — full 7-step RAG+LIDA flow.
 
 Step 1: Load session context          (follow-up query support)
-Step 2: Vanna RAG → SQL + chart spec + answer_strategy
+Step 2: ChromaDB RAG → SQL + chart spec + answer_strategy
 Step 3: Self-healing SQL execution    (auto-corrects on failure)
 Step 4: Optional LIDA insights        (explore=True only)
 Step 5: Statistical pre-summarization + LLM answer narration
-Step 6: Store verified Q→SQL in Vanna knowledge base
+Step 6: Store verified Q→SQL in ChromaDB knowledge base
 Step 7: Update session context
 """
 
@@ -15,7 +15,7 @@ import re
 import time
 from datetime import datetime
 
-from intelligence.nlq.vanna_service import generate_sql, store_successful_query
+from intelligence.nlq.rag_service import generate_sql, store_successful_query
 from intelligence.nlq.self_healing import run_sql_with_healing
 from intelligence.nlq.session_service import get_session, update_session
 from intelligence.nlq.llm import build_summary, generate_answer
@@ -50,7 +50,7 @@ def run_nlq_query(
     previous_sql = session.last_sql
     log.info("[1/7] Session loaded (follow-up=%s) — %.0f ms", previous_sql is not None, _ms())
 
-    # ── Step 2: Vanna RAG → SQL + chart spec + answer_strategy ───────────────
+    # ── Step 2: ChromaDB RAG → SQL + chart spec + answer_strategy ────────────
     t2 = time.perf_counter()
     try:
         vr = generate_sql(
@@ -60,11 +60,11 @@ def run_nlq_query(
             client_id=client_id,
         )
     except Exception as exc:
-        log.error("[2/7] Vanna SQL generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
+        log.error("[2/7] RAG SQL generation failed (%.2fs): %s", time.perf_counter() - t2, exc)
         return _error(str(exc), question)
     log.info("[2/7] SQL + metadata generated — %.0f ms", _ms())
 
-    # ── Step 2a: Router — allow Vanna to signal no-SQL path ──────────────────
+    # ── Step 2a: Router — allow RAG to signal no-SQL path ────────────────────
     routing = vr.routing or {}
     requires_sql = routing.get("requires_sql")
     if requires_sql is False:
@@ -153,9 +153,9 @@ def run_nlq_query(
     answer = generate_answer(question, summary, strategy.get("focus", []))
     log.info("[5/7] Answer generated (%.2fs) — %.0f ms", time.perf_counter() - t5, _ms())
 
-    # ── Step 6: Store Q→SQL in Vanna knowledge base ───────────────────────────
+    # ── Step 6: Store Q→SQL in ChromaDB knowledge base ───────────────────────
     store_successful_query(question, final_sql)
-    log.info("[6/7] Vanna KB updated — %.0f ms", _ms())
+    log.info("[6/7] RAG KB updated — %.0f ms", _ms())
 
     # ── Step 7: Update session context ────────────────────────────────────────
     update_session(session_id, question, final_sql)
