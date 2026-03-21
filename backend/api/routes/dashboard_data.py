@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from api.deps import get_conn
 
@@ -154,8 +155,8 @@ def get_dashboard_data(
 
     filter_fields = _build_filter_fields(records)
 
-    return {
-        "user_id":        user_id,
+    body = {
+        "user_id":         user_id,
         "requested_range": date_range,
         "data_window": {
             "start_date":    effective_start.isoformat(),
@@ -165,6 +166,10 @@ def get_dashboard_data(
         "records":       records,
         "filter_fields": filter_fields,
     }
+    return JSONResponse(content=body, headers={
+        # Allow browser/CDN to cache for 5 min; serve stale while revalidating for 1 min
+        "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
+    })
 
 
 def _build_filter_fields(records: list[dict]) -> list[dict]:
