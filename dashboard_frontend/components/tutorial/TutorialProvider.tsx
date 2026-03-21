@@ -36,10 +36,9 @@ export function TutorialProvider({ children }: { children: React.ReactNode }) {
       nextBtnText: 'Next',
       prevBtnText: 'Back',
       onDestroyStarted: () => {
-        if (!instance.hasNextStep() || confirm("Skip the rest of the tutorial?")) {
-          instance.destroy();
-          localStorage.setItem("frammer_tutorial_seen", "true");
-        }
+        // Automatically mark as seen when skipped or finished, without manual confirmation
+        instance.destroy();
+        localStorage.setItem("frammer_tutorial_seen", "true");
       },
     });
 
