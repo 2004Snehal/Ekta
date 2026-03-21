@@ -78,6 +78,13 @@ def build_summary(data: list, x_col: str, y_col: str, strategy: dict) -> dict:
     if not data:
         return {}
 
+    # Normalise column identifiers so they are always hashable keys.
+    # Vanna metadata can occasionally send lists or other structures here.
+    if isinstance(x_col, list):
+        x_col = x_col[0] if x_col else ""
+    if isinstance(y_col, list):
+        y_col = y_col[0] if y_col else ""
+
     stype = strategy.get("type", "detail_sample")
     n = len(data)
 

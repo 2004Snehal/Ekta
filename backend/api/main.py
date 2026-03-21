@@ -58,15 +58,15 @@ def _schedule_narrator():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    # Train Vanna with live schema (skipped if ChromaDB already populated)
+    # Train RAG KB with live schema (skipped if ChromaDB already populated)
     try:
-        from intelligence.nlq.vanna_service import train_vanna_with_schema
+        from intelligence.nlq.rag_service import train_with_schema
         from api.deps import get_conn
         with get_conn() as conn:
-            train_vanna_with_schema(conn)
-        logger.info("Vanna NLQ knowledge base ready.")
+            train_with_schema(conn)
+        logger.info("NLQ RAG knowledge base ready.")
     except Exception:
-        logger.exception("Vanna training failed — NLQ will still attempt queries but RAG quality may be reduced.")
+        logger.exception("RAG training failed — NLQ will still attempt queries but RAG quality may be reduced.")
 
     # Start nightly job at 02:00 server time (after materialized view refresh)
     _scheduler.add_job(

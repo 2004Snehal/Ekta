@@ -99,5 +99,6 @@ data
 
 claude
 
-# Vanna / ChromaDB — local vector store (binary, auto-regenerated on startup)
+# ChromaDB — local vector store (binary, auto-regenerated on startup)
 backend/vanna_chroma_db/
+backend/chroma_db/

@@ -20,7 +20,7 @@ import sys
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from llm_config import QWEN_INSIGHT_MODEL, make_openai_client, LLM_MAX_TOKENS
+from llm_config import QWEN_CHART_INSIGHT_MODEL, make_openai_client, LLM_MAX_TOKENS
 
 from intelligence.chart_insight_agent.schemas import (
     ChartInsightRequest, ChartInsightResponse,
@@ -80,9 +80,9 @@ def _format_data(req: ChartInsightRequest) -> str:
 
 def _call_openrouter(user_message: str, system_prompt: str = _SYSTEM_PROMPT) -> dict[str, Any]:
     client = make_openai_client()
-    logger.debug("chart_insight_agent: calling OpenRouter (%s)", QWEN_INSIGHT_MODEL)
+    logger.debug("chart_insight_agent: calling OpenRouter (%s)", QWEN_CHART_INSIGHT_MODEL)
     response = client.chat.completions.create(
-        model=QWEN_INSIGHT_MODEL,
+        model=QWEN_CHART_INSIGHT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
@@ -149,7 +149,7 @@ RULES (non-negotiable):
 def _call_openrouter_description(user_message: str) -> dict:
     client = make_openai_client()
     response = client.chat.completions.create(
-        model=QWEN_INSIGHT_MODEL,
+        model=QWEN_CHART_INSIGHT_MODEL,
         messages=[
             {"role": "system", "content": _DESC_SYSTEM_PROMPT},
             {"role": "user",   "content": user_message},
@@ -215,7 +215,7 @@ def generate_chart_insights(req: ChartInsightRequest) -> ChartInsightResponse:
 
     logger.info(
         "chart_insight_agent: generating insights for '%s' (%s, %d rows) via %s",
-        req.chart_title, req.chart_type, len(req.data), QWEN_INSIGHT_MODEL,
+        req.chart_title, req.chart_type, len(req.data), QWEN_CHART_INSIGHT_MODEL,
     )
 
     user_message = _format_data(req)

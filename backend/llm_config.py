@@ -1,8 +1,7 @@
-"""
-Central LLM configuration — OpenAI-compatible providers (OpenRouter, Together AI, etc.)
+"""Central LLM configuration — OpenAI-compatible providers (OpenRouter, Together AI, etc.)
 
 To switch providers:  change LLM_BASE_URL below
-To swap models:       change QWEN_CODER_MODEL or QWEN_INSIGHT_MODEL below
+To swap models:       change QWEN_CODER_MODEL, QWEN_INSIGHT_MODEL, or QWEN_CHART_INSIGHT_MODEL below
 API key:              set LLM_API_KEY in .env
 
 Together AI  → https://api.together.xyz/v1
@@ -19,11 +18,13 @@ LLM_BASE_URL = "https://openrouter.ai/api/v1"
 # ── Change model names here ───────────────────────────────────────────────────
 
 # NLQ / SQL generation (Vanna), LIDA, KPI registry, answer generation
-QWEN_CODER_MODEL   = "qwen/qwen3-coder-next"
+QWEN_CODER_MODEL        = "qwen/qwen3-coder-next"
 
-# Insight Narrator, Chart Insight Agent
-QWEN_INSIGHT_MODEL = "qwen/qwen-2.5-72b-instruct"
+# Insight Narrator and other long-form reasoning
+QWEN_INSIGHT_MODEL      = "qwen/qwen3.5-397b-a17b"
 
+
+QWEN_CHART_INSIGHT_MODEL = "openai/gpt-oss-safeguard-20b"
 # Global Parameters
 LLM_MAX_TOKENS     = 4096
 LLM_TEMPERATURE    = 0.2
