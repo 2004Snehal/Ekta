@@ -57,7 +57,7 @@ export function Sidebar() {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_user');
     setUser(null);
-    router.push('/login');
+    router.push('/signin');
   }
 
   const links = [
@@ -151,7 +151,7 @@ export function Sidebar() {
           </>
         ) : (
           <Link
-            href="/login"
+            href="/signin"
             className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-xs"
           >
             <LogIn className="w-3.5 h-3.5" />

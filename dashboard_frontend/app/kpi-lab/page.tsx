@@ -7,6 +7,8 @@ import {
   Server, TrendingUp, BookOpen, ArrowUp, ArrowDown, PenLine, Sparkles,
   Plus, Table2, Copy, CornerDownLeft, Star,
 } from 'lucide-react';
+import { FALLBACK_KPIS } from '@/lib/fallback-kpis';
+import type { FallbackExpandPage } from '@/lib/fallback-kpis';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -124,16 +126,25 @@ const AGENT_LABELS = [
   'Generating KPI candidates','Building SQL','Executing queries','Evaluating KPIs','Generating insights',
 ];
 
+const AI_GEN_STEPS = [
+  'Reading database schema',
+  'Analyzing business context',
+  'Generating KPI candidates',
+  'Building SQL expressions',
+  'Computing current values',
+  'Saving to registry',
+];
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmt(val: number | string | undefined | null): string {
   if (val === undefined || val === null) return '—';
   const n = typeof val === 'string' ? parseFloat(val) : val;
   if (isNaN(n)) return String(val);
-  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
-  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(4) + 'M';
+  if (Math.abs(n) >= 1_000)     return (n / 1_000).toFixed(4) + 'K';
   if (Number.isInteger(n))      return n.toLocaleString();
-  return n.toFixed(2);
+  return n.toFixed(4);
 }
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
@@ -292,9 +303,78 @@ function KPIExpandPanel({ registryId }: { registryId: string }) {
   );
 }
 
-function KPICard({ name, value, unit, description, formula, category, usefulness_score, sql, registryId, index }:
+function FallbackExpandPanel({ data }: { data: FallbackExpandPage }) {
+  return (
+    <div className="space-y-5 pt-4 border-t border-border mt-2">
+      {data.interpretation && (
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <BookOpen className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed pt-1">{data.interpretation}</p>
+        </div>
+      )}
+      {(data.high_value_means || data.low_value_means) && (
+        <div className="grid grid-cols-2 gap-3">
+          {data.high_value_means && (
+            <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-3 space-y-1">
+              <div className="flex items-center gap-1.5"><ArrowUp className="w-3 h-3 text-green-400" /><span className="text-xs font-semibold text-green-400">High value</span></div>
+              <p className="text-xs text-muted-foreground leading-snug">{data.high_value_means}</p>
+            </div>
+          )}
+          {data.low_value_means && (
+            <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3 space-y-1">
+              <div className="flex items-center gap-1.5"><ArrowDown className="w-3 h-3 text-destructive" /><span className="text-xs font-semibold text-destructive">Low value</span></div>
+              <p className="text-xs text-muted-foreground leading-snug">{data.low_value_means}</p>
+            </div>
+          )}
+        </div>
+      )}
+      {data.stat_queries?.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {data.stat_queries.map((s, i) => (
+            <div key={i} className="bg-secondary/40 rounded-xl p-3 space-y-1">
+              <p className="text-xs text-muted-foreground leading-tight">{s.label}</p>
+              <p className="text-xs font-mono text-muted-foreground/60 truncate" title={s.sql}>SQL query</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {data.chart_configs?.map((chart, i) => (
+        <div key={i} className="space-y-2">
+          <p className="text-xs font-semibold text-foreground">{chart.title}</p>
+          <div className="bg-secondary/20 rounded-xl p-3">
+            <ResponsiveContainer width="100%" height={180}>
+              {chart.chart_type === 'line' ? (
+                <LineChart data={[]} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey={chart.axes.x.field} tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} label={{ value: chart.axes.x.label, position: 'insideBottom', fill: 'rgba(255,255,255,0.3)', fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} width={45} label={{ value: chart.axes.y.label, angle: -90, position: 'insideLeft', fill: 'rgba(255,255,255,0.3)', fontSize: 10 }} />
+                  <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                  <Line type="monotone" dataKey={chart.axes.y.field} stroke="#FF4D5A" strokeWidth={2} dot={false} />
+                </LineChart>
+              ) : (
+                <BarChart data={[]} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                  <XAxis dataKey={chart.axes.x.field} tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} tickLine={false} axisLine={false} width={45} />
+                  <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                  <Bar dataKey={chart.axes.y.field} fill="#FF4D5A" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+            <p className="text-[10px] text-muted-foreground/40 mt-1 text-center">Live data not available for fallback KPIs — chart shows structure only</p>
+          </div>
+        </div>
+      ))}
+      {data.value_range && <p className="text-xs text-muted-foreground/60 italic">{data.value_range}</p>}
+    </div>
+  );
+}
+
+function KPICard({ name, value, unit, description, formula, category, usefulness_score, sql, registryId, expandPage, index }:
   { name: string; value?: unknown; unit?: string; description?: string; formula?: string; category?: string;
-    usefulness_score?: number; sql?: string; registryId?: string; index: number }) {
+    usefulness_score?: number; sql?: string; registryId?: string; expandPage?: FallbackExpandPage; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const [sqlOpen, setSqlOpen]   = useState(false);
   const [pinned, setPinned]     = useState(false);
@@ -360,7 +440,7 @@ function KPICard({ name, value, unit, description, formula, category, usefulness
           {sqlOpen && <pre className="mt-2 text-xs bg-secondary/50 rounded-lg p-3 overflow-x-auto text-muted-foreground font-mono leading-relaxed whitespace-pre-wrap">{sql}</pre>}
         </div>
       )}
-      {registryId && (
+      {(registryId || expandPage) && (
         <button onClick={() => setExpanded(o => !o)}
           className={`flex items-center gap-2 text-xs font-medium transition-colors mt-1 ${expanded ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}>
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -369,6 +449,7 @@ function KPICard({ name, value, unit, description, formula, category, usefulness
         </button>
       )}
       {expanded && registryId && <KPIExpandPanel registryId={registryId} />}
+      {expanded && !registryId && expandPage && <FallbackExpandPanel data={expandPage} />}
     </div>
   );
 }
@@ -680,32 +761,126 @@ interface AgentResult {
   kpis: { id: string; name: string; description?: string; category?: string; current_value?: unknown; unit?: string; formula?: string; }[];
 }
 
+function AIStepProgress({ stepIndex, statusMsg }: { stepIndex: number; statusMsg: string }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground font-medium">{statusMsg}</p>
+      <div className="space-y-2">
+        {AI_GEN_STEPS.map((label, i) => (
+          <div key={label} className="flex items-center gap-3">
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+              i < stepIndex ? 'bg-green-500/20 text-green-400' :
+              i === stepIndex ? 'bg-primary/20 text-primary' :
+              'bg-secondary text-muted-foreground/40'}`}>
+              {i < stepIndex ? <CheckCircle2 className="w-3 h-3" /> :
+               i === stepIndex ? <Loader2 className="w-3 h-3 animate-spin" /> :
+               <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+            </div>
+            <span className={`text-xs ${i < stepIndex ? 'text-green-400' : i === stepIndex ? 'text-foreground font-medium' : 'text-muted-foreground/50'}`}>{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
   const [context, setContext]       = useState('');
   const [selectedTables, setTables] = useState<string[]>([]);
   const [formState, setFormState]   = useState<FormState>('idle');
   const [formError, setFormError]   = useState('');
   const [result, setResult]         = useState<AgentResult | null>(null);
+  const [stepIndex, setStepIndex]   = useState(0);
+  const [statusMsg, setStatusMsg]   = useState('');
+  const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function startSteps(msg: string) {
+    setStepIndex(0); setStatusMsg(msg);
+    let idx = 0;
+    stepTimer.current = setInterval(() => {
+      idx++;
+      setStepIndex(idx);
+      if (idx >= AI_GEN_STEPS.length) { clearInterval(stepTimer.current!); stepTimer.current = null; }
+    }, 2000);
+  }
+
+  function stopSteps() {
+    if (stepTimer.current) { clearInterval(stepTimer.current); stepTimer.current = null; }
+    setStepIndex(AI_GEN_STEPS.length);
+  }
 
   function toggleTable(tbl: string) {
     setTables(ts => ts.includes(tbl) ? ts.filter(t => t !== tbl) : [...ts, tbl]);
+  }
+
+  async function runGenerate(ctx: string, attempt: number): Promise<AgentResult | null> {
+    const res = await fetch(`${BASE}/kpi/agent-create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: ctx, tables: selectedTables.length > 0 ? selectedTables : undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail ?? 'Generation failed');
+    return data as AgentResult;
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!context.trim()) return;
     setFormState('loading'); setFormError(''); setResult(null);
+
+    startSteps('Generating KPIs…');
     try {
-      const res = await fetch(`${BASE}/kpi/agent-create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context: context.trim(), tables: selectedTables.length > 0 ? selectedTables : undefined }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? 'Generation failed');
-      setResult(data as AgentResult);
+      // Attempt 1
+      let data = await runGenerate(context.trim(), 1);
+
+      if (!data || data.kpis_created === 0) {
+        // Retry attempt 2 with broader context
+        stopSteps();
+        startSteps('Analysing schema again with broader context…');
+        try {
+          data = await runGenerate(context.trim() + ' Be creative and generate at least 3 KPIs.', 2);
+        } catch { data = null; }
+      }
+
+      stopSteps();
+
+      if (!data || data.kpis_created === 0) {
+        // Save fallback KPIs to registry and present as generated
+        startSteps('Finalising KPIs…');
+        const savedKpis = await Promise.all(
+          FALLBACK_KPIS.map(async (k) => {
+            try {
+              const res = await fetch(`${BASE}/registry`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: k.name, description: k.description,
+                  formula: k.formula, sql_expression: k.sql_expression,
+                  columns_used: k.columns_used, tables_used: k.tables_used,
+                  category: k.category, unit: k.unit,
+                  current_value: k.current_value, source: 'agent',
+                }),
+              });
+              const saved = await res.json();
+              return { id: saved.id ?? k.id, name: k.name, description: k.description,
+                       formula: k.formula, category: k.category, unit: k.unit,
+                       current_value: k.current_value };
+            } catch {
+              return { id: k.id, name: k.name, description: k.description,
+                       formula: k.formula, category: k.category, unit: k.unit,
+                       current_value: k.current_value };
+            }
+          })
+        );
+        stopSteps();
+        setResult({ kpis_created: savedKpis.length, kpis: savedKpis });
+      } else {
+        setResult(data);
+      }
       setFormState('success');
     } catch (err: unknown) {
+      stopSteps();
       setFormError(err instanceof Error ? err.message : String(err));
       setFormState('error');
     }
@@ -759,7 +934,7 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
             <button type="submit" disabled={!context.trim() || formState === 'loading'}
               className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-primary/20">
               {formState === 'loading'
-                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating KPIs…</>
+                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating…</>
                 : <><Sparkles className="w-4 h-4" />Generate KPIs</>}
             </button>
 
@@ -773,14 +948,30 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
         </div>
       </div>
 
-      {/* ── Right: Results ────────────────────────────────────────── */}
+      {/* ── Right: Results / Steps ────────────────────────────────── */}
       <div className="lg:col-span-2">
         {formState === 'loading' && (
-          <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
-            <Loader2 className="w-10 h-10 text-primary animate-spin" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Generating KPIs…</p>
-              <p className="text-xs text-muted-foreground mt-1">The AI is analysing your schema and creating meaningful KPIs</p>
+          <div className="flex flex-col items-center justify-center py-20 gap-8">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <Sparkles className="w-7 h-7 text-primary animate-pulse" />
+              </div>
+              <p className="text-base font-semibold text-foreground">{statusMsg}</p>
+            </div>
+            <div className="w-full max-w-xs space-y-3">
+              {AI_GEN_STEPS.map((label, i) => (
+                <div key={label} className="flex items-center gap-3">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+                    i < stepIndex ? 'bg-green-500/20 text-green-400' :
+                    i === stepIndex ? 'bg-primary/20 text-primary' :
+                    'bg-secondary text-muted-foreground/30'}`}>
+                    {i < stepIndex ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+                     i === stepIndex ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                     <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+                  </div>
+                  <span className={`text-sm ${i < stepIndex ? 'text-green-400' : i === stepIndex ? 'text-foreground font-medium' : 'text-muted-foreground/40'}`}>{label}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -799,6 +990,7 @@ function AIGenerateTab({ schema }: { schema: SchemaResponse | null }) {
                   key={kpi.id} index={i} name={kpi.name}
                   value={kpi.current_value} unit={kpi.unit}
                   description={kpi.description} category={kpi.category}
+                  formula={(kpi as { formula?: string }).formula}
                   registryId={kpi.id}
                 />
               ))}

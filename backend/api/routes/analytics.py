@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.deps import get_conn
@@ -270,7 +271,7 @@ def period_compare(
     current["period"]  = current_label
     previous["period"] = prev_label
 
-    return {
+    return JSONResponse(content={
         "current":  current,
         "previous": previous,
         "deltas": {
@@ -281,7 +282,7 @@ def period_compare(
                 (current.get("publish_rate") or 0.0) - (previous.get("publish_rate") or 0.0), 1
             ),
         },
-    }
+    }, headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"})
 
 
 # ── 3. Publishing funnel ──────────────────────────────────────────────────────
@@ -465,6 +466,8 @@ def time_series(
                 series[period_val] = {"period": period_val, "groups": {}}
             gname = r.get("group_name", "unknown")
             series[period_val]["groups"][gname] = r.get(metric, r.get("count", 0))
-        return {"series": list(series.values())}
+        return JSONResponse(content={"series": list(series.values())},
+                            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"})
 
-    return {"series": rows}
+    return JSONResponse(content={"series": rows},
+                        headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"})

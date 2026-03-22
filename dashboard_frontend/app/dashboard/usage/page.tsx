@@ -9,7 +9,22 @@ import { PeriodComparison } from '@/components/PeriodComparison';
 import { DrillBreadcrumb } from '@/components/DrillBreadcrumb';
 import type { UniversalChartSpec } from '@/types/chart';
 
-const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
+const API          = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw) as { ts: number; data: T };
+    return Date.now() - ts > CACHE_TTL_MS ? null : data;
+  } catch { return null; }
+}
+
+function writeCache<T>(key: string, data: T) {
+  try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data })); }
+  catch { /* quota */ }
+}
 
 export default function UsagePage() {
   return (
@@ -31,7 +46,24 @@ function UsagePageInner() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
+    const cacheCount  = `usage-count-${granularity}`;
+    const cacheDur    = `usage-duration-${granularity}`;
+    const cachePeriod = `usage-period`;
+
+    // Paint from cache immediately — no loading flash on reload
+    const cachedCount  = readCache<any[]>(cacheCount);
+    const cachedDur    = readCache<any[]>(cacheDur);
+    const cachedPeriod = readCache<any>(cachePeriod);
+    if (cachedCount && cachedDur && cachedPeriod) {
+      setTimeSeries(cachedCount);
+      setDurationSeries(cachedDur);
+      setPeriodData(cachedPeriod);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    // Always re-fetch in background to stay fresh
     Promise.all([
       fetch(`${API}/analytics/time-series?client_id=1&metric=count&granularity=${granularity}`)
         .then((r): Promise<any> => r.ok ? r.json() : Promise.resolve({ series: [] })).catch(() => ({ series: [] })),
@@ -40,9 +72,14 @@ function UsagePageInner() {
       fetch(`${API}/analytics/period-compare?client_id=1&period=month`)
         .then((r): Promise<any> => r.ok ? r.json() : Promise.resolve({})).catch(() => ({})),
     ]).then(([ts, dur, period]) => {
-      setTimeSeries(ts.series ?? []);
-      setDurationSeries(dur.series ?? []);
+      const countSeries = ts.series ?? [];
+      const durSeries   = dur.series ?? [];
+      setTimeSeries(countSeries);
+      setDurationSeries(durSeries);
       setPeriodData(period);
+      writeCache(cacheCount, countSeries);
+      writeCache(cacheDur, durSeries);
+      writeCache(cachePeriod, period);
     }).finally(() => setLoading(false));
   }, [granularity]);
 

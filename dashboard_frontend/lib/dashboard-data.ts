@@ -142,11 +142,11 @@ export function filterDashboardRecords(
 
 // ── Mock data ──────────────────────────────────────────────────────────────────
 
-const MOCK_CHANNELS  = ['IBN7', 'CNN-IBN', 'Aaj Tak', 'NDTV', 'Republic'];
-const MOCK_USERS     = ['Priya', 'Rahul', 'Ananya', 'Vikram', 'Sunita'];
-const MOCK_LANGUAGES = ['hi', 'en', 'mix', 'mr'];
-const MOCK_TYPES     = ['news bulletin', 'interview', 'special reports', 'debate', 'sports show'];
-const MOCK_PLATFORMS = ['YouTube', 'Instagram', 'Reels', 'Shorts', 'Facebook'];
+const MOCK_CHANNELS  = ['Channel Alpha', 'Channel Beta', 'Channel Gamma', 'Channel Delta', 'Channel Epsilon'];
+const MOCK_USERS     = ['User A', 'User B', 'User C', 'User D', 'User E'];
+const MOCK_LANGUAGES = ['lang-1', 'lang-2', 'lang-3', 'lang-4'];
+const MOCK_TYPES     = ['bulletin', 'interview', 'special report', 'panel', 'feature'];
+const MOCK_PLATFORMS = ['Platform X', 'Platform Y', 'Platform Z', 'Platform W', 'Platform V'];
 
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -229,9 +229,9 @@ export function buildDashboardKpis(
   const timeframe    = getDisplayRangeLabel(filters.dateRange);
 
   return [
-    { id: 'uploaded_videos',  title: 'Uploaded Videos',  value: uploaded.toLocaleString(),  change: baseChange,                    timeframe, iconKey: 'video'    },
-    { id: 'processed_videos', title: 'Processed Videos', value: processed.toLocaleString(), change: Math.round(baseChange * 0.9),  timeframe, iconKey: 'zap'      },
-    { id: 'published_videos', title: 'Published Videos', value: published.toLocaleString(), change: Math.round(baseChange * 1.1),  timeframe, iconKey: 'trending' },
+    { id: 'uploaded_videos',  title: 'Uploaded Videos',  value: uploaded,  change: baseChange,                    timeframe, iconKey: 'video'    },
+    { id: 'processed_videos', title: 'Processed Videos', value: processed, change: Math.round(baseChange * 0.9),  timeframe, iconKey: 'zap'      },
+    { id: 'published_videos', title: 'Published Videos', value: published, change: Math.round(baseChange * 1.1),  timeframe, iconKey: 'trending' },
     { id: 'publish_rate',     title: 'Publish Rate',     value: `${rate}%`,                 change: Math.round(baseChange * 0.5),  timeframe, iconKey: 'bar'      },
     { id: 'average_duration', title: 'Avg Duration',     value: formatDuration(avgDur),      change: 0,                             timeframe, iconKey: 'bar'      },
   ];

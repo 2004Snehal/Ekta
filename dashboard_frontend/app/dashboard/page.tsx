@@ -34,6 +34,29 @@ import type {
 const API          = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
 const USER_ID      = process.env.NEXT_PUBLIC_DASHBOARD_USER_ID ?? 'demo-user';
 const STORAGE_KEY  = `dashboard-state:${USER_ID}`;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// ── Dashboard data cache (localStorage, stale-while-revalidate) ───────────────
+
+function cacheKey(range: DashboardDateRange) {
+  return `dashboard-data:${USER_ID}:${range}`;
+}
+
+function readCache(range: DashboardDateRange): DashboardDatasetResponse | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(range));
+    if (!raw) return null;
+    const { ts, payload } = JSON.parse(raw) as { ts: number; payload: DashboardDatasetResponse };
+    if (Date.now() - ts > CACHE_TTL_MS) return null; // stale
+    return payload;
+  } catch { return null; }
+}
+
+function writeCache(range: DashboardDateRange, payload: DashboardDatasetResponse) {
+  try {
+    localStorage.setItem(cacheKey(range), JSON.stringify({ ts: Date.now(), payload }));
+  } catch { /* quota — skip silently */ }
+}
 
 const DEFAULT_VISIBLE_KPI_IDS: string[] = [
   'uploaded_videos', 'processed_videos', 'published_videos', 'publish_rate', 'average_duration',
@@ -297,26 +320,53 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [apiBaseUrl]);
 
-  /* ── Data load ───────────────────────────────────────── */
+  /* ── Data load (stale-while-revalidate via localStorage) ─ */
   useEffect(() => {
     if (!stateReady) return;
     const reqRange = getRequiredDataRange(filters.dateRange);
     if (supportsRange(loadedRange, reqRange) && allRecords.length > 0) return;
     let cancelled = false;
-    const load = async () => {
-      setIsLoading(true);
-      if (apiBaseUrl) {
-        try {
-          const res = await fetch(`${apiBaseUrl}/dashboard?user_id=${encodeURIComponent(USER_ID)}&date_range=${encodeURIComponent(reqRange)}`, { cache: 'no-store' });
-          if (!res.ok) throw new Error();
-          const payload = await res.json() as DashboardDatasetResponse;
-          if (!cancelled) { setAllRecords(payload.records ?? []); setFilterFields(normalizeFilterFields(payload.records ?? [], payload.filter_fields)); setLoadedRange(payload.requested_range ?? reqRange); setDataSource('live'); setIsLoading(false); }
-          return;
-        } catch { if (!cancelled) setDataSource('mock'); }
-      }
-      const mock = createMockDashboardRecords(reqRange);
-      if (!cancelled) { setAllRecords(mock); setFilterFields(normalizeFilterFields(mock)); setLoadedRange(reqRange); setIsLoading(false); }
+
+    const applyPayload = (payload: DashboardDatasetResponse, source: 'live' | 'mock') => {
+      if (cancelled) return;
+      setAllRecords(payload.records ?? []);
+      setFilterFields(normalizeFilterFields(payload.records ?? [], payload.filter_fields));
+      setLoadedRange(payload.requested_range ?? reqRange);
+      setDataSource(source);
+      setIsLoading(false);
     };
+
+    const load = async () => {
+      // 1. Paint from cache immediately — zero loading flash on reload
+      const cached = readCache(reqRange);
+      if (cached) {
+        applyPayload(cached, 'live');
+        // Still re-fetch in background to refresh stale data silently
+      } else {
+        setIsLoading(true);
+      }
+
+      if (!apiBaseUrl) {
+        if (!cached) applyPayload({ records: createMockDashboardRecords(reqRange), requested_range: reqRange } as DashboardDatasetResponse, 'mock');
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `${apiBaseUrl}/dashboard?user_id=${encodeURIComponent(USER_ID)}&date_range=${encodeURIComponent(reqRange)}`,
+        );
+        if (!res.ok) throw new Error();
+        const payload = await res.json() as DashboardDatasetResponse;
+        writeCache(reqRange, payload);
+        applyPayload(payload, 'live');
+      } catch {
+        if (!cached && !cancelled) {
+          const mock = createMockDashboardRecords(reqRange);
+          applyPayload({ records: mock, requested_range: reqRange } as DashboardDatasetResponse, 'mock');
+        }
+      }
+    };
+
     void load();
     return () => { cancelled = true; };
   }, [allRecords.length, apiBaseUrl, filters.dateRange, loadedRange, stateReady]);

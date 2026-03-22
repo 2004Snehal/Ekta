@@ -19,6 +19,18 @@ const INSIGHT_DOT_COLOR: Record<string, string> = {
   low: 'var(--uplink)',
 };
 
+function fmtKpiValue(value: string | number): string {
+  // Strings with units (%, letters like "5m 30s") pass through unchanged
+  if (typeof value === 'string' && /[a-zA-Z%]/.test(value)) return value;
+  // Strip locale commas before parsing so "122,000" doesn't become 122
+  const n = typeof value === 'number' ? value : parseFloat(String(value).replace(/,/g, ''));
+  if (isNaN(n)) return String(value);
+  // Integers: show full number with locale formatting (no K/M truncation)
+  if (Number.isInteger(n)) return n.toLocaleString();
+  // Floats: max 4 decimal places
+  return n.toFixed(4);
+}
+
 export function SparkKPI({ title, value, delta, sparkData, active, onClick, insightSeverity }: SparkKPIProps) {
   const sparkPoints = useMemo(() =>
     (sparkData ?? []).map((v, i) => ({ i, v })),
@@ -31,7 +43,7 @@ export function SparkKPI({ title, value, delta, sparkData, active, onClick, insi
     : 'var(--on-low)';
 
   const deltaText = delta == null ? '—'
-    : `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
+    : `${delta > 0 ? '+' : ''}${delta.toFixed(4)}%`;
 
   return (
     <div
@@ -71,7 +83,7 @@ export function SparkKPI({ title, value, delta, sparkData, active, onClick, insi
       {/* Value + Delta row */}
       <div className="flex items-end gap-3">
         <span className="data-number" style={{ fontSize: '1.4rem', color: 'var(--on)' }}>
-          {typeof value === 'number' ? value.toLocaleString() : value}
+          {fmtKpiValue(value)}
         </span>
         <span
           style={{

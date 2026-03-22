@@ -712,13 +712,22 @@ def add_columns_to_table(
     body: AddColumnsRequest,
     _admin=Depends(require_admin),
 ) -> Dict:
-    """Add one or more new columns to an existing data schema table."""
+    """Add one or more new columns to an existing data schema table.
+
+    Uses the existing pool connection — DDL is transactional in PostgreSQL
+    so ALTER TABLE works inside a normal BEGIN/COMMIT block.
+    """
     if not body.columns:
         raise HTTPException(status_code=400, detail="No columns provided.")
 
     with get_conn() as conn:
         cur = conn.cursor()
         _assert_table_exists(cur, table_name)
+
+        # Supabase pooler has a short default statement_timeout that kills
+        # DDL before it completes.  SET LOCAL scopes to this transaction only
+        # so the pool connection resets to normal after commit.
+        cur.execute("SET LOCAL statement_timeout = '60s'")
 
         added: List[str] = []
         for col in body.columns:
@@ -729,18 +738,35 @@ def add_columns_to_table(
             if base_type not in _ALLOWED_PG_TYPES:
                 continue
             null_clause = "" if col.nullable else " NOT NULL DEFAULT ''"
-            cur.execute(
+            sql = (
                 f'ALTER TABLE {_DATA_SCHEMA}."{table_name}" '
                 f'ADD COLUMN IF NOT EXISTS "{name}" {col.type}{null_clause}'
             )
+            logger.info("DDL: %s", sql)
+            cur.execute(sql)
             added.append(name)
+
+        if not added:
+            raise HTTPException(status_code=400, detail="No valid columns to add.")
 
         conn.commit()
 
-    if not added:
-        raise HTTPException(status_code=400, detail="No valid columns to add.")
+        # Verify columns were actually created
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = %s",
+            (_DATA_SCHEMA, table_name),
+        )
+        actual_cols = {r[0] for r in cur.fetchall()}
+        verified = [c for c in added if c in actual_cols]
+        missing = [c for c in added if c not in actual_cols]
+        if missing:
+            logger.warning("Columns not found after ALTER: %s", missing)
 
-    return {"altered": table_name, "columns_added": added}
+    return {
+        "altered": table_name,
+        "columns_added": verified if verified else added,
+    }
 
 
 # ── Data Lab: update cell with cascade ────────────────────────────────────────
