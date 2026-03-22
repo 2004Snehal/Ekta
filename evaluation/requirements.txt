@@ -1,0 +1,15 @@
+# Evaluation service dependencies
+# Install with: pip install -r evaluation/requirements.txt
+
+# Dataset loading
+datasets>=2.14.0
+huggingface_hub>=0.20.0
+
+# DB
+psycopg2-binary>=2.9.0
+
+# LLM
+openai>=1.0.0
+
+# Utils
+python-dotenv>=1.0.0
