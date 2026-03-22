@@ -1,11 +1,15 @@
 """
-LIDA insight engine — optional Step 4, only runs when explore=True.
+Explore insight engine — optional Step 4, runs when explore=True.
 
-Analyses the Pandas DataFrame from SQL execution and generates additional
-chart goals + Vega-Lite specs using LIDA + Altair.
+Analyses the query DataFrame and generates additional chart suggestions
+using a single LLM call. Each suggestion uses the frontend's native
+chart format (chart_type / x / y / title) so ChartRenderer can display
+it directly — no Vega-Lite dependency needed.
 """
 
+import json
 import logging
+import re
 import sys
 import os
 from typing import List
@@ -16,132 +20,121 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from backend_config import LIDA_MAX_GOALS
 from llm_config import QWEN_CODER_MODEL, make_openai_client
 
-logger = logging.getLogger("nlq.lida")
+logger = logging.getLogger("nlq.explore")
+
+VALID_CHART_TYPES = {"bar", "horizontal_bar", "line", "pie", "scatter", "stacked_bar", "table"}
 
 
 def generate_insights(df: pd.DataFrame, question: str, user_role: str = None) -> List[dict]:
     """
-    Use LIDA to generate additional visualizations from the query DataFrame.
-    Returns a list of {"title": str, "chart_spec": dict} dicts.
-    Returns [] if LIDA is not installed, the DataFrame is empty, or any error occurs.
+    Generate additional chart suggestions from a query result DataFrame.
+
+    Returns a list of dicts, each with:
+        title      — what the chart shows
+        chart_spec — {chart_type, title, x, y, data}  (ChartRenderer-compatible)
+
+    Returns [] on empty data or any error — never raises.
     """
-    if df.empty:
-        logger.info("LIDA skipped — empty DataFrame.")
+    if df.empty or len(df.columns) < 2:
+        logger.info("Explore skipped — insufficient data (%d rows, %d cols).", len(df), len(df.columns))
         return []
 
     try:
-        from lida import Manager, TextGenerationConfig
-    except ImportError:
-        logger.warning("LIDA not installed — skipping insights. Run: pip install lida")
+        return _generate(df, question, user_role)
+    except Exception as exc:
+        logger.error("Explore insight generation failed: %s", exc, exc_info=True)
         return []
 
+
+def _generate(df: pd.DataFrame, question: str, user_role: str = None) -> List[dict]:
+    # ── Build a compact data summary for the LLM ────────────────────────────
+    col_info = []
+    for c in df.columns:
+        dtype = str(df[c].dtype)
+        nunique = int(df[c].nunique())
+        sample = df[c].dropna().head(3).tolist()
+        col_info.append(f"  - {c} ({dtype}, {nunique} unique): {sample}")
+
+    schema_block = "\n".join(col_info)
+
+    # ── Persona from role config ────────────────────────────────────────────
+    persona_hint = ""
     try:
-        lida = _build_lida_manager()
-        textgen_config = TextGenerationConfig(n=1, temperature=0.2, use_cache=True)
-
-        logger.info("LIDA summarising DataFrame (%d rows)…", len(df))
-        summary = lida.summarize(df, summary_method="default", textgen_config=textgen_config)
-
         from intelligence.nlq.role_config import get_role_config
         role_cfg = get_role_config(user_role)
-        persona = (
-            f"You are generating insights for a {role_cfg.display_name}. {role_cfg.lida_context}"
-            if role_cfg
-            else "You are a data analyst generating insights from query results."
-        )
+        if role_cfg:
+            persona_hint = (
+                f"\nThe user is a {role_cfg.display_name}. "
+                f"{role_cfg.lida_context}\n"
+            )
+    except Exception:
+        pass
 
-        logger.info("LIDA generating up to %d goals…", LIDA_MAX_GOALS)
-        goals = lida.goals(summary, n=LIDA_MAX_GOALS, persona=persona, textgen_config=textgen_config)
+    valid_types = ", ".join(sorted(VALID_CHART_TYPES))
 
-        insights = []
-        for goal in goals:
-            try:
-                charts = lida.visualize(
-                    summary=summary,
-                    goal=goal,
-                    textgen_config=textgen_config,
-                    library="altair",
-                )
-                if charts:
-                    spec = _extract_spec(charts[0], df=df)
-                    insights.append({"title": goal.question, "chart_spec": spec})
-            except Exception as chart_exc:
-                logger.warning("LIDA chart failed for goal '%s': %s", goal.question, chart_exc)
+    prompt = f"""You are a data analyst. The user asked: "{question}"
 
-        logger.info("LIDA generated %d insights.", len(insights))
-        return insights
+The query returned {len(df)} rows with these columns:
+{schema_block}
+{persona_hint}
+Suggest exactly {LIDA_MAX_GOALS} additional visualizations that reveal
+different angles of this data. Each must use a DIFFERENT chart type or
+axis combination from the others.
 
-    except Exception as exc:
-        logger.error("LIDA insight generation failed: %s", exc, exc_info=True)
-        return []
+For each, pick the best chart type from: {valid_types}
+Choose x and y from the actual column names listed above.
 
+Respond ONLY with a JSON array (no markdown fences, no explanation):
+[
+  {{"chart_type": "...", "title": "...", "x": "...", "y": "..."}},
+  ...
+]"""
 
-# ── LLM backend adapters ──────────────────────────────────────────────────────
+    client = make_openai_client()
+    response = client.chat.completions.create(
+        model=QWEN_CODER_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4,
+    )
+    raw = response.choices[0].message.content.strip()
+    logger.debug("Explore LLM raw response: %s", raw[:500])
 
-class _OpenRouterTextGen:
-    """LIDA-compatible text generator backed by OpenRouter (OpenAI-compatible)."""
+    # ── Parse — strip markdown fences + trailing commas ─────────────────────
+    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
+    text = fenced.group(1) if fenced else raw
+    text = re.sub(r",\s*([}\]])", r"\1", text)
 
-    def __init__(self):
-        self._client = make_openai_client()
-        self._model = QWEN_CODER_MODEL
-        self.provider = "openai"   # LIDA expects "openai" style interface
-        self.model_name = QWEN_CODER_MODEL
+    suggestions = json.loads(text)
+    if not isinstance(suggestions, list):
+        suggestions = [suggestions]
 
-    def generate(self, messages, config=None, **kwargs):
-        from types import SimpleNamespace
-        if isinstance(messages, list):
-            formatted = [
-                {"role": m.get("role", "user"), "content": m.get("content", "")}
-                if isinstance(m, dict) else {"role": "user", "content": str(m)}
-                for m in messages
-            ]
-        else:
-            formatted = [{"role": "user", "content": str(messages)}]
+    # ── Convert to ChartRenderer-compatible specs ───────────────────────────
+    columns = set(df.columns)
+    records = json.loads(df.to_json(orient="records", default_handler=str))
 
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=formatted,
-            temperature=getattr(config, "temperature", 0.2) if config else 0.2,
-        )
-        content = response.choices[0].message.content
-        return SimpleNamespace(text=[{"content": content}], config=config)
+    insights = []
+    for s in suggestions:
+        ct = s.get("chart_type", "").lower()
+        x = s.get("x", "")
+        y = s.get("y", "")
+        title = s.get("title", "")
 
+        if ct not in VALID_CHART_TYPES:
+            ct = "bar"
+        if x not in columns or y not in columns:
+            logger.warning("Explore: skipping suggestion with unknown columns x=%s y=%s", x, y)
+            continue
 
-def _build_lida_manager():
-    from lida import Manager
-    text_gen = _OpenRouterTextGen()
-    logger.info("LIDA using OpenRouter backend (%s).", QWEN_CODER_MODEL)
-    return Manager(text_gen=text_gen)
+        insights.append({
+            "title": title,
+            "chart_spec": {
+                "chart_type": ct,
+                "title": title,
+                "x": x,
+                "y": y,
+                "data": records,
+            },
+        })
 
-
-# ── Spec extraction ───────────────────────────────────────────────────────────
-
-def _extract_spec(chart_object, df: pd.DataFrame = None) -> dict:
-    """
-    Extract the Vega-Lite spec and embed inline data so the frontend
-    can render it without a second API call.
-    """
-    import json as _json
-
-    spec = getattr(chart_object, "spec", None)
-    if spec is None:
-        return {}
-
-    if hasattr(spec, "to_dict"):
-        try:
-            spec_dict = spec.to_dict()
-        except Exception:
-            return {}
-    elif isinstance(spec, dict):
-        spec_dict = spec
-    else:
-        return {}
-
-    # Embed data inline if not already present
-    if df is not None and not df.empty:
-        has_inline = isinstance(spec_dict.get("data"), dict) and "values" in spec_dict.get("data", {})
-        if not has_inline:
-            records = _json.loads(df.to_json(orient="records", default_handler=str))
-            spec_dict["data"] = {"values": records}
-
-    return spec_dict
+    logger.info("Explore generated %d insights (1 LLM call).", len(insights))
+    return insights
