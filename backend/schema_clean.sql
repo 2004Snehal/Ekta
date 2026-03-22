@@ -320,7 +320,8 @@ CREATE TABLE IF NOT EXISTS data.dim_team (
 --         uploaded_by, video_id, published_platform, published_url,
 --         uploaded_duration, created_duration, published_duration,
 --         output_type, channel, language, uploaded_at, views,
---         client_type, client_id, uploaded_hours, cumulative_uploaded_hours, billable
+--         client_type, client_id, uploaded_hours, cumulative_upload_hours,
+--         billable, error_flag
 
 -- ============================================================
 -- DATA SCHEMA — fact table (materialized view over source)
@@ -345,10 +346,11 @@ SELECT
     data.duration_to_secs(s.created_duration)    AS created_duration_secs,
     data.duration_to_secs(s.published_duration)  AS published_duration_secs,
     s.uploaded_hours,
-    s.cumulative_uploaded_hours,
+    s.cumulative_upload_hours,
     s.views,
     LOWER(s.published) IN ('yes', 'true', '1')   AS published_flag,
     s.billable,
+    s.error_flag,
     data.parse_uploaded_at(s.uploaded_at)        AS uploaded_at
 FROM data.shortened_filtered_data s
 LEFT JOIN data.dim_client      dc  ON dc.client_id     = s.client_id

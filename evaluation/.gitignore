@@ -1,0 +1,28 @@
+# Datasets (large, downloaded locally)
+datasets/bird_dbs/
+datasets/bird_dbs/**
+
+# Logs & results (generated per run)
+logs/
+*.jsonl
+*.json
+*_checkpoint.json
+*.txt
+!requirements.txt
+!datasets/own_queries.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# ChromaDB
+chroma_db/
+bird_chroma/
+
+# Binaries
+*.bin
+*.db
+*.sqlite
+*.sqlite3
+*.pickle

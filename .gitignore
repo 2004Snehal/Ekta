@@ -102,6 +102,7 @@ claude
 # ChromaDB — local vector store (binary, auto-regenerated on startup)
 backend/vanna_chroma_db/
 backend/chroma_db/
+chroma_db/
 
-
-python check_tables.py
+# Evaluation results (generated per run)
+results_*.json
