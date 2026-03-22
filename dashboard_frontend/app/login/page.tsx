@@ -1,13 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '');
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -30,11 +28,11 @@ export default function LoginPage() {
       localStorage.setItem('auth_user', JSON.stringify(data.user));
       document.cookie = `auth_token=${data.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 
-      // Redirect admins to admin console, others to dashboard
+      // Full page navigation ensures auth state is properly picked up in production builds
       if (data.user.role === 'admin') {
-        router.push('/admin');
+        window.location.href = '/admin';
       } else {
-        router.push('/dashboard');
+        window.location.href = '/dashboard';
       }
     } catch (err) {
       setError((err as Error).message);
