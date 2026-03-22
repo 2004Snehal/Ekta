@@ -25,8 +25,5 @@ ANSWER_MODEL = "qwen/qwen3-coder-next"
 LLM_TEMPERATURE = 0.2
 LLM_MAX_TOKENS  = 4096
 
-# Metricflow branch name (for dynamic code extraction)
-METRICFLOW_BRANCH = "rishit_sql_rag_metricflow"
-
 # Concurrency
 MAX_WORKERS = int(os.getenv("EVAL_MAX_WORKERS", "4"))

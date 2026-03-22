@@ -115,7 +115,6 @@ def write_summary(results: list[dict]) -> Path:
 def run_test():
     from evaluation.pipelines.our_pipeline    import OurPipeline
     from evaluation.pipelines.simple_baseline import SimpleBaselinePipeline
-    from evaluation.pipelines.metricflow_pipeline import MetricflowPipeline
     from intelligence.nlq.context             import fetch_live_schema
 
     conn = get_conn()
@@ -124,7 +123,6 @@ def run_test():
     pipelines = [
         ("ours_rag_healing", OurPipeline(conn=conn),      {}),
         ("simple_baseline",  SimpleBaselinePipeline(),    {}),
-        ("metricflow",       MetricflowPipeline(),         {}),
     ]
 
     summary_rows = []

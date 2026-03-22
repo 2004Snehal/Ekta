@@ -1,5 +1,5 @@
 """
-Our full pipeline wrapper (Raj branch).
+Our full pipeline wrapper (RAG + self-healing).
 
 Two modes:
   - Own queries (PostgreSQL, no schema_str): uses full RAG pipeline via generate_sql_candidates

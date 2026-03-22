@@ -21,7 +21,6 @@ evaluation/
     base.py                  # EvalResult dataclass + Pipeline ABC
     our_pipeline.py          # Full RAG + self-healing pipeline
     simple_baseline.py       # Bare 2-call LLM (schema-only, no RAG/healing)
-    metricflow_pipeline.py   # Metricflow branch (own queries only)
   metrics/
     ex_accuracy.py           # EX, First-shot EX, Healed EX
     ves.py                   # VES (BIRD timed) + VES static (heuristic)

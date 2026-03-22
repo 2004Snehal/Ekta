@@ -80,15 +80,15 @@ Post-hoc quality assessment using the same Qwen Coder model, scoring four dimens
 
 ## Comparison Table
 
-| Metric              | ours_rag_healing | simple_baseline | metricflow | Track        |
-|---------------------|:----------------:|:---------------:|:----------:|--------------|
-| EX                  | yes              | yes             | —          | BIRD         |
-| First-shot EX       | yes              | yes             | —          | BIRD         |
-| Healed EX           | yes              | no              | —          | BIRD         |
-| VES (timed)         | yes              | yes             | —          | BIRD         |
-| Error Breakdown     | yes              | yes             | —          | BIRD         |
-| ESR                 | yes              | —               | —          | Own queries  |
-| Healing Efficiency  | yes              | —               | —          | Own queries  |
-| P50 / P95 Latency   | yes              | —               | —          | Own queries  |
-| VES Static          | yes              | —               | —          | Own queries  |
-| LLM Judge           | yes              | —               | —          | Own queries  |
+| Metric              | ours_rag_healing | simple_baseline | Track        |
+|---------------------|:----------------:|:---------------:|--------------|
+| EX                  | yes              | yes             | BIRD         |
+| First-shot EX       | yes              | yes             | BIRD         |
+| Healed EX           | yes              | no              | BIRD         |
+| VES (timed)         | yes              | yes             | BIRD         |
+| Error Breakdown     | yes              | yes             | BIRD         |
+| ESR                 | yes              | yes             | Own queries  |
+| Healing Efficiency  | yes              | —               | Own queries  |
+| P50 / P95 Latency   | yes              | yes             | Own queries  |
+| VES Static          | yes              | yes             | Own queries  |
+| LLM Judge           | yes              | yes             | Own queries  |
