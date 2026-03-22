@@ -30,6 +30,17 @@ const USER_ID = "default-user";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface InsightSpec {
+  title: string;
+  chart_spec: {
+    chart_type: string;
+    title: string;
+    x: string;
+    y: string;
+    data: Record<string, unknown>[];
+  };
+}
+
 interface NLQResult {
   question: string;
   sql: string | null;
@@ -41,6 +52,7 @@ interface NLQResult {
   data: Record<string, unknown>[];
   columns: string[];
   row_count: number;
+  insights?: InsightSpec[];
   thinking?: string | null;
   complexity?: string;
   processing_time_ms?: number;
@@ -385,6 +397,28 @@ function AssistantBubble({ msg }: { msg: Message }) {
               <Star className={`w-3.5 h-3.5 ${pinned ? 'fill-yellow-400' : ''}`} />
               {pinned ? 'Pinned to Dashboard' : 'Pin to Dashboard'}
             </button>
+
+            {r.insights && r.insights.length > 0 && (
+              <div className="space-y-3 pt-2">
+                <p className="text-xs font-medium text-violet-400 tracking-wide uppercase">
+                  Explore — additional angles
+                </p>
+                {r.insights.map((ins, idx) => (
+                  <div key={idx} className="bg-card border border-border rounded-xl overflow-hidden">
+                    <ChartRenderer
+                      chart={{
+                        chart_type: ins.chart_spec.chart_type as UniversalChartSpec["chart_type"],
+                        title: ins.chart_spec.title,
+                        x: ins.chart_spec.x,
+                        y: ins.chart_spec.y,
+                        data: ins.chart_spec.data,
+                      }}
+                      disableInsights
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
         {/* r.thinking removed from here as it is moved up */}

@@ -883,7 +883,8 @@ def _parse_output(raw: str) -> tuple:
     json_match = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
     if json_match:
         try:
-            parsed = json.loads(json_match.group(1))
+            cleaned = re.sub(r",\s*([}\]])", r"\1", json_match.group(1))
+            parsed = json.loads(cleaned)
             if isinstance(parsed, dict):
                 chart_meta = parsed
         except json.JSONDecodeError as exc:
@@ -894,7 +895,8 @@ def _parse_output(raw: str) -> tuple:
         bare_match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
         if bare_match:
             try:
-                parsed = json.loads(bare_match.group(0))
+                cleaned = re.sub(r",\s*([}\]])", r"\1", bare_match.group(0))
+                parsed = json.loads(cleaned)
                 if isinstance(parsed, dict):
                     chart_meta = parsed
                     raw = raw[: bare_match.start()] + raw[bare_match.end():]
